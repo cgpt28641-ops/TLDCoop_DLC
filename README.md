@@ -122,7 +122,7 @@ of the game on one PC, one hosting (TestHost) and one joining (TestFriend). More
 
 ## Requirements
 
-- **The Long Dark on Steam, for Windows, version 2.55.** Every player needs the same game version. The mod checks
+- **The Long Dark on Steam, for Windows, version 2.58 188966 S.** Every player needs the same game version. The mod checks
   this when someone joins.
 - **Steam running and logged in.** Co-op connects through Steam, and every player needs their own copy of the game.
 - **Everyone on the same co-op protocol.** This release is **v0.13.1 (protocol v27)**. It's the mod from the

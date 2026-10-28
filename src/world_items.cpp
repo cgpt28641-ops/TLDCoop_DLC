@@ -168,8 +168,9 @@ std::string pdid_of(Il2CppObject* gi) {
         og = args[0] ? il2::invoke(api.guid_of_go, nullptr, args) : nullptr;
     }
     if (!alive(og)) return {};
-    std::string id = text(get<Il2CppString*>(og, api.cached_pdid));
-    return id.empty() ? text(get<Il2CppString*>(og, api.guid)) : id;
+    std::string id = (api.cached_pdid >= 0) ? text(get<Il2CppString*>(og, api.cached_pdid)) : std::string{};
+    if (id.empty() && api.guid >= 0) id = text(get<Il2CppString*>(og, api.guid));
+    return id;
 }
 
 Il2CppObject* transform_of(Il2CppObject* component) { return il2::invoke(api.component_transform, component); }
@@ -1595,10 +1596,10 @@ bool init() {
                                                "System.Boolean"});
     api.sanitize = il2::find_method_params(il2::find_class(kGame, "", "Utils"), "SanitizePrefabName", {"System.String"});
     api.drop = il2::find_method(gear, "Drop", 4);
-    api.display_name = il2::find_method_params(gear, "GetGearDisplayName", {"System.String"});
+    api.display_name = il2::find_method_quiet(gear, "GetGearDisplayName", 1);
     api.stackable = il2::field_offset(gear, "m_StackableItem");
     api.units = il2::field_offset(il2::find_class(kGame, "", "StackableItem"), "m_Units");
-    api.guid = il2::field_offset(object_guid, "m_Guid");
+    api.guid = il2::il2cpp_class_get_field_from_name(object_guid, "m_Guid") ? il2::field_offset(object_guid, "m_Guid") : -1;
     api.cached_pdid = il2::field_offset(il2::find_class("TLD.PDID.dll", "TLD.PDID", "PdidObjectBase"), "m_RuntimeCachedPdid");
     api.guid_of_go = il2::find_method(object_guid, "GetObjectGuidFromGO", 1);
     api.attach_guid = il2::find_method(object_guid, "MaybeAttachObjectGuidAndRegister", 2);
@@ -1623,7 +1624,9 @@ bool init() {
     if (Il2CppClass* snare = il2::find_class(kGame, "", "SnareItem")) {
         api.snare = il2::field_offset(gear, "m_SnareItem");
         api.snare_state = il2::field_offset(snare, "m_State");
-        api.snare_rabbit = il2::field_offset(snare, "m_RabbitPrefab");
+        api.snare_rabbit = il2::il2cpp_class_get_field_from_name(snare, "m_RabbitAssetReference")
+                               ? il2::field_offset(snare, "m_RabbitAssetReference")
+                               : il2::field_offset(snare, "m_RabbitPrefab");
         api.snare_load = il2::find_method_params(snare, "Deserialize", {"System.String"});
         api.snare_placed = il2::find_method(snare, "OnSnarePlaced", 0);
         api.snare_set_state = il2::find_method(snare, "SetState", 1);
@@ -1649,7 +1652,8 @@ bool init() {
         api.pot_drop_food = il2::find_method(pot, "DestroyGearItemBeingCooked", 0);
     }
     g_ready = api.component_go && api.go_active && api.go_component && api.get_position && api.get_parent && api.set_pose &&
-              api.gear_type && api.in_inventory >= 0 && api.no_save >= 0 && api.object_guid >= 0 && api.guid >= 0 && api.cached_pdid >= 0 && api.guid_of_go && api.attach_guid &&
+              api.gear_type && api.in_inventory >= 0 && api.no_save >= 0 && api.object_guid >= 0 &&
+              (api.guid >= 0 || api.cached_pdid >= 0) && api.guid_of_go && api.attach_guid &&
               api.create_save_data && api.sd_prefab >= 0 && api.sd_gear >= 0 && api.instantiate && api.pdid_object &&
               api.new_pdid && api.all_gear && api.destroy_gear && api.serialize_all && api.player_manager && api.inspected &&
               api.inspecting && api.stackable >= 0 && api.units >= 0 && api.inventory && api.inv_destroy && api.remove_units;

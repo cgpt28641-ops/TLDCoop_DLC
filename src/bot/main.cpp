@@ -5,7 +5,7 @@
 //   tldbot host [port]        wait for a game running with mode=join
 // options: --name N  --body B (how the game draws the bot)  --cycle B1,B2,.. --cycle-seconds S
 //          --seconds S (exit after S seconds, print a summary)  --radius R  --speed DEG_PER_SEC
-//          --game-version "2.55 181032 S" (default: read from ..\tld_Data\StreamingAssets\version.txt)
+//          --game-version VERSION (default: read from ..\tld_Data\StreamingAssets\version.txt)
 // scenes (milestone 6): --park-at X,Y,Z stays at that spot in the real player's scene; --repark parks again
 //          where the player is after a teleport within a scene.
 // scenes (milestone 6): --park stays where the real player first was (same scene, same spot) instead of

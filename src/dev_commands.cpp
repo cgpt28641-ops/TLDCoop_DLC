@@ -79,11 +79,13 @@ struct Api {
     Il2CppClass* experience_enum = nullptr;
     const MethodInfo* spawn_manager = nullptr;    // static GameManager.GetSpawnRegionManager()
     ptrdiff_t spawn_regions = -1;                 // SpawnRegionManager.m_SpawnRegions (List<SpawnRegion>)
-    ptrdiff_t region_prefab = -1, region_refs = -1, region_kind = -1;  // SpawnRegion.m_SpawnablePrefab, ...
+    ptrdiff_t region_prefab = -1, region_spawn_list = -1, region_refs = -1, region_kind = -1;
     ptrdiff_t region_center = -1;                 // SpawnRegion.m_Center
+    const MethodInfo* spawn_entry_asset = nullptr;  // SpawnRegion.SpawnListEntry.GetAnimalForMode(WildlifeMode)
     const MethodInfo* go_active = nullptr;        // GameObject.get_activeSelf
     const MethodInfo* go_set_active = nullptr;
-    const MethodInfo* instantiate_spawn = nullptr;  // SpawnRegion.InstantiateSpawn(prefab, ref, pos, rot, mode, wm)
+    const MethodInfo* instantiate_spawn = nullptr;  // SpawnRegion.InstantiateSpawn(...), 5 args in 2.58
+    const MethodInfo* instantiate_spawn_legacy = nullptr;  // 6-argument SpawnRegion.InstantiateSpawn
     const MethodInfo* navmesh_sample = nullptr;   // static NavMesh.SamplePosition(Vector3, out hit, float, int)
     const MethodInfo* clone_at = nullptr;         // static Object.Instantiate(Object, Vector3, Quaternion)
     const MethodInfo* component_go = nullptr;     // Component.get_gameObject()
@@ -403,6 +405,15 @@ Quaternion facing(const Vector3& from, const Vector3& to) {
     return {0, std::sin(yaw / 2), 0, std::cos(yaw / 2)};
 }
 
+Il2CppObject* region_asset(Il2CppObject* region, int32_t wildlife_mode) {
+    if (!region || api.region_spawn_list < 0 || !api.spawn_entry_asset) return nullptr;
+    for (Il2CppObject* entry : list_items(il2::read_field<Il2CppObject*>(region, api.region_spawn_list))) {
+        void* args[] = {&wildlife_mode};
+        if (Il2CppObject* asset = il2::invoke(api.spawn_entry_asset, entry, args)) return asset;
+    }
+    return nullptr;
+}
+
 void cmd_spawn(const game::PlayerState& me, int32_t kind, int count) {
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
     // The spawn area for this kind closest to us: far ones are dormant and switch their animals off again.
@@ -430,8 +441,12 @@ void cmd_spawn(const game::PlayerState& me, int32_t kind, int count) {
         logx::warn("dev: spawn: no %s spawn area or %s in this scene", kind_name(kind), kind_name(kind));
         return;
     }
+    int32_t wildlife = 0;
+    Il2CppObject* asset = region ? region_asset(region, wildlife) : nullptr;
     Il2CppObject* prefab = region ? il2::read_field<Il2CppObject*>(region, api.region_prefab) : nullptr;
-    const auto refs = region ? list_items(il2::read_field<Il2CppObject*>(region, api.region_refs)) : std::vector<Il2CppObject*>{};
+    const auto refs = region && api.region_refs >= 0
+                          ? list_items(il2::read_field<Il2CppObject*>(region, api.region_refs))
+                          : std::vector<Il2CppObject*>{};
     Il2CppObject* prefab_ref = refs.empty() ? nullptr : refs[0];
     const float yaw = me.yaw * 3.14159265f / 180.0f;
     const Vector3 us{me.position.x, me.position.y, me.position.z};
@@ -444,10 +459,14 @@ void cmd_spawn(const game::PlayerState& me, int32_t kind, int count) {
         Quaternion rot = facing(pos, us);
         Il2CppObject* spawned = nullptr;
         const char* how = "spawn area";
-        if (region && (prefab || prefab_ref)) {
-            int32_t mode = kAiModeWander, wildlife = 0;
-            void* args[] = {prefab, prefab_ref, &pos, &rot, &mode, &wildlife};
+        if (region && api.instantiate_spawn && asset) {
+            int32_t mode = kAiModeWander;
+            void* args[] = {asset, &pos, &rot, &mode, &wildlife};
             spawned = il2::invoke(api.instantiate_spawn, region, args);
+        } else if (region && api.instantiate_spawn_legacy && (prefab || prefab_ref)) {
+            int32_t mode = kAiModeWander;
+            void* args[] = {prefab, prefab_ref, &pos, &rot, &mode, &wildlife};
+            spawned = il2::invoke(api.instantiate_spawn_legacy, region, args);
         }
         // TLD registers a new animal a moment later, so a wolf back from the spawn area counts as made; it only has
         // to be switched on.
@@ -1275,21 +1294,27 @@ bool init() {
     api.experience_enum = il2::find_class(kGame, "", "ExperienceModeType");
     api.spawn_manager = il2::find_method(game_manager, "GetSpawnRegionManager", 0);
     api.spawn_regions = il2::field_offset(spawn_manager, "m_SpawnRegions");
-    api.region_prefab = il2::field_offset(spawn_region, "m_SpawnablePrefab");
-    api.region_refs = il2::field_offset(spawn_region, "m_SpawnsPrefabReferences");
+    api.region_prefab = il2::field_offset_quiet(spawn_region, "m_SpawnablePrefab");
+    api.region_spawn_list = il2::field_offset_quiet(spawn_region, "m_SpawnList");
+    api.region_refs = il2::field_offset_quiet(spawn_region, "m_SpawnsPrefabReferences");
     api.region_kind = il2::field_offset(spawn_region, "m_AiSubTypeSpawned");
     api.region_center = il2::field_offset(spawn_region, "m_Center");
     Il2CppClass* game_object = il2::find_class(kCore, "UnityEngine", "GameObject");
     api.go_active = il2::find_method(game_object, "get_activeSelf", 0);
     api.go_set_active = il2::find_method(game_object, "SetActive", 1);
-    api.instantiate_spawn = il2::find_method(spawn_region, "InstantiateSpawn", 6);
+    if (Il2CppClass* entry = il2::find_nested_class(spawn_region, "SpawnListEntry"))
+        api.spawn_entry_asset = il2::find_method_quiet(entry, "GetAnimalForMode", 1);
+    api.instantiate_spawn = il2::find_method_quiet(spawn_region, "InstantiateSpawn", 5);
+    api.instantiate_spawn_legacy = il2::find_method_quiet(spawn_region, "InstantiateSpawn", 6);
     api.navmesh_sample = il2::find_method_params(
         navmesh, "SamplePosition", {"UnityEngine.Vector3", "UnityEngine.AI.NavMeshHit&", "System.Single", "System.Int32"});
     api.clone_at = il2::find_method_params(object, "Instantiate",
                                            {"UnityEngine.Object", "UnityEngine.Vector3", "UnityEngine.Quaternion"});
     api.component_go = il2::find_method(component, "get_gameObject", 0);
+    const bool spawn_api = (api.region_prefab >= 0 && api.instantiate_spawn_legacy) ||
+                           (api.region_spawn_list >= 0 && api.spawn_entry_asset && api.instantiate_spawn);
     const bool wildlife = api.ai_list && api.ai_kind >= 0 && api.ai_mode >= 0 && api.spawn_manager &&
-                          api.spawn_regions >= 0 && api.region_kind >= 0 && api.instantiate_spawn && api.clone_at;
+                          api.spawn_regions >= 0 && api.region_kind >= 0 && spawn_api && api.clone_at;
     logx::info("dev commands: wildlife helpers %s", wildlife ? "ready" : "INCOMPLETE (see warnings above)");
 
     g_ready = api.door_list && api.door_target >= 0 && api.is_outdoors && api.player_manager && api.teleport &&

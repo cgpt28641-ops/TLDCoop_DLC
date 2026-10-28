@@ -18,7 +18,7 @@ std::wstring profile();
 // Where this copy's coop.ini, coop.log and command.txt live: mod_dir(), or mod_dir()/<profile>. Created on first use.
 std::filesystem::path instance_dir();
 
-// Text of tld_Data/StreamingAssets/version.txt, trimmed (e.g. "2.55 181032 S"), or "" if missing.
+// Text of tld_Data/StreamingAssets/version.txt, trimmed (e.g. "2.58 188966 S"), or "" if missing.
 std::string game_version();
 
 }  // namespace paths

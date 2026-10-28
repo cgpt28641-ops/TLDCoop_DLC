@@ -34,6 +34,7 @@ struct Il2CppThread;
     X(il2cpp_class_get_namespace, const char*, (const Il2CppClass*))                                   \
     X(il2cpp_class_get_parent, Il2CppClass*, (const Il2CppClass*))                                     \
     X(il2cpp_class_get_declaring_type, Il2CppClass*, (const Il2CppClass*))                             \
+    X(il2cpp_class_get_nested_types, Il2CppClass*, (Il2CppClass*, void**))                              \
     X(il2cpp_class_is_valuetype, bool, (const Il2CppClass*))                                           \
     X(il2cpp_class_is_enum, bool, (const Il2CppClass*))                                                \
     X(il2cpp_class_get_fields, FieldInfo*, (Il2CppClass*, void**))                                     \
@@ -90,11 +91,15 @@ HMODULE game_assembly();
 
 const Il2CppImage* find_image(const char* assembly_file_name);  // e.g. "Assembly-CSharp.dll"
 Il2CppClass* find_class(const char* assembly_file_name, const char* name_space, const char* name);
+Il2CppClass* find_nested_class(Il2CppClass* outer, const char* name);
 const MethodInfo* find_method(Il2CppClass* klass, const char* name, int arg_count);  // -1 = any arity
+const MethodInfo* find_method_quiet(Il2CppClass* klass, const char* name, int arg_count);
 
 // Overload-exact lookup by parameter type names, e.g. {"System.Type"} for GameObject.GetComponent(Type).
 const MethodInfo* find_method_params(Il2CppClass* klass, const char* name,
                                      std::initializer_list<const char*> param_types);
+const MethodInfo* find_method_params_quiet(Il2CppClass* klass, const char* name,
+                                           std::initializer_list<const char*> param_types);
 
 // System.Type object for a class (for APIs like GetComponent(Type)). The runtime caches it; no handle needed.
 Il2CppObject* type_object(Il2CppClass* klass);
@@ -135,6 +140,7 @@ bool invoke_value(const MethodInfo* method, void* instance, T& out, void** args 
 
 // Byte offset of an instance field, or -1 (logged) if missing.
 ptrdiff_t field_offset(Il2CppClass* klass, const char* name);
+ptrdiff_t field_offset_quiet(Il2CppClass* klass, const char* name);
 
 template <typename T>
 T read_field(Il2CppObject* obj, ptrdiff_t offset) {

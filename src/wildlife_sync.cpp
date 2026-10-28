@@ -56,7 +56,7 @@ struct Api {
     FieldInfo* ai_list = nullptr;  // static List<BaseAi> BaseAiManager.m_BaseAis
     ptrdiff_t ai_kind = -1, ai_mode = -1, ai_hp = -1, ai_animator = -1;
     const MethodInfo* spawn_manager = nullptr;  // static GameManager.GetSpawnRegionManager()
-    ptrdiff_t spawn_regions = -1, region_prefab = -1, region_kind = -1;
+    ptrdiff_t spawn_regions = -1, region_prefab = -1, region_spawn_list = -1, region_kind = -1;
 
     const MethodInfo* component_go = nullptr;
     const MethodInfo* component_transform = nullptr;
@@ -111,9 +111,11 @@ struct Api {
     const MethodInfo* struggle_begin = nullptr;   // PlayerStruggle.Begin(GameObject)
     const MethodInfo* get_condition = nullptr;    // static GameManager.GetConditionComponent()
     const MethodInfo* add_health = nullptr;       // Condition.AddHealth(float, DamageSource, bool)
-    ptrdiff_t region_refs = -1;                   // SpawnRegion.m_SpawnsPrefabReferences
+    ptrdiff_t region_refs = -1;                   // SpawnRegion.m_SpawnsPrefabReferences (legacy)
     ptrdiff_t region_center = -1;                 // SpawnRegion.m_Center
-    const MethodInfo* instantiate_spawn = nullptr;  // SpawnRegion.InstantiateSpawn(prefab, ref, pos, rot, mode, wm)
+    const MethodInfo* spawn_entry_asset = nullptr;  // SpawnRegion.SpawnListEntry.GetAnimalForMode(WildlifeMode)
+    const MethodInfo* instantiate_spawn = nullptr;  // SpawnRegion.InstantiateSpawn(...), 5 args in 2.58
+    const MethodInfo* instantiate_spawn_legacy = nullptr;  // 6-argument SpawnRegion.InstantiateSpawn
     // What a fight does to the stand-in (BaseAi), reported to the host.
     ptrdiff_t ai_wounded = -1, ai_bleeding = -1, ai_bleed_elapsed = -1, ai_bleed_limit = -1;
     // Weapon hits on the copies (wildlife_hits).
@@ -608,12 +610,22 @@ Il2CppObject* puppet_root() {
     return target(g_puppet_root);
 }
 
-// This region's prefab for a kind: its spawn area's, or one of our own (hidden) animals of that kind.
+// Find a live model source for a kind, preferring a legacy region prefab and then existing animals.
+Il2CppObject* region_asset(Il2CppObject* region, int32_t wildlife_mode) {
+    if (!region || api.region_spawn_list < 0 || !api.spawn_entry_asset) return nullptr;
+    for (Il2CppObject* entry : list_items(il2::read_field<Il2CppObject*>(region, api.region_spawn_list))) {
+        void* args[] = {&wildlife_mode};
+        if (Il2CppObject* asset = il2::invoke(api.spawn_entry_asset, entry, args)) return asset;
+    }
+    return nullptr;
+}
+
 Il2CppObject* template_for(int kind) {
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
     for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
-        if (il2::read_field<int32_t>(region, api.region_kind) == kind)
+        if (il2::read_field<int32_t>(region, api.region_kind) == kind) {
             if (Il2CppObject* prefab = il2::read_field<Il2CppObject*>(region, api.region_prefab)) return prefab;
+        }
     for (uintptr_t h : g_hidden)
         if (Il2CppObject* go = target(h))
             for (Il2CppObject* ai : all_animals())
@@ -878,27 +890,37 @@ struct Quaternion {
 // No animal of that kind of our own (TLD's spawning is off while mirroring): make one for the fight with this
 // region's nearest spawn area for the kind, the way TLD spawns them, already in its fight mode.
 Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees) {
-    if (!api.instantiate_spawn) return nullptr;
+    if (!api.instantiate_spawn && !api.instantiate_spawn_legacy) return nullptr;
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
     Il2CppObject* best = nullptr;
     float best_d = 0;
     for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions))) {
         if (il2::read_field<int32_t>(region, api.region_kind) != kind) continue;
-        if (!il2::read_field<Il2CppObject*>(region, api.region_prefab)) continue;
+        const int32_t wildlife = 0;
+        Il2CppObject* asset = il2::read_field<Il2CppObject*>(region, api.region_prefab);
+        if (!asset) asset = region_asset(region, wildlife);
+        if (!asset) continue;
         const Vector3 c = il2::read_field<Vector3>(region, api.region_center);
         const float d = (c.x - pos.x) * (c.x - pos.x) + (c.z - pos.z) * (c.z - pos.z);
         if (!best || d < best_d) best = region, best_d = d;
     }
     if (!best) return nullptr;
-    Il2CppObject* prefab = il2::read_field<Il2CppObject*>(best, api.region_prefab);
-    const auto refs = list_items(il2::read_field<Il2CppObject*>(best, api.region_refs));
-    Il2CppObject* prefab_ref = refs.empty() ? nullptr : refs[0];
     const float half = yaw_degrees * 0.5f * 3.14159265f / 180.0f;
     Quaternion rot{0, std::sin(half), 0, std::cos(half)};
     int32_t mode = 14;  // AiMode.Struggle
     int32_t wildlife = 0;
-    void* args[] = {prefab, prefab_ref, &pos, &rot, &mode, &wildlife};
-    Il2CppObject* ai = il2::invoke(api.instantiate_spawn, best, args);
+    Il2CppObject* ai = nullptr;
+    if (api.instantiate_spawn && api.region_spawn_list >= 0) {
+        Il2CppObject* asset = region_asset(best, wildlife);
+        void* args[] = {asset, &pos, &rot, &mode, &wildlife};
+        if (asset) ai = il2::invoke(api.instantiate_spawn, best, args);
+    } else if (api.instantiate_spawn_legacy) {
+        Il2CppObject* prefab = il2::read_field<Il2CppObject*>(best, api.region_prefab);
+        const auto refs = list_items(il2::read_field<Il2CppObject*>(best, api.region_refs));
+        Il2CppObject* prefab_ref = refs.empty() ? nullptr : refs[0];
+        void* args[] = {prefab, prefab_ref, &pos, &rot, &mode, &wildlife};
+        ai = il2::invoke(api.instantiate_spawn_legacy, best, args);
+    }
     if (ai) set_active(go_of(ai), true);
     return ai;
 }
@@ -1342,7 +1364,8 @@ bool init() {
     api.ai_animator = il2::field_offset(base_ai, "m_Animator");
     api.spawn_manager = il2::find_method(game_manager, "GetSpawnRegionManager", 0);
     api.spawn_regions = il2::field_offset(spawn_manager, "m_SpawnRegions");
-    api.region_prefab = il2::field_offset(spawn_region, "m_SpawnablePrefab");
+    api.region_prefab = il2::field_offset_quiet(spawn_region, "m_SpawnablePrefab");
+    api.region_spawn_list = il2::field_offset_quiet(spawn_region, "m_SpawnList");
     api.region_kind = il2::field_offset(spawn_region, "m_AiSubTypeSpawned");
 
     api.component_go = il2::find_method(component, "get_gameObject", 0);
@@ -1400,9 +1423,12 @@ bool init() {
     api.get_struggle = il2::find_method(game_manager, "GetPlayerStruggleComponent", 0);
     api.struggle_begin = il2::find_method_params(il2::find_class(kGame, "", "PlayerStruggle"), "Begin", {"UnityEngine.GameObject"});
     api.get_condition = il2::find_method(game_manager, "GetConditionComponent", 0);
-    api.region_refs = il2::field_offset(spawn_region, "m_SpawnsPrefabReferences");
+    api.region_refs = il2::field_offset_quiet(spawn_region, "m_SpawnsPrefabReferences");
     api.region_center = il2::field_offset(spawn_region, "m_Center");
-    api.instantiate_spawn = il2::find_method(spawn_region, "InstantiateSpawn", 6);
+    if (Il2CppClass* entry = il2::find_nested_class(spawn_region, "SpawnListEntry"))
+        api.spawn_entry_asset = il2::find_method_quiet(entry, "GetAnimalForMode", 1);
+    api.instantiate_spawn = il2::find_method_quiet(spawn_region, "InstantiateSpawn", 5);
+    api.instantiate_spawn_legacy = il2::find_method_quiet(spawn_region, "InstantiateSpawn", 6);
     api.add_health = il2::find_method_params(il2::find_class(kGame, "", "Condition"), "AddHealth",
                                              {"System.Single", "DamageSource", "System.Boolean"});
     api.set_culling = il2::find_method(animator, "set_cullingMode", 1);
@@ -1420,8 +1446,10 @@ bool init() {
     api.ai_bleed_elapsed = il2::field_offset(base_ai, "m_ElapsedBleedingOutMinutes");
     api.ai_bleed_limit = il2::field_offset(base_ai, "m_DeathAfterBleeingOutMinutes");
 
+    const bool spawn_api = (api.region_prefab >= 0 && api.instantiate_spawn_legacy) ||
+                           (api.region_spawn_list >= 0 && api.spawn_entry_asset && api.instantiate_spawn);
     g_ready = api.go_transform && api.ai_list && api.ai_kind >= 0 && api.ai_mode >= 0 && api.ai_animator >= 0 && api.spawn_manager &&
-              api.spawn_regions >= 0 && api.region_prefab >= 0 && api.region_kind >= 0 && api.go_active &&
+              api.spawn_regions >= 0 && api.region_kind >= 0 && spawn_api && api.go_active &&
               api.go_components && api.set_position && api.set_euler && api.instantiate && api.layer_count &&
               api.state_info && api.param_count && api.get_param && api.param_hash && api.param_type && api.get_float &&
               api.set_float && api.get_int && api.set_int && api.get_bool && api.set_bool && api.play && api.crossfade;

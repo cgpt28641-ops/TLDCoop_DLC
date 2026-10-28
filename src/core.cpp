@@ -45,8 +45,8 @@
 namespace core {
 namespace {
 
-// The build this code was written and tested against. Other builds still load, with a warning in the log.
-constexpr const char* kTestedGameVersion = "2.55 181032 S";
+// The current Steam build this code was verified against. Other builds still load, with a warning in the log.
+constexpr const char* kTestedGameVersion = "2.58 188966 S";
 
 // Bump when the dump format changes so existing dumps are regenerated.
 constexpr int kDumpFormat = 2;

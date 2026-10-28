@@ -171,7 +171,8 @@ struct Api {
     Il2CppObject* ai_target_type = nullptr;          // AiTarget
     ptrdiff_t ai_target_eye = -1;                    // AiTarget.m_EyeOffset
     // What they hold (milestone 11).
-    const MethodInfo* load_gear = nullptr;           // static GearItem.LoadGearItemPrefab(string)
+    const MethodInfo* load_gear = nullptr;           // static GearItem.LoadGearItemPrefab(string) [2.55]
+    const MethodInfo* instantiate_gear = nullptr;    // static GearItem.InstantiateGearItem(string) [2.58]
     Il2CppObject* gear_type = nullptr;               // GearItem
     const MethodInfo* get_position = nullptr;        // Transform.get_position()
     const MethodInfo* get_rotation = nullptr;        // Transform.get_rotation()
@@ -1113,16 +1114,24 @@ std::string parts_text(Il2CppObject* copy) {
 }
 
 bool make_held(Avatar& a, const std::string& gear, net::HeldKind kind) {
-    if (!api.load_gear || !pv.component_go || !ensure_loader()) return false;
+    if ((!api.load_gear && !api.instantiate_gear) || !pv.component_go || !ensure_loader()) return false;
     void* name_arg[] = {il2::il2cpp_string_new(gear.c_str())};
-    Il2CppObject* prefab_gi = il2::invoke(api.load_gear, nullptr, name_arg);
-    Il2CppObject* prefab = prefab_gi ? il2::invoke(pv.component_go, prefab_gi) : nullptr;
-    if (!prefab) {
+    Il2CppObject* copy = nullptr;
+    if (api.instantiate_gear) {
+        Il2CppObject* copy_gi = il2::invoke(api.instantiate_gear, nullptr, name_arg);
+        copy = copy_gi ? il2::invoke(pv.component_go, copy_gi) : nullptr;
+    } else if (api.load_gear) {
+        Il2CppObject* prefab_gi = il2::invoke(api.load_gear, nullptr, name_arg);
+        Il2CppObject* prefab = prefab_gi ? il2::invoke(pv.component_go, prefab_gi) : nullptr;
+        if (prefab) {
+            void* inst_args[] = {prefab, target(g_loader_transform)};  // asleep under the inactive loader: no Awake
+            copy = il2::invoke(api.instantiate, nullptr, inst_args);
+        }
+    }
+    if (!copy) {
         say(a, "no model for %s here (TLD has no gear prefab by that name)", gear.c_str());
         return false;
     }
-    void* inst_args[] = {prefab, target(g_loader_transform)};  // asleep under the inactive loader: no Awake
-    Il2CppObject* copy = il2::invoke(api.instantiate, nullptr, inst_args);
     Il2CppObject* tf = transform_of(copy);
     if (!tf) return false;
     HeldCopy& h = a.held;
@@ -1990,7 +1999,8 @@ bool init() {
     // What they hold (milestone 11).
     Il2CppClass* gear = il2::find_class("Assembly-CSharp.dll", "", "GearItem");
     Il2CppClass* behaviour = il2::find_class(kCore, "UnityEngine", "Behaviour");
-    api.load_gear = il2::find_method_params(gear, "LoadGearItemPrefab", {"System.String"});
+    api.load_gear = il2::find_method_quiet(gear, "LoadGearItemPrefab", 1);
+    api.instantiate_gear = il2::find_method_params_quiet(gear, "InstantiateGearItem", {"System.String"});
     api.gear_type = il2::type_object(gear);
     api.light_type = il2::type_object(light);
     for (Il2CppObject* t : {api.gear_type, api.light_type})
@@ -2052,12 +2062,13 @@ bool init() {
         for (Il2CppObject* t : {parts.torch_intensity_type, parts.random_intensity_type})
             if (t) il2::il2cpp_gchandle_new(t, false);
     }
-    const bool holding = api.load_gear && api.gear_type && api.get_position && api.get_rotation && api.set_rotation &&
+    const bool holding = (api.load_gear || api.instantiate_gear) && api.gear_type && api.get_position && api.get_rotation && api.set_rotation &&
                          api.renderer_bounds && api.renderer_enabled && api.set_enabled && api.in_hierarchy &&
-                         pv.component_go && api.instantiate;
+                         pv.component_go && (api.instantiate || api.instantiate_gear);
     if (!holding) {
         logx::warn("avatar: what the others hold won't be shown (a TLD or Unity API is missing)");
         api.load_gear = nullptr;
+        api.instantiate_gear = nullptr;
     }
 
     int64_t value = 0;

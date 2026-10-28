@@ -14,7 +14,7 @@
 //   goto X Y Z     - stand at X Y Z (world coordinates, as the log prints them)
 //   console NAME   - one of TLD's own debug console commands (CONSOLE_NAME): god, invulnerable, ghost, fly...
 //   time HH:MM     - set the clock (on the client, the host's clock takes over again within a minute)
-//   run LINE       - a line for TLD's own console (uConsole.RunCommand). It does nothing in the 2.55 release build
+//   run LINE       - a line for TLD's own console (uConsole.RunCommand). It does nothing in release builds
 //                    (the console's commands aren't registered there): use console NAME, give or equip
 //   taps N         - in a struggle, N taps a second (WolfTap in a wolf fight) and the weapon picker answered
 //   fight_friend [KIND] / attack_friend [KIND] - host: the nearest animal jumps / goes for the other player

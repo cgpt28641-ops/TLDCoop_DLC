@@ -76,6 +76,14 @@ Il2CppClass* find_class(const char* assembly_file_name, const char* name_space, 
     return klass;
 }
 
+Il2CppClass* find_nested_class(Il2CppClass* outer, const char* name) {
+    if (!outer || !name) return nullptr;
+    void* iter = nullptr;
+    while (Il2CppClass* nested = il2cpp_class_get_nested_types(outer, &iter))
+        if (strcmp(il2cpp_class_get_name(nested), name) == 0) return nested;
+    return nullptr;
+}
+
 const MethodInfo* find_method(Il2CppClass* klass, const char* name, int arg_count) {
     if (!klass) return nullptr;
     const MethodInfo* m = il2cpp_class_get_method_from_name(klass, name, arg_count);
@@ -87,8 +95,13 @@ const MethodInfo* find_method(Il2CppClass* klass, const char* name, int arg_coun
     return m;
 }
 
-const MethodInfo* find_method_params(Il2CppClass* klass, const char* name,
-                                     std::initializer_list<const char*> param_types) {
+const MethodInfo* find_method_quiet(Il2CppClass* klass, const char* name, int arg_count) {
+    if (!klass) return nullptr;
+    return il2cpp_class_get_method_from_name(klass, name, arg_count);
+}
+
+const MethodInfo* find_method_params_quiet(Il2CppClass* klass, const char* name,
+                                           std::initializer_list<const char*> param_types) {
     if (!klass) return nullptr;
     void* iter = nullptr;
     while (const MethodInfo* m = il2cpp_class_get_methods(klass, &iter)) {
@@ -104,10 +117,18 @@ const MethodInfo* find_method_params(Il2CppClass* klass, const char* name,
         }
         if (match) return m;
     }
-    char cls[512];
-    full_class_name(klass, cls, sizeof(cls));
-    logx::warn("method %s.%s with the requested parameter types not found", cls, name);
     return nullptr;
+}
+
+const MethodInfo* find_method_params(Il2CppClass* klass, const char* name,
+                                     std::initializer_list<const char*> param_types) {
+    const MethodInfo* m = find_method_params_quiet(klass, name, param_types);
+    if (!m && klass) {
+        char cls[512];
+        full_class_name(klass, cls, sizeof(cls));
+        logx::warn("method %s.%s with the requested parameter types not found", cls, name);
+    }
+    return m;
 }
 
 Il2CppObject* type_object(Il2CppClass* klass) {
@@ -183,6 +204,11 @@ ptrdiff_t field_offset(Il2CppClass* klass, const char* name) {
         return -1;
     }
     return static_cast<ptrdiff_t>(il2cpp_field_get_offset(field));
+}
+
+ptrdiff_t field_offset_quiet(Il2CppClass* klass, const char* name) {
+    FieldInfo* field = klass ? il2cpp_class_get_field_from_name(klass, name) : nullptr;
+    return field ? static_cast<ptrdiff_t>(il2cpp_field_get_offset(field)) : -1;
 }
 
 bool literal_value(FieldInfo* field, int64_t& out) {
