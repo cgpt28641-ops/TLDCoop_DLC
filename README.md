@@ -1,351 +1,265 @@
-# TLDCoop_DLC
+# TLDCoop_DLC: co-op do The Long Dark z obsługą DLC
 
-A personal fork of [TLDCoop](https://github.com/ScarredVeins/TLDCo-Op) by ScarredVeins (all credit for the mod is
-theirs; see [Credits](#credits)), with:
+**Tryb Survival w The Long Dark we 2–4 osoby, w jednym świecie, przez Steam, z kodami dołączania.**
 
-- **The Long Dark 2.58 188966 S**: the API adaptations by [afkfatih](https://github.com/afkfatih/TLDCo-Op/tree/support-tld-2.58)
-  (see [issue #1](https://github.com/ScarredVeins/TLDCo-Op/issues/1)).
-- **DLC awareness** (protocol **v28**): each player's installed optional content is read from the game itself
-  (`TLD.OptionalContent.OptionalContentManager.InstalledContent`, no DLC list in the mod, so Tales from the Far
-  Territory, Iron Road and later packs all count). A friend must have every DLC the host has installed; one who
-  doesn't is told which ones they lack (**MISSING DLC**). `dlc_check=0` in `coop.ini` turns the check off.
-  See `src/net/content.h`, `src/optional_content.cpp`, `tests/content_test.cpp`.
-- **Not yet:** Iron Road's train (`TLD.SteamTrain.*`) isn't synchronized between players yet.
+To prywatna przeróbka moda [TLDCoop](https://github.com/ScarredVeins/TLDCo-Op) autorstwa **ScarredVeins**. Cała
+zasługa za sam mod należy do niego (zobacz [Autorzy](#autorzy)). Ta wersja dodaje:
 
-Builds come from GitHub Actions (`.github/workflows/build.yml`): the `TLDCoop_DLC` artifact is the zip to install
-(`INSTALL.txt` inside, in Polish). Players of this fork can't play with players of the original v0.13.1.
+- **Działanie na The Long Dark 2.58** (188966 S). To poprawki
+  [afkfatih](https://github.com/afkfatih/TLDCo-Op/tree/support-tld-2.58) z
+  [tego zgłoszenia](https://github.com/ScarredVeins/TLDCo-Op/issues/1).
+- **Obsługę DLC.** Mod pyta grę, jakie DLC ma zainstalowane, i nie wpuszcza do świata hosta gracza, któremu
+  brakuje jego DLC. Gracz dostaje wtedy jasny komunikat, czego mu brakuje.
 
----
+> **Wersja testowa.** Mod działa, ale mogą się zdarzać błędy. Przed grą zrób kopię zapisów (zobacz
+> [Instalacja](#instalacja)).
 
-# TLDCoop: co-op for The Long Dark
-
-**Play The Long Dark's Survival mode together: 2 to 4 players in one world, over Steam, with join codes.**
-
-> **Playtest build.** This is a prototype. It works, and the screenshots below are real in-game captures, but
-> expect rough edges. Back up your saves before you play (see [Before you start](#before-you-start)).
-
-![Your friend in your world, next to the wolf you brought down together](screenshots/05-friend-in-your-world.jpg)
-
-- **No EXE.** The download is a zip with one DLL and some data files that you copy into the game folder yourself.
-  The full source code is in this repo, so you can read exactly what it does or build it yourself.
-- **One DLL, no mod loader needed, and fine with MelonLoader mods.** Tested in co-op with MelonLoader 0.7.2 and
-  five popular mods loaded in both games (see [Playing with other mods](#playing-with-other-mods)).
-- **Nothing goes online until you pick CO-OP.** Solo games stay exactly as they are.
+Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest w
+[README.original.md](README.original.md).
 
 ---
 
-## Contents
+## Spis treści
 
-- [Features](#features)
-- [Requirements](#requirements)
-- [Install](#install)
-- [How to play](#how-to-play)
-- [Settings](#settings)
-- [Playing with other mods](#playing-with-other-mods)
-- [Uninstall or turn off](#uninstall-or-turn-off)
-- [Is it safe?](#is-it-safe)
-- [Troubleshooting](#troubleshooting)
-- [Build it yourself](#build-it-yourself)
-- [Credits](#credits)
-
----
-
-## Features
-
-All of these are in this release. Every screenshot is a real capture from the game with TLDCoop running: two copies
-of the game on one PC, one hosting (TestHost) and one joining (TestFriend). More are in the
-[screenshots](screenshots/) folder.
-
-### Start a co-op game from the game's own menus
-- **SOLO or CO-OP** appears when you pick NEW, RESUME or LOAD in Survival.
-- **The host** picks HOST and gets a short **join code**. **Friends** pick JOIN and type that code. No IP
-  addresses and no port forwarding: it goes through Steam.
-- **A lobby** shows everyone and the character they picked. The host lets each friend in (LET IN / TURN AWAY,
-  KICK), friends press READY, and the host presses START.
-- **Up to 4 players** (the host and 3 friends). Friends can also ask to join a game that's already running: the
-  host gets a message and presses **F9** to let them in or **F10** to turn them away.
-- Co-op plays at the **host's** difficulty, in the host's world, time of day and weather.
-
-| The host's lobby: two players asking to join | The friend is in and READY |
-|---|---|
-| ![Lobby, host](screenshots/01-lobby-host-asking.jpg) | ![Lobby, ready](screenshots/02-lobby-friend-ready.jpg) |
-
-### See each other
-- Friends appear as **one of 23 story characters** (Mackenzie, Astrid, Molly, Jane, Jeremiah, Methuselah and
-  more). You pick yours on the co-op setup screen, and their idle, walk and run animations follow their real speed.
-- **What a friend holds is in their hands:** a rifle, a revolver, a bow, a flare gun... A **lit lantern, torch,
-  flare or flashlight really lights the world** around them.
-- **Bodies act:** they eat with the food in hand, lie down in a bed to sleep, crouch, and hold an item out to you.
-- **Finding each other:** a name over a friend's head when you look at them or when they're close, an arrow at the
-  screen's edge when they're off screen, a **small radar map** with your friends on it, and your friends on the
-  game's own map. Your map also **charts itself where you walk**. Each player can switch each of these on or off.
-
-| A friend aiming a rifle | A friend's lantern lights up the night |
-|---|---|
-| ![Rifle](screenshots/06-friend-aims-rifle.jpg) | ![Lantern](screenshots/07-friend-lantern-at-night.jpg) |
-
-| Torch at night | Red flare |
-|---|---|
-| ![Torch](screenshots/08-friend-torch-at-night.jpg) | ![Flare](screenshots/09-friend-red-flare.jpg) |
-
-| Names over heads | Radar (top right): your friend is in a cabin | Friends on the game's map |
-|---|---|---|
-| ![Name](screenshots/12-name-over-head.jpg) | ![Radar](screenshots/13-radar-friend-in-cabin.jpg) | ![Map](screenshots/14-friend-on-the-map.jpg) |
-
-### One shared world
-- **Wildlife is shared.** The host's game runs the animals, and everyone sees the same wolf. Wolves go after
-  friends too, and when one jumps your friend you see the fight. Your shots hit the same animal for everyone
-  (rifle, revolver, bow, flare gun, stones).
-- **Wolves fear your friend's torch or flare,** just as they fear yours.
-- **Carcasses are shared:** harvest meat, hide and guts, or quarter it, and the others see it happen.
-- **Items:** what one player picks up is gone for the others, and what one drops appears for them. If two players
-  grab the same thing at the same moment, exactly one gets it.
-- **Containers, lockers and safes:** open, search and take, and everyone sees the same contents. Locks and safes
-  someone forced or cracked are open for everyone.
-- **Fires:** light one, feed it, let it burn out or dismantle it, and it does the same for everyone. **Cooking**
-  too: what goes into a pot or onto a fire, and what comes out cooked.
-- **Things broken down and plants harvested** stay that way for everyone. **Decorations moved** around a room move
-  for everyone, live.
-- **Buildings:** a building's loot rolls the same for everyone, whichever door each player came in by.
-- **Rabbits and snares** are shared.
-- **One-of-a-kind items** (notes, keys, the technical backpack...) are each player's own, so everyone can find them.
-
-| A wolf holds back from a friend's flare | A wolf sizes up a friend holding a torch |
-|---|---|
-| ![Wolf and flare](screenshots/10-wolf-held-off-by-flare.jpg) | ![Wolf and torch](screenshots/11-wolf-and-friends-torch.jpg) |
-
-### Survive together
-- **Give a friend any item:** look at them, interact, and the inventory's button says GIVE. For a stack, pick how
-  many. Their body holds it out and yours reaches for it.
-- **Sleeping and passing time together:** time skips only when everyone is in. Each player votes for how long on
-  the sleep or pass-time screen; the most votes wins, and a tie goes to the shorter one. Sleeping alone rests you
-  in real time (healing a little faster) without skipping time for the others. There's also **REST**: lie in bed in real time and heal
-  1.5 times faster.
-- **Actions don't fast-forward the clock for everyone.** Your body pays the time (calories, fatigue, thirst), but
-  the world clock stays shared.
-- **Death:** your body stays where you fell, with your pack on it. You come back as **a new survivor beside your
-  friends** and can go back for your gear.
-- **Joining, saving and reconnecting:** friends can join a game in progress. If the connection drops, everyone's
-  changes are kept and merged when it comes back. The host's save keeps the shared world; each friend's save keeps
-  their own character.
-
-| Handing over a jar of peanut butter | Eating | Asleep in a bed |
-|---|---|---|
-| ![Give](screenshots/15-friend-hands-you-food.jpg) | ![Eat](screenshots/17-friend-eating.jpg) | ![Bed](screenshots/19-friend-asleep-in-bed.jpg) |
-
-| Pass time together: everyone votes | Sleeping alone or REST: no time skip for the others |
-|---|---|
-| ![Vote](screenshots/20-pass-time-together-vote.jpg) | ![Rest](screenshots/22-rest.jpg) |
+- [Co potrafi](#co-potrafi)
+- [Jak działa obsługa DLC](#jak-działa-obsługa-dlc)
+- [Wymagania](#wymagania)
+- [Instalacja](#instalacja)
+- [Jak grać](#jak-grać)
+- [Ustawienia](#ustawienia)
+- [Inne mody (MelonLoader)](#inne-mody-melonloader)
+- [Wyłączanie i odinstalowanie](#wyłączanie-i-odinstalowanie)
+- [Czy to bezpieczne?](#czy-to-bezpieczne)
+- [Rozwiązywanie problemów](#rozwiązywanie-problemów)
+- [Czego jeszcze nie ma](#czego-jeszcze-nie-ma)
+- [Budowanie samemu](#budowanie-samemu)
+- [Autorzy](#autorzy)
 
 ---
 
-## Requirements
+## Co potrafi
 
-- **The Long Dark on Steam, for Windows, version 2.58 188966 S.** Every player needs the same game version. The mod checks
-  this when someone joins.
-- **Steam running and logged in.** Co-op connects through Steam, and every player needs their own copy of the game.
-- **Everyone on the same co-op protocol.** This release is **v0.13.1 (protocol v27)**. It's the mod from the
-  `TLDCoop-Setup.exe` that went around on 2026-10-18, plus one fix that lets MelonLoader mods run beside it. The
-  protocol is the same, so players who used that installer can play with players who use this zip. If you used the
-  installer and also use MelonLoader mods, put this release's `winhttp.dll` in place of the installer's (see
-  [Troubleshooting](#troubleshooting)).
+[![Znajomy w Twoim świecie, obok wilka upolowanego razem](screenshots/05-friend-in-your-world.jpg)](screenshots/05-friend-in-your-world.jpg)
 
-## Before you start
+**Start z menu gry**
+- Po wybraniu NEW, RESUME albo LOAD w Survival pojawia się wybór **SOLO albo CO-OP**.
+- Host dostaje krótki **kod**, a znajomi go wpisują. Nie trzeba podawać IP ani przekierowywać portów, bo wszystko
+  idzie przez Steam.
+- Przed startem jest **poczekalnia** (lobby). Host wpuszcza graczy (LET IN / TURN AWAY), oni wciskają READY, a host
+  START.
+- Mogą grać **maksymalnie 4 osoby**. Do trwającej gry też można dołączyć: host wciska **F9**, żeby wpuścić gracza,
+  albo **F10**, żeby go odrzucić.
+- Gra toczy się na poziomie trudności hosta, w jego świecie, z jego porą dnia i pogodą.
 
-Back up your saves. Copy this folder somewhere safe:
+**Widzicie się nawzajem**
+- Znajomi wyglądają jak jedna z **23 postaci z fabuły** (Mackenzie, Astrid, Molly, Jane…).
+- Widać, co trzymają w rękach. Latarnia, pochodnia czy raca naprawdę oświetlają otoczenie.
+- Postacie jedzą, śpią w łóżku, kucają i podają przedmioty.
+- Nad głową widać nazwę gracza, a na krawędzi ekranu strzałkę. Jest też mały radar, a gracze są widoczni na mapie
+  gry.
 
-```
-%LOCALAPPDATA%\Hinterland\TheLongDark
-```
+**Wspólny świat**
+- **Zwierzęta są wspólne.** Wszyscy widzą tego samego wilka, a strzały trafiają w to samo zwierzę.
+- Wspólne są też **tusze** (mięso, skóra), **przedmioty** (co jeden podniesie, znika u innych), **szafki i sejfy**,
+  **ogniska i gotowanie**, rozbite meble i zebrane rośliny.
+- **Unikalne przedmioty** (notatki, klucze, plecak techniczny) każdy ma swoje.
 
-(Paste that into the File Explorer address bar.) TLDCoop is a playtest; a backup costs you nothing.
+**Przetrwanie razem**
+- Każdy przedmiot można **dać znajomemu**.
+- Ze **spaniem i czekaniem** jest tak, że czas przeskakuje dopiero, gdy wszyscy się położą. Każdy głosuje, jak długo.
+- **Śmierć:** ciało zostaje z plecakiem, a Ty wracasz jako nowy ocalały obok znajomych.
+- **Zrywanie połączenia:** po powrocie zmiany obu stron są łączone. Zapis hosta przechowuje świat, a zapis każdego
+  gracza jego postać.
 
----
+## Jak działa obsługa DLC
 
-## Install
+Świat należy do hosta, więc może w nim być wszystko z DLC, które host ma zainstalowane: regiony, budynki,
+przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 
-1. **Download** `TLDCoop-v0.13.1.zip` from the [Releases page](../../releases/latest).
-2. **Close The Long Dark** if it's running.
-3. **Open the game folder:** in Steam, right-click **The Long Dark** → **Manage** → **Browse local files**. It's the
-   folder with `tld.exe` in it.
-4. **Check for a `winhttp.dll` that's already there.** Normally there isn't one. If there is, right-click it →
-   **Properties** → **Details**. If the product name is **MelonLoader.Bootstrap**, it's MelonLoader: **rename it to
-   `winmm.dll`** and go on (MelonLoader works the same under that name; see
-   [MelonLoader](#melonloader)). If it's something else, see
-   [Playing with other mods](#playing-with-other-mods) before you go on.
-5. **Copy everything inside the zip into the game folder,** so that `winhttp.dll` sits **right next to `tld.exe`**
-   and there's a `TLDCoop` folder beside it. If Windows asks about replacing files in `TLDCoop`, say yes (that's an
-   update).
+- Przy dołączaniu każdy gracz wysyła hostowi listę swoich zainstalowanych DLC. Lista pochodzi **z samej gry**
+  (`TLD.OptionalContent.OptionalContentManager`), a nie ze sztywnej listy w modzie. Dzięki temu *Tales from the Far
+  Territory*, *Iron Road* i przyszłe dodatki działają tak samo.
+- Gracz, któremu **brakuje któregoś DLC hosta**, nie zostanie wpuszczony. Zobaczy komunikat **MISSING DLC** z nazwami
+  brakujących dodatków.
+- Gracz, który ma **więcej DLC niż host**, wchodzi bez problemu.
+- Host może wyłączyć sprawdzanie: `dlc_check=0` w `coop.ini`. Robi to na własne ryzyko, bo regiony i przedmioty z
+  brakującego DLC nie zadziałają u tego gracza.
+- W `TLDCoop\coop.log` po uruchomieniu co-opa jest linia, która pokazuje, co widzi gra:
+  ```
+  dlc: installed optional content: ... (owned: ...)
+  ```
 
-When you're done, the game folder looks like this:
+## Wymagania
+
+- **The Long Dark 2.58** (188966 S) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
+  sprawdza.
+- **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v28**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+  (v27).
+- **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
+
+## Instalacja
+
+1. **Pobierz zip.** Wejdź w zakładkę **Actions** tego repozytorium, otwórz najnowszy udany build (zielony) i na dole
+   strony, w sekcji **Artifacts**, kliknij **TLDCoop_DLC**. Musisz być zalogowany na GitHubie.
+2. **Zrób kopię zapisów.** Wklej w pasek adresu Eksploratora `%LOCALAPPDATA%\Hinterland\TheLongDark` i skopiuj ten
+   folder w bezpieczne miejsce.
+3. **Zamknij The Long Dark.**
+4. **Otwórz folder gry.** W Steamie kliknij prawym na **The Long Dark**, potem **Zarządzaj** → **Przeglądaj pliki
+   lokalne**. To folder z plikiem `tld.exe`.
+5. **Sprawdź, czy nie ma tam już `winhttp.dll`.** Zwykle go nie ma. Jeśli jest, kliknij go prawym → **Właściwości**
+   → **Szczegóły**. Jeśli nazwa produktu to **MelonLoader.Bootstrap**, zmień nazwę pliku na `winmm.dll` (zobacz
+   [Inne mody](#inne-mody-melonloader)).
+6. **Wypakuj zip do folderu gry.** `winhttp.dll` ma leżeć **bezpośrednio obok `tld.exe`**, a folder `TLDCoop` obok
+   niego.
+
+Tak ma wyglądać folder gry:
 
 ```
 TheLongDark\
-├── tld.exe                       (the game, already there)
-├── winhttp.dll                   ← TLDCoop
-└── TLDCoop\                      ← TLDCoop
-    ├── tldcoop_bodies.bundle       the characters friends appear as
-    ├── tldcoop_eating.bundle       the bodies' animations
+├── tld.exe                       (gra, już tam jest)
+├── winhttp.dll                   ← TLDCoop_DLC
+└── TLDCoop\                      ← TLDCoop_DLC
+    ├── tldcoop_bodies.bundle       postacie, jako które widać znajomych
+    ├── tldcoop_eating.bundle       animacje
     ├── tldcoop_handover.bundle
     └── tldcoop_sleeping.bundle
 ```
 
-6. **Start the game from Steam** as usual. To check that it's in: in Survival, pick NEW or RESUME, and you'll get a
-   **SOLO OR CO-OP?** screen. The mod also writes a log to `TLDCoop\coop.log`.
+7. **Uruchom grę ze Steama.** W Survival wybierz NEW albo RESUME. Jeśli pojawi się ekran **SOLO OR CO-OP?**, mod
+   działa. Dziennik moda jest w `TLDCoop\coop.log`.
 
-Every player installs the same zip.
+Każdy gracz instaluje ten sam zip.
 
-## How to play
+## Jak grać
 
-1. **Everyone** starts The Long Dark with Steam running.
-2. **The host** picks **Survival → NEW** (or **RESUME** or **LOAD**), then **CO-OP**. On the setup screen: MODE
-   **HOST**, pick a **CHARACTER**, then **CONFIRM**. The lobby shows **your code**: send it to your friends.
-3. **Each friend** picks **Survival → NEW** (or RESUME or LOAD), then **CO-OP**, MODE **JOIN**, types the host's
-   **code**, then **CONFIRM** and **READY**.
-4. **The host** presses **LET IN** for each friend, then **START** once everyone is READY. Everyone loads into the
-   host's world together.
+1. **Wszyscy** uruchamiają The Long Dark z włączonym Steamem.
+2. **Host** wybiera **Survival → NEW** (albo RESUME lub LOAD), potem **CO-OP**. Na ekranie ustawień wybiera MODE
+   **HOST**, postać (**CHARACTER**) i **CONFIRM**. W poczekalni widzi **swój kod** i wysyła go znajomym.
+3. **Każdy znajomy** wybiera **Survival → NEW** (albo RESUME lub LOAD), potem **CO-OP**, MODE **JOIN**, wpisuje
+   **kod** hosta, a na koniec **CONFIRM** i **READY**.
+4. **Host** wciska **LET IN** przy każdym znajomym, a gdy wszyscy są READY, **START**. Wszyscy ładują się razem do
+   świata hosta.
 
-Joining a game that's already going works too: the friend does step 3, and the host gets a message in the game:
-**F9** lets them in, **F10** turns them away.
+Do gry, która już trwa, też da się dołączyć. Znajomy robi krok 3, a host dostaje komunikat w grze: **F9** wpuszcza,
+**F10** odrzuca.
 
-The name your friends see is your **Steam name**. The host's code stays the same from game to game, so your group
-can reuse it.
+Znajomi widzą Twoją **nazwę ze Steama**. Kod hosta się nie zmienia, więc grupa może go używać za każdym razem.
 
-## Settings
+## Ustawienia
 
-The co-op setup screen covers what most players need: host or join, your character, the join code, and the NAMES,
-RADAR and AUTO MAP switches. There are a few more options in `TLDCoop\coop.ini` in the game folder, which is created
-on first launch with a comment on every line. Restart the game after you edit it.
+Ekran ustawień co-opa obejmuje to, czego zwykle potrzeba: hostowanie lub dołączanie, postać, kod oraz przełączniki
+NAMES, RADAR i AUTO MAP. Kilka dodatkowych opcji jest w `TLDCoop\coop.ini` w folderze gry. Ten plik tworzy się przy
+pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zrestartować grę.
 
-| Setting | What it does |
+| Ustawienie | Co robi |
 |---|---|
-| `ask_to_join=1` | Each friend asks to join and the host lets them in. `0` lets anyone with the code straight in. |
-| `body=` | Your character (the setup screen sets this). |
-| `voice=male` / `female` | Your survivor's voice. |
-| `[hud] names / radar / chart` | Name tags, the radar, and auto-charting your map (each `1` on, `0` off). |
-| `[struggle] picker_scale=0.5` | How long the weapon picker stays up when an animal jumps you, in co-op (`1` = the game's own). |
-| `transport=local` | For LAN play by IP instead of Steam codes (with `bind_ip`, `host_ip`, `port`). |
+| `dlc_check=1` | **Nowe.** Gracz musi mieć wszystkie DLC hosta. `0` wpuszcza każdego (na własne ryzyko). |
+| `ask_to_join=1` | Każdy znajomy prosi o wejście, a host go wpuszcza. `0` wpuszcza od razu każdego z kodem. |
+| `body=` | Twoja postać (ustawia ją ekran co-opa). |
+| `voice=male` / `female` | Głos Twojej postaci. |
+| `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
+| `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
+| `transport=local` | Gra w sieci lokalnej po IP zamiast przez kody Steam (z `bind_ip`, `host_ip`, `port`). |
 
----
+## Inne mody (MelonLoader)
 
-## Playing with other mods
+TLDCoop nie potrzebuje MelonLoadera i nie przeszkadza mu. Nie zmienia plików gry, działa tylko w pamięci, a w
+trybie solo nic nie robi. Gra wczytuje go jako `winhttp.dll`, więc MelonLoader musi mieć **inną nazwę**:
 
-TLDCoop is made to stay out of other mods' way:
-
-- **It's its own loader.** The game loads `winhttp.dll` by itself; TLDCoop doesn't need MelonLoader and doesn't
-  install, replace or change it. It doesn't touch `Mods\`, `Plugins\`, `UserData\`, `UserLibs\` or `MelonLoader\`.
-- **It shares game functions with other mods safely.** TLDCoop hooks about 130 of the game's functions, and
-  MelonLoader mods patch many of the same ones (`GameManager.Update` is a favourite). Both run, one after the other.
-- **It changes no game files.** Everything happens in memory while the game runs. All of its own files are
-  `winhttp.dll` and the `TLDCoop\` folder, and deleting them puts the game back exactly as it was.
-- **Solo is untouched.** Until you pick CO-OP, nothing is sent anywhere, and your solo games play as before, with
-  your other mods.
-
-### MelonLoader
-
-MelonLoader and TLDCoop each need the game to load one DLL, and they must have **different names**:
-
-| MelonLoader's DLL in the game folder is called | What to do |
+| Plik MelonLoadera w folderze gry | Co zrobić |
 |---|---|
-| `version.dll` | Nothing, if your mods load. If they don't (recent Windows 11 updates stop `version.dll` from loading for many players), rename it to `winmm.dll`. |
-| `winhttp.dll` (the usual fix for that Windows update) | **Rename it to `winmm.dll`**, then install TLDCoop. TLDCoop needs the name `winhttp.dll`. |
-| `winmm.dll` | Nothing. |
+| `version.dll` | Nic, jeśli Twoje mody się ładują. Jeśli nie (zdarza się po nowszych aktualizacjach Windows 11), zmień nazwę na `winmm.dll`. |
+| `winhttp.dll` | **Zmień nazwę na `winmm.dll`**, potem zainstaluj TLDCoop. |
+| `winmm.dll` | Nic. |
 
-Not sure which `winhttp.dll` you have? Right-click it → **Properties** → **Details**: MelonLoader's says
-**MelonLoader.Bootstrap** (about 10 MB). TLDCoop's has no product name (about 2 MB).
+Jak rozpoznać, czyj jest `winhttp.dll`? Kliknij prawym → **Właściwości** → **Szczegóły**. Plik MelonLoadera ma
+nazwę **MelonLoader.Bootstrap** (ok. 10 MB), a plik TLDCoop nie ma nazwy produktu (ok. 2 MB).
 
-**Tested:** MelonLoader 0.7.2 as `winmm.dll` with ModSettings, DeveloperConsole, NoCameraSway,
-TinyTweaks-PauseOnRadial and TinyTweaks-RunWithLantern, in both the host's and the friend's game. Both games load
-all five, and the lobby, items, wolf fights, handing things over, containers, fires, sleeping together, and death and
-respawn all work.
+**Pamiętaj:** wszyscy w grupie powinni mieć te same mody zmieniające rozgrywkę, np. dodające przedmioty albo
+zmieniające loot. Mody graficzne i od interfejsu mogą się różnić.
 
-### What to keep in mind
+## Wyłączanie i odinstalowanie
 
-- **Everyone in a group should run the same gameplay mods.** Co-op shares the host's world (items, containers,
-  animals, fires). If the host has a mod that adds new items or changes loot and a friend doesn't, the friend's
-  game has nothing to show for those items. Visual and interface mods (HUD, graphics, sounds) are fine to differ.
-- **Another `winhttp.dll` that isn't MelonLoader's:** only one file can have that name. If some other tool already
-  uses it, TLDCoop and that tool can't both be installed this way. Keep theirs, don't overwrite it, and open an
-  issue here so we can look into it.
-- **Mods that change the same game systems** (sleeping, time skipping, death and respawn, the Survival menu) may
-  disagree with co-op's versions of them. If something odd happens, try without the other mod first, and tell us
-  which one it was.
+- **Odinstalowanie:** przy zamkniętej grze usuń `winhttp.dll` i folder `TLDCoop` z folderu gry. Jeśli chcesz
+  zachować ustawienia, zachowaj `TLDCoop\coop.ini`.
+- **Wyłączenie bez usuwania:** utwórz w folderze `TLDCoop` pusty plik o nazwie `disabled` (bez rozszerzenia). Mod
+  wtedy nic nie robi. Usuń ten plik, żeby go włączyć z powrotem.
 
----
+Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda ich nie rusza.
 
-## Uninstall or turn off
+## Czy to bezpieczne?
 
-- **Uninstall:** with the game closed, delete `winhttp.dll` and the `TLDCoop` folder from the game folder. (Keep
-  `TLDCoop\coop.ini` if you want your settings next time.)
-- **Turn it off without deleting:** create an empty file named `disabled` (no extension) inside the `TLDCoop` folder.
-  The DLL then does nothing at all. Delete that file to turn co-op back on.
+- **Cały kod jest w tym repozytorium**, a `winhttp.dll` buduje automatycznie GitHub Actions
+  (`.github/workflows/build.yml`).
+- **Sprawdź pobrany plik.** Przy każdym buildzie GitHub wypisuje sumę SHA-256 każdego pliku. W PowerShellu
+  `Get-FileHash winhttp.dll` powinno pokazać tę samą wartość.
+- **Dlaczego `winhttp.dll`?** Gra szuka tej standardowej biblioteki Windows najpierw we własnym folderze. Dzięki temu
+  mod ładuje się bez instalatora. Wszystkie prawdziwe wywołania przekazuje do oryginalnego `winhttp.dll` z
+  `C:\Windows\System32`.
+- **Antywirus** może oznaczyć plik jako podejrzany, bo mod wpina się w kod gry. To fałszywy alarm.
+- Mod czyta i zapisuje tylko swój folder `TLDCoop\` (ustawienia, dziennik) oraz zwykłe zapisy gry. Ze Steamem łączy
+  się tylko po wybraniu CO-OP.
 
-Your saves are the game's own, in `%LOCALAPPDATA%\Hinterland\TheLongDark`; uninstalling doesn't touch them.
+## Rozwiązywanie problemów
 
-## Is it safe?
+- **Nie ma ekranu SOLO OR CO-OP?** Sprawdź, czy `winhttp.dll` leży bezpośrednio obok `tld.exe` i czy w folderze
+  `TLDCoop` nie ma pliku `disabled`. Potem zajrzyj do `TLDCoop\coop.log`.
+- **MISSING DLC:** brakuje Ci DLC, które ma host. Zainstaluj je na Steamie albo poproś hosta o `dlc_check=0`.
+- **„mod protocol version differs”:** ktoś ma inną wersję moda, np. oryginalny TLDCoop. Wszyscy muszą mieć ten sam
+  zip.
+- **„game version differs”:** ktoś ma inną aktualizację gry. Niech Steam zaktualizuje grę u wszystkich.
+- **Gra zamyka się w menu głównym przy modach MelonLoadera:** masz `winhttp.dll` ze starego instalatora
+  `TLDCoop-Setup.exe` (z 18.10). Podmień go na ten z zipa.
+- **Mody MelonLoadera przestały się ładować po instalacji:** MelonLoader miał nazwę `winhttp.dll`. Zainstaluj go
+  ponownie i zmień nazwę jego pliku na `winmm.dll`.
+- **Znajomi wyglądają jak kolorowe kapsuły:** u osoby, która widzi kapsuły, brakuje
+  `TLDCoop\tldcoop_bodies.bundle`. Skopiuj go z zipa.
+- **Zgłaszanie błędu:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Plik nadpisuje się przy każdym starcie gry,
+  więc skopiuj go przed ponownym uruchomieniem.
 
-The fair question for any DLL from the internet:
+## Czego jeszcze nie ma
 
-- **The source is right here.** Everything that goes into `winhttp.dll` is in [`src/`](src/), and you can
-  [build it yourself](#build-it-yourself) instead of using the download.
-- **Check your download.** The release page lists the SHA-256 of each file. In PowerShell,
-  `Get-FileHash winhttp.dll` should print the same value.
-- **Why `winhttp.dll`?** That's how the mod gets loaded with no installer and no mod loader: the game looks in its
-  own folder first for this standard Windows library. TLDCoop passes every real Windows call through to the real
-  `winhttp.dll` in `C:\Windows\System32`, and starts co-op alongside. Many game mods and tools load this way.
-- **Antivirus:** because the mod hooks into the game's code, some antivirus programs may flag it with a "generic"
-  or "suspicious" detection. That's a false positive; the source is here to check.
-- **What it reads and writes:** only its own `TLDCoop\` folder (settings, log) and the game's normal saves. It talks
-  to Steam only to connect your group, and only after you pick CO-OP.
+- **Pociąg z Iron Road** (`TLD.SteamTrain.*`) nie jest jeszcze synchronizowany między graczami.
+- **Unikalne przedmioty z Iron Road** (np. woskowe cylindry) nie są jeszcze na liście unikalnych. Może się zdarzyć,
+  że tylko jeden gracz podniesie dany przedmiot.
+- **Przedmioty w rękach znajomego** (pochodnia, karabin…) w 2.58 są tworzone inaczej niż wcześniej. To miejsce
+  trzeba sprawdzić w testach.
 
-## Troubleshooting
+## Budowanie samemu
 
-- **No SOLO OR CO-OP? screen:** check that `winhttp.dll` is right next to `tld.exe` (not in a subfolder) and that
-  there's no `TLDCoop\disabled` file. Then look at `TLDCoop\coop.log`.
-- **"mod protocol version differs":** someone has a different TLDCoop version. Everyone installs the same release.
-- **"game version differs":** someone's game has a different update. Let Steam update everyone.
-- **The game closes at the main menu with MelonLoader mods installed:** you have the `winhttp.dll` from the
-  2026-10-18 `TLDCoop-Setup.exe`. That build crashes when a MelonLoader mod patches one of the game functions
-  TLDCoop also hooks. Put this release's `winhttp.dll` in its place.
-- **My MelonLoader mods stopped loading after I installed TLDCoop:** MelonLoader was probably named `winhttp.dll`.
-  The `TLDCoop-Setup.exe` installer moves another mod's `winhttp.dll` aside as `winhttp.dll.tldcoop-backup`. Rename
-  that file to `winmm.dll`. If you copied TLDCoop over MelonLoader's `winhttp.dll` by hand, reinstall MelonLoader
-  and rename its DLL to `winmm.dll` (see [MelonLoader](#melonloader)).
-- **Friends show as coloured capsules:** `TLDCoop\tldcoop_bodies.bundle` is missing on the PC of whoever sees
-  capsules. Copy it in from the zip.
-- **Reporting a bug:** open an [issue](../../issues) and attach `TLDCoop\coop.log` from **every** player in the
-  game. The log is rewritten each time the game starts, so copy it before you launch again.
+Najprościej: każde wypchnięcie zmian do repozytorium uruchamia build w GitHub Actions. Gotowy zip jest w
+**Artifacts**.
 
----
-
-## Build it yourself
-
-You need Windows, [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/) with "Desktop
-development with C++", [CMake](https://cmake.org/) and [Ninja](https://ninja-build.org/).
+Lokalnie potrzebujesz Windowsa,
+[Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/) z „Desktop development with C++”,
+[CMake](https://cmake.org/) i [Ninja](https://ninja-build.org/):
 
 ```
-git clone --recursive https://github.com/ScarredVeins/TLDCo-Op.git
-cd TLDCo-Op
+git clone --recursive https://github.com/cgpt28641-ops/TLDCoop_DLC.git
+cd TLDCoop_DLC
 build.cmd
 ```
 
-That makes `build\winhttp.dll` (release, static runtime). Copy it next to `tld.exe`, and the `.bundle` files from the
-release zip into `TLDCoop\`. The animation bundles are also in [`bodypack/Actions`](bodypack/Actions).
-`build\*_test.exe` are offline unit tests (no game needed). `build\tldbot.exe` is a fake second player for testing
-alone (`transport=local`).
+Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zipa do `TLDCoop\`. Pliki
+`build\*_test.exe` to testy działające bez gry, w tym `content_test.exe` do obsługi DLC.
 
-| Folder | What's in it |
+| Folder / plik | Zawartość |
 |---|---|
-| `src/` | The mod. `dllmain.cpp` loads it; `src/net/` is the protocol and connection code (no game code, unit-tested). |
-| `tests/` | Offline unit tests. |
-| `bodypack/` | How the character bodies are built (Unity 6000.0.60f1, from the game's Episode 5 characters), and the action animations. |
-| `third_party/minhook` | [MinHook](https://github.com/TsudaKageyu/minhook), for hooking. Its trampoline builder is replaced by `src/minhook_trampoline.c`, so that other mods can hook the same functions. |
-| `tools/` | `gen_proxy_exports.py` (the winhttp exports) and the body-pack build helpers. |
+| `src/` | Mod. `dllmain.cpp` go ładuje, a `src/net/` to protokół i połączenie (bez kodu gry, z testami). |
+| `src/net/content.h` | **Nowe.** Porównywanie list DLC graczy. |
+| `src/optional_content.cpp` | **Nowe.** Odczyt zainstalowanych DLC z gry. |
+| `tests/` | Testy bez gry, w tym `content_test.cpp`. |
+| `bodypack/` | Jak budowane są postacie (Unity 6000.0.60f1) i animacje. |
+| `third_party/minhook` | [MinHook](https://github.com/TsudaKageyu/minhook) do przechwytywania funkcji. |
+| `tools/` | Narzędzia pomocnicze. |
 
-## Credits
+## Autorzy
 
-- Made by **ScarredVeins**, built with AI coding agents (Claude Code).
-- [MinHook](https://github.com/TsudaKageyu/minhook) by Tsuda Kageyu (BSD 2-Clause).
-- **The Long Dark** and its characters belong to **Hinterland Studio**. TLDCoop is an unofficial fan mod. It isn't
-  made or endorsed by Hinterland, and you need to own the game to play it. The character bodies in the release are
-  built from the game's own Episode 5 characters, for players who own The Long Dark.
+- Mod **TLDCoop**: **ScarredVeins**, zbudowany z pomocą agentów AI (Claude Code).
+  [Oryginalne repozytorium](https://github.com/ScarredVeins/TLDCo-Op).
+- Poprawki pod 2.58: **[afkfatih](https://github.com/afkfatih)**.
+- Obsługa DLC (TLDCoop_DLC): **cgpt28641-ops** z Claude.
+- [MinHook](https://github.com/TsudaKageyu/minhook): Tsuda Kageyu (licencja BSD 2-Clause).
+- **The Long Dark** i jego postacie należą do **Hinterland Studio**. To nieoficjalny mod fanowski, niewykonany ani
+  niepopierany przez Hinterland. Do gry potrzebna jest własna kopia gry.
