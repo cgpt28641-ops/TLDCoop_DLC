@@ -27,7 +27,18 @@ jobs:
         shell: cmd
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release || exit /b 1
-          cmake --build build || exit /b 1
+          cmake --build build > build.log 2>&1
+          set rc=%ERRORLEVEL%
+          type build.log
+          exit /b %rc%
+
+      - name: Report compiler warnings in the fork's files
+        if: always()
+        shell: pwsh
+        run: |
+          $w = Select-String -Path build.log -Pattern 'warning C\d+' | Where-Object { $_.Line -match 'content|optional_content|session\.cpp|coop_menu|core\.cpp|config\.cpp|net_runtime|bot\\main' }
+          if ($w) { foreach ($x in $w) { Write-Host "::warning title=compiler::$($x.Line.Trim())" } }
+          else { Write-Host "::notice title=compiler::no warnings in the fork's files" }
 
       - name: Offline tests
         shell: pwsh
@@ -35,8 +46,16 @@ jobs:
           $failed = @()
           foreach ($t in Get-ChildItem build\*_test.exe) {
             Write-Host "=== $($t.Name)"
-            & $t.FullName
-            if ($LASTEXITCODE -ne 0) { $failed += $t.Name }
+            $out = & $t.FullName 2>&1 | Out-String
+            Write-Host $out
+            $last = ($out.Trim() -split "`n")[-1].Trim()
+            if ($LASTEXITCODE -ne 0) {
+              $failed += $t.Name
+              $bad = ($out -split "`n" | Where-Object { $_ -match 'FAIL' }) -join ' | '
+              Write-Host "::error title=$($t.BaseName)::$bad"
+            } else {
+              Write-Host "::notice title=$($t.BaseName)::passed: $last"
+            }
           }
           if ($failed.Count) { Write-Error "failed: $($failed -join ', ')"; exit 1 }
 
@@ -51,7 +70,10 @@ jobs:
           Copy-Item -Recurse upstream\zip\TLDCoop pack\TLDCoop
           Copy-Item build\winhttp.dll pack\
           Copy-Item INSTALL_DLC.txt pack\INSTALL.txt
-          Get-FileHash pack\winhttp.dll, pack\TLDCoop\*.bundle | Format-Table Hash, Path -AutoSize | Out-String -Width 300 | Write-Host
+          foreach ($f in Get-ChildItem -Recurse -File pack) {
+            $h = (Get-FileHash $f.FullName).Hash
+            Write-Host "::notice title=sha256::$($f.Name) $h ($($f.Length) bytes)"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
