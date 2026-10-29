@@ -417,6 +417,7 @@ struct Session::Impl {
             case Msg::ContainerPut:
             case Msg::ObjectPut:
             case Msg::FirePut:
+            case Msg::WaterPut:
             case Msg::Harvest:     // a carcass harvest (the host counts each once: net::HarvestLedger)
             case Msg::Quartered: return true;
             default: return false;  // questions (ItemWant, ContainerWant) are asked again once the link is back
@@ -859,6 +860,7 @@ struct Session::Impl {
             case Msg::ItemList:
             case Msg::ObjectList:
             case Msg::FireList:
+            case Msg::WaterList:
             case Msg::GameMode: {
                 if (hosting() || !linked) return;
                 keep_packet(*l, type, data, size, now);
@@ -869,6 +871,7 @@ struct Session::Impl {
             case Msg::ContainerPut:
             case Msg::ObjectPut:
             case Msg::FirePut:
+            case Msg::WaterPut:
             case Msg::Sleep:
             case Msg::Give: {
                 if (!linked) return;

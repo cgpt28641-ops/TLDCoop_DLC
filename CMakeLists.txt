@@ -69,6 +69,7 @@ add_library(tldcoop SHARED
   src/world_keep.cpp
   src/world_mode.cpp
   src/world_sync.cpp
+  src/world_water.cpp
 )
 set_target_properties(tldcoop PROPERTIES OUTPUT_NAME winhttp)
 target_link_libraries(tldcoop PRIVATE minhook tldnet)
@@ -104,3 +105,5 @@ add_executable(handover_test tests/handover_test.cpp)
 target_link_libraries(handover_test PRIVATE tldnet)
 add_executable(content_test tests/content_test.cpp)
 target_link_libraries(content_test PRIVATE tldnet)
+add_executable(water_test tests/water_test.cpp)
+target_link_libraries(water_test PRIVATE tldnet)

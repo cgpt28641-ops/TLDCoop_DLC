@@ -80,6 +80,10 @@
 //                          sender's world (lit, fed, embers, out...): TLD's own save record for it (one entry of
 //                          FireManager.Serialize's m_SerializedFires); flags 1: it's gone (a campfire taken apart)
 //   FireList host->client  scene[48], u32 n + n bytes: all the host's fires there (FireManager.Serialize())
+//   WaterPut either        scene[48], u32 seq, water source id (u16 n + n), u32 n + n bytes: a water source (a toilet,
+//                          a tank) changed in the sender's world: its WaterSource.Serialize() (TLDCoop_DLC)
+//   WaterList host->client scene[48], u32 n, then n times id (u16 n + n), u32 n + n bytes: every water source the host
+//                          has there, when a friend comes into its scene (TLDCoop_DLC)
 //   CaughtUp client->host  u32 n: once linked (again), after the n world changes the client made while the link was
 //                          down (kept, sent first) are all acked; the host sends its lists of the world after this
 //   GameMode host->client  u32 n + n bytes: the host's experience mode (ExperienceModeManager.Serialize()), i32 seed:
@@ -96,12 +100,13 @@
 #include <cstring>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 28;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 29;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -131,6 +136,8 @@ constexpr uint16_t kProtocolVersion = 28;  // v4: World. v5: Animals. v6: sounds
                                            // sleep list's REST
                                            // v28 (TLDCoop_DLC): Hello's content (installed DLC), Reject's
                                            // MissingContent
+                                           // v29 (TLDCoop_DLC): water sources (toilets, tanks): WaterPut,
+                                           // WaterList
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -152,7 +159,7 @@ enum class Msg : uint8_t {
     Reliable = 14, Ack = 15, Hit = 16, Thrown = 17, Carcasses = 18, Harvest = 19, Quartered = 20, Chunk = 21,
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
-    Give = 37
+    Give = 37, WaterPut = 38, WaterList = 39
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1010,6 +1017,59 @@ inline void write_fire_list(Writer& w, const FireListMsg& m) {
 inline bool read_fire_list(Reader& r, FireListMsg& m) {
     m.scene = r.get_str(kSceneLen);
     m.text = r.get_long_blob(kFireListMax);
+    return r.ok();
+}
+
+// Water sources (TLDCoop_DLC): toilets, tanks... TLD's WaterSource, named by its persistent id (or its position when it
+// has none), with TLD's own save text for it (WaterSource.Serialize(): the litres in it, their quality).
+constexpr size_t kWaterTextMax = 4 * 1024;  // one source's WaterSource.Serialize()
+constexpr size_t kWaterListMax = 512;       // sources in one WaterList
+struct WaterPutMsg {
+    std::string scene;
+    uint32_t seq = 0;  // the sender's change counter
+    std::string id;
+    std::string text;
+};
+struct WaterListMsg {
+    std::string scene;
+    std::vector<std::pair<std::string, std::string>> sources;  // id, text
+};
+
+inline void write_water_put(Writer& w, const WaterPutMsg& m) {
+    w.put_str(m.scene, kSceneLen);
+    w.put(m.seq);
+    w.put_blob(m.id, kPdidMax);
+    w.put_long_blob(m.text);
+}
+
+inline bool read_water_put(Reader& r, WaterPutMsg& m) {
+    m.scene = r.get_str(kSceneLen);
+    m.seq = r.get<uint32_t>();
+    m.id = r.get_blob(kPdidMax);
+    m.text = r.get_long_blob(kWaterTextMax);
+    return r.ok();
+}
+
+inline void write_water_list(Writer& w, const WaterListMsg& m) {
+    w.put_str(m.scene, kSceneLen);
+    const uint32_t n = static_cast<uint32_t>(m.sources.size() < kWaterListMax ? m.sources.size() : kWaterListMax);
+    w.put(n);
+    for (uint32_t i = 0; i < n; ++i) {
+        w.put_blob(m.sources[i].first, kPdidMax);
+        w.put_long_blob(m.sources[i].second);
+    }
+}
+
+inline bool read_water_list(Reader& r, WaterListMsg& m) {
+    m.scene = r.get_str(kSceneLen);
+    const uint32_t n = r.get<uint32_t>();
+    if (!r.ok() || n > kWaterListMax) return false;
+    m.sources.clear();
+    for (uint32_t i = 0; i < n && r.ok(); ++i) {
+        std::string id = r.get_blob(kPdidMax);
+        std::string text = r.get_long_blob(kWaterTextMax);
+        m.sources.emplace_back(std::move(id), std::move(text));
+    }
     return r.ok();
 }
 
