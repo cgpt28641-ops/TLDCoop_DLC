@@ -8,6 +8,8 @@ zasługa za sam mod należy do niego (zobacz [Autorzy](#autorzy)). Ta wersja dod
 - **Działanie na The Long Dark 2.58** (188966 S). To poprawki
   [afkfatih](https://github.com/afkfatih/TLDCo-Op/tree/support-tld-2.58) z
   [tego zgłoszenia](https://github.com/ScarredVeins/TLDCo-Op/issues/1).
+- **Jeden gracz naraz w szafce.** Gdy ktoś przeszukuje szafkę, skrzynię czy zwłoki, inni nie mogą jej otworzyć,
+  dopóki nie skończy. Wcześniej dwie osoby w tej samej szafce potrafiły wysypać grę hosta.
 - **Wspólną wodę w toaletach i zbiornikach.** Co jeden gracz zaczerpnie, tego ubywa u wszystkich.
 - **Obsługę DLC.** Mod pyta grę, jakie DLC ma zainstalowane, i nie wpuszcza do świata hosta gracza, któremu
   brakuje jego DLC. Gracz dostaje wtedy jasny komunikat, czego mu brakuje.
@@ -95,7 +97,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.58** (188966 S) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v29**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v30**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 

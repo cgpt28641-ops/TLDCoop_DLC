@@ -6,15 +6,18 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+#include "coop_notices.h"
 #include "core.h"
 #include "game_state.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "net/container_locks.h"
 #include "net/uniques.h"
 #include "net_runtime.h"
 
@@ -79,6 +82,9 @@ struct Api {
     ptrdiff_t inv_items = -1;                      // Inventory.m_Items (List<GearItemObject>)
     const MethodInfo* being_inspected = nullptr;   // PlayerManager.GearItemBeingInspected()
     const MethodInfo* inspecting = nullptr;        // PlayerManager.IsInspectModeActive()
+    // TLDCoop_DLC: is the player busy with a container (one at a time in it)?
+    ptrdiff_t searching = -1, opening = -1, closing = -1;  // Container.m_SearchInProgress, m_OpenInProgress, m_PendingClose
+    ptrdiff_t pm_container = -1;                   // PlayerManager.m_Container (looking at what a search found)
 } api;
 
 bool g_ready = false;
@@ -526,6 +532,251 @@ VoidFn g_begin_open = nullptr;
 ShowFn g_show = nullptr;
 PanelEnableFn g_panel_enable = nullptr;
 
+// --- TLDCoop_DLC: one player at a time in a container (net/container_locks.h) ------------------------------------
+// Two players in the same container crashed the host: one's take loaded new contents into the other's game while its
+// panel still showed the old items. So a container is one player's from the search (BeginContainerOpen, or the panel
+// opening without one) until they're done with it (the panel closed, what the search found looked at), and nobody
+// else's game opens it meanwhile. The host decides (net::LockTable); a friend opens once the host has said it's theirs.
+
+net::LockTable g_locks;  // host: who's in which container; client: what the host last said
+struct Mine {
+    std::string key, id;
+    Il2CppObject* c = nullptr;
+    double busy_ms = 0;  // when we were last busy with it
+    double told_ms = 0;  // client: when we last said Take
+};
+std::optional<Mine> g_mine;  // the container we're in
+// Client: the opening waiting for the host's answer (TLD's call, made once the container is ours).
+struct Waiting {
+    std::string key, id;
+    uintptr_t container = 0, on_closed = 0;
+    bool show = false;  // ShowContainerContents (else BeginContainerOpen)
+    double asked_ms = 0;
+};
+std::optional<Waiting> g_lock_wait;
+constexpr double kLockIdleMs = 1000;    // not busy with our container this long: it's free again
+constexpr double kLockAnswerMs = 3000;  // client: no answer from the host this long: give up (the player tries again)
+double g_last_lock_tick = 0;
+
+uintptr_t hold_obj(Il2CppObject* o) { return o ? il2::il2cpp_gchandle_new(o, false) : 0; }
+Il2CppObject* held_obj(uintptr_t h) { return h ? il2::il2cpp_gchandle_get_target(h) : nullptr; }
+void drop_obj(uintptr_t& h) {
+    if (h) il2::il2cpp_gchandle_free(h);
+    h = 0;
+}
+void drop_wait() {
+    if (!g_lock_wait) return;
+    drop_obj(g_lock_wait->container);
+    drop_obj(g_lock_wait->on_closed);
+    g_lock_wait.reset();
+}
+
+uint8_t self_player() { return netrt::status().self_id; }
+
+std::string player_name(uint8_t id) {
+    const net::Status st = netrt::status();
+    for (const net::PlayerInfo& p : st.players)
+        if (p.id == id && !p.name.empty()) return p.name;
+    return id == 0 ? "The host" : "Another player";
+}
+
+bool locking() { return tracking() && netrt::status().connected; }  // offline: nobody else to share it with
+
+bool busy_with(Il2CppObject* c) {
+    if (!alive(c)) return false;
+    if ((api.searching >= 0 && get<bool>(c, api.searching)) || (api.opening >= 0 && get<bool>(c, api.opening)) ||
+        (api.closing >= 0 && get<bool>(c, api.closing)))
+        return true;
+    if (shown_container() == c) return true;
+    Il2CppObject* pm = il2::invoke(api.player_manager, nullptr);
+    bool inspecting = false;
+    return pm && api.pm_container >= 0 && il2::invoke_value(api.inspecting, pm, inspecting) && inspecting &&
+           get<Il2CppObject*>(pm, api.pm_container) == c;
+}
+
+void send_lock(const std::string& scene, const std::string& id, net::LockOp op, uint8_t owner, uint8_t to = 0xFF) {
+    net::ContainerLockMsg m;
+    m.scene = scene;
+    m.id = id;
+    m.op = op;
+    m.owner = owner;
+    net::Writer w(net::Msg::ContainerLock);
+    net::write_container_lock(w, m);
+    if (to == 0xFF)
+        netrt::send_packet(w, true);
+    else
+        netrt::send_packet_to(to, w, true);
+}
+
+// Host: tell every friend who has the container now. `key` is "scene|id".
+void tell_owner(const std::string& key) {
+    const size_t bar = key.find('|');
+    if (bar == std::string::npos) return;
+    net::ContainerLockMsg m;
+    m.scene = key.substr(0, bar);
+    m.id = key.substr(bar + 1);
+    m.op = net::LockOp::State;
+    m.owner = g_locks.owner(key);
+    net::Writer w(net::Msg::ContainerLock);
+    net::write_container_lock(w, m);
+    netrt::send_packet(w, true);
+}
+
+// Before TLD searches or opens container `c`: true to go on now. False when someone else is in it (the player is
+// told), or (client) while we wait for the host to say it's ours (the call is made then: g_lock_wait).
+bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
+    if (!locking() || !alive(c)) return true;
+    const std::string id = id_of(c);
+    const std::string key = net::lock_key(g_scene, id);
+    const uint8_t me = self_player();
+    const uint8_t owner = g_locks.owner(key);
+    if (owner != net::kNoOwner && owner != me) {
+        coop_notices::tell(player_name(owner) + " is searching this right now");
+        logx::info("containers: %s (%s) is %s's right now; not opened", name_of(c).c_str(), short_id(id).c_str(),
+                   player_name(owner).c_str());
+        return false;
+    }
+    const double now = now_ms();
+    if (hosting()) {
+        const bool was_free = owner == net::kNoOwner;
+        g_locks.take(key, me, now);
+        if (was_free) tell_owner(key);
+        g_mine = Mine{key, id, c, now, now};
+        return true;
+    }
+    if (owner == me) {  // ours already (the panel after our search)
+        if (!g_mine || g_mine->key != key) g_mine = Mine{key, id, c, now, 0};
+        g_mine->busy_ms = now;
+        return true;
+    }
+    if (g_lock_wait && g_lock_wait->key == key) {  // asked already: the panel replaces the search as what to do
+        if (show && !g_lock_wait->show) {
+            drop_obj(g_lock_wait->on_closed);
+            g_lock_wait->on_closed = hold_obj(on_closed);
+            g_lock_wait->show = true;
+        }
+        return false;
+    }
+    drop_wait();
+    g_lock_wait = Waiting{key, id, hold_obj(c), hold_obj(on_closed), show, now};
+    send_lock(g_scene, id, net::LockOp::Take, 0);
+    logx::info("containers: %s (%s): asked the host if it's free", name_of(c).c_str(), short_id(id).c_str());
+    return false;
+}
+
+void open_now(Il2CppObject* c, bool show, Il2CppObject* on_closed);  // TLD's own call (below, with the hooks)
+
+// Client: the host's answer for the opening we wait on.
+void lock_answered(const std::string& key, uint8_t owner) {
+    if (!g_lock_wait || g_lock_wait->key != key) return;
+    Il2CppObject* c = held_obj(g_lock_wait->container);
+    const bool show = g_lock_wait->show;
+    Il2CppObject* on_closed = held_obj(g_lock_wait->on_closed);
+    const std::string id = g_lock_wait->id;
+    if (owner == self_player()) {
+        const double now = now_ms();
+        g_mine = Mine{key, id, c, now, now};
+        if (alive(c)) open_now(c, show, on_closed);
+        logx::info("containers: %s: the host says it's ours; %s", short_id(id).c_str(), show ? "opened" : "searching");
+    } else if (owner != net::kNoOwner) {
+        coop_notices::tell(player_name(owner) + " is searching this right now");
+        logx::info("containers: %s is %s's; not opened", short_id(id).c_str(), player_name(owner).c_str());
+    }
+    drop_wait();
+}
+
+void release_mine(const char* why) {
+    if (!g_mine) return;
+    const Mine m = *g_mine;
+    g_mine.reset();
+    if (hosting()) {
+        if (g_locks.release(m.key, self_player())) tell_owner(m.key);
+    } else {
+        g_locks.set(m.key, net::kNoOwner, 0);
+        if (netrt::status().connected) send_lock(m.key.substr(0, m.key.find('|')), m.id, net::LockOp::Release, 0);
+    }
+    logx::info("containers: done with %s (%s); free for the others", short_id(m.id).c_str(), why);
+}
+
+void lock_receive() {
+    std::vector<net::Packet> packets;
+    netrt::drain_packets(net::Msg::ContainerLock, packets);
+    const double now = now_ms();
+    for (const net::Packet& p : packets) {
+        net::Reader r = net::packet_body(p);
+        net::ContainerLockMsg m;
+        if (!net::read_container_lock(r, m)) continue;
+        const std::string key = net::lock_key(m.scene, m.id);
+        if (hosting()) {
+            if (m.op == net::LockOp::Take) {
+                const uint8_t before = g_locks.owner(key);
+                const uint8_t owner = g_locks.take(key, p.from, now);
+                if (owner != before) {
+                    tell_owner(key);  // to everyone, the asker included
+                    logx::info("containers: %s (%s) is %s's now", short_id(m.id).c_str(), m.scene.c_str(),
+                               player_name(owner).c_str());
+                } else if (owner != p.from) {
+                    send_lock(m.scene, m.id, net::LockOp::State, owner, p.from);  // taken: the asker hears by whom
+                    logx::info("containers: %s asked for %s, but it's %s's", player_name(p.from).c_str(),
+                               short_id(m.id).c_str(), player_name(owner).c_str());
+                }  // else theirs already: a refresh
+            } else if (m.op == net::LockOp::Release) {
+                if (g_locks.release(key, p.from)) tell_owner(key);
+            }
+        } else if (m.op == net::LockOp::State) {
+            g_locks.set(key, m.owner, now);
+            lock_answered(key, m.owner);
+        }
+    }
+}
+
+// Every frame: our container still ours while we're busy with it; the host frees what nobody holds any more.
+void lock_tick() {
+    const double now = now_ms();
+    if (g_lock_wait && now - g_lock_wait->asked_ms > kLockAnswerMs) {
+        logx::warn("containers: the host didn't answer about %s; not opened (try again)", short_id(g_lock_wait->id).c_str());
+        coop_notices::tell("No answer from the host; try again");
+        drop_wait();
+    }
+    if (g_mine) {
+        if (!alive(g_mine->c)) {
+            release_mine("it's gone");
+        } else if (busy_with(g_mine->c)) {
+            g_mine->busy_ms = now;
+            if (!hosting() && now - g_mine->told_ms >= net::kLockRefreshMs) {
+                g_mine->told_ms = now;
+                send_lock(g_scene, g_mine->id, net::LockOp::Take, 0);
+            }
+        } else if (now - g_mine->busy_ms > kLockIdleMs) {
+            release_mine("closed");
+        }
+    }
+    if (!hosting() || now - g_last_lock_tick < 500) return;
+    g_last_lock_tick = now;
+    for (const std::string& key : g_locks.expire(now, net::kLockStaleMs, self_player())) {
+        tell_owner(key);
+        logx::info("containers: %s: its player stopped saying they're in it; free again", key.c_str());
+    }
+    const net::Status st = netrt::status();
+    std::vector<uint8_t> holders;
+    for (const auto& [key, e] : g_locks.entries())
+        if (e.owner != self_player() && std::find(holders.begin(), holders.end(), e.owner) == holders.end())
+            holders.push_back(e.owner);
+    for (uint8_t id : holders) {
+        const bool here = std::any_of(st.players.begin(), st.players.end(),
+                                      [&](const net::PlayerInfo& p) { return p.id == id && p.linked; });
+        if (here) continue;
+        for (const std::string& key : g_locks.drop_player(id)) tell_owner(key);
+        logx::info("containers: player %u left; what they were searching is free", id);
+    }
+}
+
+void lock_reset() {
+    drop_wait();
+    g_mine.reset();
+    g_locks.clear();
+}
+
 void add_gear_detour(Il2CppObject* self, Il2CppObject* gi, const MethodInfo* method) {
     g_add_gear(self, gi, method);
     mark(self);
@@ -542,16 +793,31 @@ bool add_stack_detour(Il2CppObject* self, Il2CppObject* gi, float condition, int
     return added;
 }
 
+void show_now(Il2CppObject* self, Il2CppObject* on_closed, const MethodInfo* method) {
+    ask(self);  // opened without a search (crafting, rock caches...): ask now
+    g_show(self, on_closed, method);
+    if (alive(g_panel) && get<Il2CppObject*>(g_panel, api.panel_container) == self) g_shown = self;
+    mark(self);  // the panel makes what the container rolled
+}
+
+void open_now(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
+    if (show) {
+        show_now(c, on_closed, api.show);
+    } else {
+        ask(c);
+        g_begin_open(c, api.begin_open);
+    }
+}
+
 void begin_open_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (!may_open(self, false, nullptr)) return;  // TLDCoop_DLC: someone else's, or waiting for the host
     ask(self);
     g_begin_open(self, method);
 }
 
 void show_detour(Il2CppObject* self, Il2CppObject* on_closed, const MethodInfo* method) {
-    ask(self);  // opened without a search (crafting, rock caches...): ask now
-    g_show(self, on_closed, method);
-    if (alive(g_panel) && get<Il2CppObject*>(g_panel, api.panel_container) == self) g_shown = self;
-    mark(self);  // the panel makes what the container rolled
+    if (!may_open(self, true, on_closed)) return;  // TLDCoop_DLC: someone else's, or waiting for the host
+    show_now(self, on_closed, method);
 }
 
 void panel_enable_detour(Il2CppObject* self, bool enable, bool reset_filter, Il2CppObject* on_closed, const MethodInfo* method) {
@@ -770,6 +1036,10 @@ bool init() {
     api.inv_items = il2::field_offset(inventory, "m_Items");
     api.being_inspected = il2::find_method(player_manager, "GearItemBeingInspected", 0);
     api.inspecting = il2::find_method(player_manager, "IsInspectModeActive", 0);
+    api.searching = il2::field_offset_quiet(container, "m_SearchInProgress");
+    api.opening = il2::field_offset_quiet(container, "m_OpenInProgress");
+    api.closing = il2::field_offset_quiet(container, "m_PendingClose");
+    api.pm_container = il2::field_offset_quiet(player_manager, "m_Container");
     api.total_weight = il2::find_method(container, "GetTotalWeightKG", 0);
     g_ready = api.component_go && api.component_transform && api.get_position && api.object_name && api.containers &&
               api.items >= 0 && api.to_make >= 0 && api.inspected >= 0 && api.not_populated >= 0 && api.no_save >= 0 &&
@@ -828,6 +1098,7 @@ void on_frame(bool in_game) {
             g_waiting.clear();
             g_newest.clear();
         }
+        lock_reset();
         g_connected = false;
         return;
     }
@@ -842,6 +1113,8 @@ void on_frame(bool in_game) {
             for (auto& [id, contents] : g_last)
                 if (!contents.empty()) stored[id] = Stored{std::move(contents), false};
         }
+        release_mine("another scene");
+        drop_wait();
         g_last.clear();
         g_sig.clear();
         g_dirty.clear();
@@ -853,7 +1126,9 @@ void on_frame(bool in_game) {
         if (hosting() && !g_scene.empty()) apply_stored();
     }
     receive();
+    lock_receive();
     if (g_scene.empty()) return;
+    lock_tick();
     if (now - g_last_watch >= kWatchMs) {
         g_last_watch = now;
         if (Il2CppObject* c = shown_container()) mark(c);

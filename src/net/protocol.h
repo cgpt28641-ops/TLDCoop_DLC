@@ -82,6 +82,10 @@
 //   FireList host->client  scene[48], u32 n + n bytes: all the host's fires there (FireManager.Serialize())
 //   WaterPut either        scene[48], u32 seq, water source id (u16 n + n), u32 n + n bytes: a water source (a toilet,
 //                          a tank) changed in the sender's world: its WaterSource.Serialize() (TLDCoop_DLC)
+//   ContainerLock either   scene[48], container id (u16 n + n), u8 op, u8 owner: one player at a time in a container
+//                          (net/container_locks.h). Client->host: op Take (search or open it; again while busy) or
+//                          Release; owner unused. Host->client: op State, owner the player in it (kNoOwner: free).
+//                          (TLDCoop_DLC)
 //   WaterList host->client scene[48], u32 n, then n times id (u16 n + n), u32 n + n bytes: every water source the host
 //                          has there, when a friend comes into its scene (TLDCoop_DLC)
 //   CaughtUp client->host  u32 n: once linked (again), after the n world changes the client made while the link was
@@ -106,7 +110,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 29;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 30;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -138,6 +142,8 @@ constexpr uint16_t kProtocolVersion = 29;  // v4: World. v5: Animals. v6: sounds
                                            // MissingContent
                                            // v29 (TLDCoop_DLC): water sources (toilets, tanks): WaterPut,
                                            // WaterList
+                                           // v30 (TLDCoop_DLC): one player at a time in a container:
+                                           // ContainerLock
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -159,7 +165,7 @@ enum class Msg : uint8_t {
     Reliable = 14, Ack = 15, Hit = 16, Thrown = 17, Carcasses = 18, Harvest = 19, Quartered = 20, Chunk = 21,
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
-    Give = 37, WaterPut = 38, WaterList = 39
+    Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1017,6 +1023,32 @@ inline void write_fire_list(Writer& w, const FireListMsg& m) {
 inline bool read_fire_list(Reader& r, FireListMsg& m) {
     m.scene = r.get_str(kSceneLen);
     m.text = r.get_long_blob(kFireListMax);
+    return r.ok();
+}
+
+// One player at a time in a container (TLDCoop_DLC; net/container_locks.h).
+enum class LockOp : uint8_t { Release = 0, Take = 1, State = 2 };
+struct ContainerLockMsg {
+    std::string scene;
+    std::string id;
+    LockOp op = LockOp::Take;
+    uint8_t owner = 0xFF;
+};
+
+inline void write_container_lock(Writer& w, const ContainerLockMsg& m) {
+    w.put_str(m.scene, kSceneLen);
+    w.put_blob(m.id, kPdidMax);
+    w.put(static_cast<uint8_t>(m.op));
+    w.put(m.owner);
+}
+
+inline bool read_container_lock(Reader& r, ContainerLockMsg& m) {
+    m.scene = r.get_str(kSceneLen);
+    m.id = r.get_blob(kPdidMax);
+    const uint8_t op = r.get<uint8_t>();
+    m.owner = r.get<uint8_t>();
+    if (op > static_cast<uint8_t>(LockOp::State)) return false;
+    m.op = static_cast<LockOp>(op);
     return r.ok();
 }
 
