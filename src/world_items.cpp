@@ -9,6 +9,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "coop_notices.h"
@@ -28,6 +29,9 @@ constexpr const char* kGame = "Assembly-CSharp.dll";
 constexpr const char* kCore = "UnityEngine.CoreModule.dll";
 constexpr double kScanMs = 500;        // loose items are checked twice a second
 constexpr double kSettleMs = 1000;     // an item has to stop moving this long before the other player hears where it is
+// TLDCoop_DLC: a burning flare or torch on the ground (one just thrown, mostly) is told as soon as a scan finds it
+// still: it lights the way and keeps wolves off, so the friend should see it at once, not a second and a half later.
+constexpr double kSettleLitMs = 0;
 constexpr float kStillMetres = 0.02f;  // moving less than this between scans: still
 constexpr float kMovedMetres = 0.3f;   // closer than this to where the other player has it: the same place
 constexpr double kListGraceMs = 5000;  // client: our own changes this recent aren't undone by the host's list
@@ -92,6 +96,9 @@ struct Api {
     const MethodInfo* remove_units = nullptr;      // Inventory.RemoveUnits(GearItem, int)
     // SnareItem
     ptrdiff_t snare = -1;                          // GearItem.m_SnareItem
+    ptrdiff_t flare = -1, torch = -1;              // GearItem.m_FlareItem, m_TorchItem (TLDCoop_DLC: kSettleLitMs)
+    const MethodInfo* flare_burning = nullptr;     // FlareItem.IsBurning()
+    const MethodInfo* torch_burning = nullptr;     // TorchItem.IsBurning()
     ptrdiff_t snare_state = -1;                    // SnareItem.m_State (SnareState: 0 not set, 1 set, 2 broken, 3 caught)
     ptrdiff_t snare_rabbit = -1;                   // SnareItem.m_RabbitPrefab
     const MethodInfo* snare_load = nullptr;        // SnareItem.Deserialize(string)
@@ -462,6 +469,18 @@ void forget_world() {
 // game gets the outcome as the snare's new record (sent when its state changes) and loads its state from it.
 
 // A snare's state (0 not set, 1 set, 2 broken, 3 with a rabbit); -1 for an item that isn't one.
+// A flare or torch that's burning (kSettleLitMs).
+bool burning_light(Il2CppObject* gi) {
+    if (!alive(gi)) return false;
+    for (auto [part, burning] : {std::pair{api.flare, api.flare_burning}, std::pair{api.torch, api.torch_burning}}) {
+        if (part < 0 || !burning) continue;
+        Il2CppObject* item = get<Il2CppObject*>(gi, part);
+        bool on = false;
+        if (alive(item) && il2::invoke_value(burning, item, on) && on) return true;
+    }
+    return false;
+}
+
 int snare_state(Il2CppObject* gi) {
     Il2CppObject* s = api.snare >= 0 && api.snare_state >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.snare) : nullptr;
     return alive(s) ? get<int32_t>(s, api.snare_state) : -1;
@@ -1208,7 +1227,8 @@ void scan(double now) {
             send_put(l.gi, l.pdid, k, now, 0, 0, describe_pot(pot).c_str());
             continue;
         }
-        if (now - k.moved_ms >= kSettleMs && (!k.shared || distance(k.pos, k.told) > kMovedMetres))
+        const double settle = burning_light(l.gi) ? kSettleLitMs : kSettleMs;
+        if (now - k.moved_ms >= settle && (!k.shared || distance(k.pos, k.told) > kMovedMetres))
             send_put(l.gi, l.pdid, k, now, 0);
     }
     for (auto it = g_known.begin(); it != g_known.end();) {
@@ -1621,6 +1641,14 @@ bool init() {
     api.inv_items = il2::field_offset(inventory, "m_Items");
     api.inv_destroy = il2::find_method_params(inventory, "DestroyGear", {"GearItem"});
     api.remove_units = il2::find_method(inventory, "RemoveUnits", 2);
+    if (Il2CppClass* flare = il2::find_class(kGame, "", "FlareItem")) {
+        api.flare = il2::field_offset(gear, "m_FlareItem");
+        api.flare_burning = il2::find_method_quiet(flare, "IsBurning", 0);
+    }
+    if (Il2CppClass* torch = il2::find_class(kGame, "", "TorchItem")) {
+        api.torch = il2::field_offset(gear, "m_TorchItem");
+        api.torch_burning = il2::find_method_quiet(torch, "IsBurning", 0);
+    }
     if (Il2CppClass* snare = il2::find_class(kGame, "", "SnareItem")) {
         api.snare = il2::field_offset(gear, "m_SnareItem");
         api.snare_state = il2::field_offset(snare, "m_State");

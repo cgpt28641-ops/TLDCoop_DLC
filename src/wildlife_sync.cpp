@@ -114,6 +114,10 @@ struct Api {
     ptrdiff_t region_refs = -1;                   // SpawnRegion.m_SpawnsPrefabReferences (legacy)
     ptrdiff_t region_center = -1;                 // SpawnRegion.m_Center
     const MethodInfo* spawn_entry_asset = nullptr;  // SpawnRegion.SpawnListEntry.GetAnimalForMode(WildlifeMode)
+    // TLDCoop_DLC, 2.58: an animal's prefab is an addressable reference (AssetReferenceBaseAi), not a field.
+    const MethodInfo* ref_asset = nullptr;          // UnityEngine.AddressableAssets.AssetReference.get_Asset()
+    const MethodInfo* ref_load = nullptr;           // AssetReferenceWithComponent<BaseAi>.GetOrLoadAsset()
+    ptrdiff_t ai_asset_ref = -1;                    // BaseAi.m_AssetReference
     const MethodInfo* instantiate_spawn = nullptr;  // SpawnRegion.InstantiateSpawn(...), 5 args in 2.58
     const MethodInfo* instantiate_spawn_legacy = nullptr;  // 6-argument SpawnRegion.InstantiateSpawn
     // What a fight does to the stand-in (BaseAi), reported to the host.
@@ -620,12 +624,42 @@ Il2CppObject* region_asset(Il2CppObject* region, int32_t wildlife_mode) {
     return nullptr;
 }
 
+// TLDCoop_DLC: the prefab an addressable reference points to (2.58), loaded if it isn't yet: the GameObject, asleep
+// like 2.55's m_SpawnablePrefab. Null if it can't be had.
+Il2CppObject* prefab_from_ref(Il2CppObject* ref) {
+    if (!ref) return nullptr;
+    Il2CppObject* got = api.ref_asset ? il2::invoke(api.ref_asset, ref) : nullptr;
+    if (!got && api.ref_load) got = il2::invoke(api.ref_load, ref);
+    if (!got) return nullptr;
+    return il2::class_name_of(got) == "UnityEngine.GameObject" ? got : go_of(got);
+}
+
+// TLDCoop_DLC: each kind's prefab once found (2.58 loads it from its reference; kept so that's done once).
+std::unordered_map<int, uintptr_t> g_templates;
+
 Il2CppObject* template_for(int kind) {
+    if (auto it = g_templates.find(kind); it != g_templates.end()) {
+        if (Il2CppObject* go = target(it->second); alive(go)) return go;
+        il2::il2cpp_gchandle_free(it->second);
+        g_templates.erase(it);
+    }
+    auto keep = [&](Il2CppObject* prefab, const char* from) {
+        g_templates[kind] = hold(prefab);
+        logx::info("wildlife: the %s model comes from %s", kind_name(kind), from);
+        return prefab;
+    };
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
     for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
         if (il2::read_field<int32_t>(region, api.region_kind) == kind) {
             if (Il2CppObject* prefab = il2::read_field<Il2CppObject*>(region, api.region_prefab)) return prefab;
+            if (Il2CppObject* prefab = prefab_from_ref(region_asset(region, 0)))
+                return keep(prefab, "this scene's spawn area (its addressable prefab)");
         }
+    if (api.ai_asset_ref >= 0)  // any animal of that kind here, ours (hidden) included: its own reference
+        for (Il2CppObject* ai : all_animals())
+            if (il2::read_field<int32_t>(ai, api.ai_kind) == kind)
+                if (Il2CppObject* prefab = prefab_from_ref(il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref)))
+                    return keep(prefab, "an animal of that kind here (its addressable prefab)");
     for (uintptr_t h : g_hidden)
         if (Il2CppObject* go = target(h))
             for (Il2CppObject* ai : all_animals())
@@ -1427,6 +1461,16 @@ bool init() {
     api.region_center = il2::field_offset(spawn_region, "m_Center");
     if (Il2CppClass* entry = il2::find_nested_class(spawn_region, "SpawnListEntry"))
         api.spawn_entry_asset = il2::find_method_quiet(entry, "GetAnimalForMode", 1);
+    api.ai_asset_ref = il2::field_offset_quiet(base_ai, "m_AssetReference");
+    if (Il2CppClass* ref = il2::find_class(kGame, "", "AssetReferenceBaseAi")) {
+        for (Il2CppClass* k = ref; k && (!api.ref_asset || !api.ref_load); k = il2::il2cpp_class_get_parent(k)) {
+            if (!api.ref_load) api.ref_load = il2::find_method_quiet(k, "GetOrLoadAsset", 0);
+            if (!api.ref_asset) api.ref_asset = il2::find_method_quiet(k, "get_Asset", 0);
+        }
+    }
+    logx::info("wildlife: addressable animal prefabs: %s",
+               api.ref_load || api.ref_asset ? (api.ref_load ? "loaded on demand" : "only if already loaded")
+                                             : "not available (older game?)");
     api.instantiate_spawn = il2::find_method_quiet(spawn_region, "InstantiateSpawn", 5);
     api.instantiate_spawn_legacy = il2::find_method_quiet(spawn_region, "InstantiateSpawn", 6);
     api.add_health = il2::find_method_params(il2::find_class(kGame, "", "Condition"), "AddHealth",

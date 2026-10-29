@@ -181,6 +181,7 @@ struct Api {
     const MethodInfo* find_child = nullptr;          // Transform.Find(string)
     const MethodInfo* renderer_bounds = nullptr;     // Renderer.get_bounds()
     const MethodInfo* renderer_enabled = nullptr;    // Renderer.get_enabled()
+    const MethodInfo* renderer_set_enabled = nullptr;  // Renderer.set_enabled(bool)
     const MethodInfo* set_enabled = nullptr;         // Behaviour.set_enabled(bool)
     const MethodInfo* active_and_enabled = nullptr;  // Behaviour.get_isActiveAndEnabled()
     const MethodInfo* in_hierarchy = nullptr;        // GameObject.get_activeInHierarchy()
@@ -1113,19 +1114,55 @@ std::string parts_text(Il2CppObject* copy) {
     return out.empty() ? "nothing" : out;
 }
 
+// TLDCoop_DLC: TLD 2.58 has no GearItem.LoadGearItemPrefab, so a held copy comes from GearItem.InstantiateGearItem: a
+// real, awake item. Its own scripts (a flare's FlareItem, say: DisableRendering, m_RenderingDisabled) switch its
+// renderers off until TLD treats it as in hand or thrown, and strip_held then removes the scripts that would switch
+// them back on: the friend's flare was invisible. With the scripts gone, every renderer of the copy is switched back
+// on here (a part that should hide, like a lit flare's cap, is a GameObject light_up switches, not a renderer).
+// Returns how many were off.
+int wake_renderers(Il2CppObject* copy) {
+    if (!api.renderer_enabled || !api.renderer_set_enabled) return 0;
+    Il2CppObject* renderers = components_in_children(copy, api.renderer_type);
+    int woken = 0;
+    for (size_t i = 0, n = il2::array_length(renderers); i < n; ++i) {
+        Il2CppObject* r = il2::array_object_at(renderers, i);
+        bool enabled = true;
+        if (!r || !il2::invoke_value(api.renderer_enabled, r, enabled) || enabled) continue;
+        bool on = true;
+        void* args[] = {&on};
+        il2::invoke(api.renderer_set_enabled, r, args);
+        ++woken;
+    }
+    return woken;
+}
+
 bool make_held(Avatar& a, const std::string& gear, net::HeldKind kind) {
     if ((!api.load_gear && !api.instantiate_gear) || !pv.component_go || !ensure_loader()) return false;
     void* name_arg[] = {il2::il2cpp_string_new(gear.c_str())};
     Il2CppObject* copy = nullptr;
-    if (api.instantiate_gear) {
-        Il2CppObject* copy_gi = il2::invoke(api.instantiate_gear, nullptr, name_arg);
-        copy = copy_gi ? il2::invoke(pv.component_go, copy_gi) : nullptr;
-    } else if (api.load_gear) {
+    bool awake_copy = false;  // copied from a real item TLD made (2.58): its scripts may have switched renderers off
+    if (api.load_gear) {  // 2.55: the prefab itself
         Il2CppObject* prefab_gi = il2::invoke(api.load_gear, nullptr, name_arg);
         Il2CppObject* prefab = prefab_gi ? il2::invoke(pv.component_go, prefab_gi) : nullptr;
         if (prefab) {
             void* inst_args[] = {prefab, target(g_loader_transform)};  // asleep under the inactive loader: no Awake
             copy = il2::invoke(api.instantiate, nullptr, inst_args);
+        }
+    } else if (api.instantiate_gear) {
+        // TLDCoop_DLC, 2.58: no prefab, only GearItem.InstantiateGearItem, which makes a real, awake item. That item
+        // can't be the copy: once strip_held removes its GearItem, the GearItem's own OnDestroy destroys the whole
+        // object, the copy was gone the next frame and made again every frame (an invisible flare, and Transform
+        // calls on a dead object in the log). So it is only the model: the copy is cloned from it asleep under the
+        // inactive loader, as from 2.55's prefab (scripts that never woke don't run OnDestroy when stripped), and the
+        // real item is switched off and destroyed at once, before the world's item scan can see it.
+        Il2CppObject* live_gi = il2::invoke(api.instantiate_gear, nullptr, name_arg);
+        Il2CppObject* live = live_gi ? il2::invoke(pv.component_go, live_gi) : nullptr;
+        if (live) {
+            void* inst_args[] = {live, target(g_loader_transform)};
+            copy = il2::invoke(api.instantiate, nullptr, inst_args);
+            set_active(live, false);
+            destroy(live, true);
+            awake_copy = copy != nullptr;
         }
     }
     if (!copy) {
@@ -1144,6 +1181,10 @@ bool make_held(Avatar& a, const std::string& gear, net::HeldKind kind) {
     il2::invoke(api.set_name, copy, name_args);
     read_parts(h, copy);
     const int removed = strip_held(copy);
+    if (awake_copy) {
+        if (const int woken = wake_renderers(copy))
+            say(a, "%s: %d renderer(s) its own scripts had switched off are on again", gear.c_str(), woken);
+    }
     logx::info("avatar: %s is made of: %s", gear.c_str(), parts_text(copy).c_str());
     light_up(h, 0, false);
     set_parent(tf, target(a.root_transform));  // awake here, under the avatar (hidden with it)
@@ -2012,6 +2053,7 @@ bool init() {
     api.find_child = il2::find_method_params(transform, "Find", {"System.String"});
     api.renderer_bounds = il2::find_method(renderer, "get_bounds", 0);
     api.renderer_enabled = il2::find_method(renderer, "get_enabled", 0);
+    api.renderer_set_enabled = il2::find_method_quiet(renderer, "set_enabled", 1);
     api.set_enabled = il2::find_method(behaviour, "set_enabled", 1);
     api.active_and_enabled = il2::find_method(behaviour, "get_isActiveAndEnabled", 0);
     api.in_hierarchy = il2::find_method(game_object, "get_activeInHierarchy", 0);
@@ -2064,7 +2106,7 @@ bool init() {
     }
     const bool holding = (api.load_gear || api.instantiate_gear) && api.gear_type && api.get_position && api.get_rotation && api.set_rotation &&
                          api.renderer_bounds && api.renderer_enabled && api.set_enabled && api.in_hierarchy &&
-                         pv.component_go && (api.instantiate || api.instantiate_gear);
+                         pv.component_go && api.instantiate;
     if (!holding) {
         logx::warn("avatar: what the others hold won't be shown (a TLD or Unity API is missing)");
         api.load_gear = nullptr;

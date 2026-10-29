@@ -130,6 +130,28 @@ bool read_ids(Il2CppObject* coll, std::vector<std::string>& ids, std::string& wh
         }
         return true;
     }
+    if (kind == "Dictionary`2") {
+        // TLD 2.58's InstalledContent: Dictionary<string, IResourceLocator>, the content ids as its keys. .NET's
+        // Dictionary: an array of {int hashCode, int next, TKey key, TValue value} (24 bytes for reference key and
+        // value), the used ones first: _entries/_count (newer .NET), entries/count (older class libraries). A
+        // removed entry has no key.
+        ptrdiff_t entries = field_of(coll, "_entries"), count = field_of(coll, "_count");
+        if (entries < 0) entries = field_of(coll, "entries"), count = field_of(coll, "count");
+        if (entries < 0 || count < 0) {
+            why = "Dictionary`2 without _entries/entries";
+            return false;
+        }
+        Il2CppObject* arr = il2::read_field<Il2CppObject*>(coll, entries);
+        const int32_t n = il2::read_field<int32_t>(coll, count);
+        const size_t len = il2::array_length(arr);
+        const char* base = reinterpret_cast<const char*>(arr) + 0x20;
+        for (int32_t i = 0; i < n && static_cast<size_t>(i) < len; ++i) {
+            Il2CppObject* key = nullptr;
+            memcpy(&key, base + static_cast<size_t>(i) * 24 + 8, sizeof(key));
+            if (!add(key)) return false;
+        }
+        return true;
+    }
     if (depth < 2) {  // ReadOnlyCollection<T> (list), a read-only set (_set / m_set)
         for (const char* inner : {"list", "_list", "_set", "m_set", "m_list"}) {
             const ptrdiff_t off = field_of(coll, inner);
