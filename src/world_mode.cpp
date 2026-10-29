@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "hooks.h"
+#include "core.h"
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
@@ -281,6 +282,8 @@ void take_packets() {
         std::string text;
         int32_t seed = 0;
         if (!net::read_game_mode(r, text, seed) || text.empty()) continue;
+        // The host at its main menu: TLD's menu mode, not a game's (it says its own once its game is in).
+        if (mode_name(text) == "MainMenu") continue;
         if (!g_have_seed || seed != g_host_seed) {
             const int32_t* own = seed_field();
             logx::info("mode: TLD's rolls here start from the host's game seed %d (ours %s)", seed,
@@ -302,7 +305,10 @@ void client_frame(bool in_game) {
     } else {
         g_linked_at = -1;
     }
-    if (in_game && !g_host.empty() && !g_applied) take_host_mode();
+    // TLDCoop_DLC: only once the scene is in. Put on during a load (a new game's start, a region loading), the host's
+    // mode left TLD's loading screen up for good: the world ran (the host saw us) but the load never finished. From
+    // then on, scene loads take the host's mode the way TLD loads a save's (deserialize_detour), in one go.
+    if (in_game && !g_host.empty() && !g_applied && !core::settled_scene().empty()) take_host_mode();
 }
 
 }  // namespace

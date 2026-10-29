@@ -817,8 +817,10 @@ bool g_joining = false;  // the co-op flow is a friend's (JOIN), from the lobby 
 enum class AutoStep { None, Experience, CustomXP, Region };
 AutoStep g_auto = AutoStep::None;
 uintptr_t g_auto_panel = 0;
-int g_auto_frame = 0;   // frames since this screen's step began
-int g_auto_clicks = 0;  // clicks made on it
+double g_auto_started_ms = 0;  // when this screen's step began
+double g_auto_tried_ms = 0;    // when we last clicked (or first could)
+double g_auto_trying_ms = -1;  // when clicking began (-1: still waiting for the host's mode)
+int g_auto_clicks = 0;         // clicks made on it
 bool g_auto_experience_done = false, g_auto_custom_done = false, g_auto_region_done = false;
 const MethodInfo* g_experience_clicked = nullptr;  // Panel_SelectExperience.OnExperienceClicked
 const MethodInfo* g_custom_continue = nullptr;     // Panel_CustomXPSetup.OnContinue
@@ -837,14 +839,18 @@ ptrdiff_t g_mode_type = -1;       // ExperienceMode.m_ModeType (ExperienceModeTy
 Il2CppClass* g_mode_enum = nullptr;  // ExperienceModeType
 const MethodInfo* g_menu_value_index = nullptr;  // BasicMenu.GetItemValueIndex(int)
 const MethodInfo* g_menu_click = nullptr;        // BasicMenu.OnItemClicked(int)
-constexpr int kAutoTryEvery = 15;  // frames between clicks
-constexpr int kAutoGiveUp = 360;   // about 6 s: the screen is the player's
+// TLDCoop_DLC: in milliseconds, not frames (360 frames was 1.5 s at 240 fps: the map screen gave up too soon).
+constexpr double kAutoTryMs = 250;          // between clicks
+constexpr double kAutoGiveUpMs = 10000;     // clicking this long without the screen going: it's the player's
+constexpr double kHostModeWaitMs = 30000;   // the difficulty screen waits this long for the host's mode (its game
+                                            // loading after START), then goes with its own selection
 constexpr const char* kAutoNames[] = {"", "difficulty", "custom mode", "map"};
 
 void auto_stop() {
     drop(g_auto_panel);
     g_auto = AutoStep::None;
-    g_auto_frame = g_auto_clicks = 0;
+    g_auto_clicks = 0;
+    g_auto_trying_ms = -1;
 }
 
 void auto_reset() {
@@ -858,6 +864,8 @@ void auto_begin(AutoStep step, Il2CppObject* panel) {
     if (!panel) return;
     g_auto = step;
     g_auto_panel = hold(panel);
+    g_auto_started_ms = g_auto_tried_ms = net::now_ms();
+    g_auto_trying_ms = -1;
     logx::info("menu: joining: the %s screen answers itself (the host chooses)", kAutoNames[static_cast<int>(step)]);
 }
 
@@ -909,19 +917,29 @@ void run_auto() {
         auto_stop();
         return;
     }
-    const int f = ++g_auto_frame;
+    const double now = net::now_ms();
     const bool shown = panel_shown(panel);
     if (g_auto_clicks > 0 && !shown) {
         logx::info("menu: joining: %s answered", name);
         auto_stop();
         return;
     }
-    if (f > kAutoGiveUp) {
+    if (g_auto_trying_ms < 0) {  // the difficulty screen: the host's mode first (its game says once it's in)
+        if (g_auto == AutoStep::Experience && world_mode::host_mode_type().empty() &&
+            now - g_auto_started_ms < kHostModeWaitMs)
+            return;
+        if (g_auto == AutoStep::Experience && world_mode::host_mode_type().empty())
+            logx::warn("menu: joining: no word of the host's mode after %.0f s; the screen's own selection goes",
+                       kHostModeWaitMs / 1000);
+        g_auto_trying_ms = now;
+    }
+    if (now - g_auto_trying_ms > kAutoGiveUpMs) {
         logx::warn("menu: joining: the %s screen didn't move on by itself; it's yours to choose", name);
         auto_stop();
         return;
     }
-    if (!shown || f % kAutoTryEvery != 0) return;
+    if (!shown || now - g_auto_tried_ms < kAutoTryMs) return;
+    g_auto_tried_ms = now;
     switch (g_auto) {
         case AutoStep::Experience:
             // TLDCoop_DLC: first the host's mode (its item selected), then CONTINUE.
