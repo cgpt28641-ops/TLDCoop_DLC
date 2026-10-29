@@ -76,6 +76,7 @@ struct Api {
     const MethodInfo* in_children = nullptr;        // Component.GetComponentInChildren(Type, bool)
     const MethodInfo* go_component = nullptr;       // GameObject.GetComponent(Type)
     const MethodInfo* go_set_active = nullptr;
+    const MethodInfo* go_active_self = nullptr;     // GameObject.get_activeSelf() (TLDCoop_DLC: the buttons put back)
     const MethodInfo* set_enabled = nullptr;        // Behaviour.set_enabled(bool)
     const MethodInfo* find_child = nullptr;         // Transform.Find(string)
     const MethodInfo* get_position = nullptr;
@@ -190,6 +191,20 @@ void set_active(Il2CppObject* go, bool on) {
     if (!alive(go)) return;
     void* args[] = {&on};
     il2::invoke(api.go_set_active, go, args);
+}
+
+// TLDCoop_DLC: the sleep screen's own buttons (SLEEP, pick up the bedroll, PASS TIME) are hidden while we're in bed or
+// waiting (only GET UP / STOP is ours to press), and put back as they were once we're out, and when the screen goes.
+// They were never put back: a host who got up before the others were in found only the close button the next time.
+struct HiddenButtons {
+    bool hidden = false;
+    bool was_on[3] = {};
+};
+HiddenButtons g_hidden_buttons;
+
+bool active_self(Il2CppObject* go) {
+    bool on = false;
+    return alive(go) && api.go_active_self && il2::invoke_value(api.go_active_self, go, on) && on;
 }
 
 void set_int(const MethodInfo* setter, Il2CppObject* obj, int v) {
@@ -617,6 +632,33 @@ void paint_list(const net::Status& st, const std::vector<net::Sleeper>& all, con
 }
 
 // Co-op's words on the screen, every frame it's up (TLD's localisation puts its own back when it shows).
+Il2CppObject* const* button_slots(Il2CppObject* panel, Il2CppObject* out[3]) {
+    out[0] = get<Il2CppObject*>(panel, api.panel_sleep_button);
+    out[1] = get<Il2CppObject*>(panel, api.panel_pick_up_button);
+    out[2] = get<Il2CppObject*>(panel, api.panel_pass_button);
+    return out;
+}
+
+void hide_buttons(Il2CppObject* panel) {
+    if (g_hidden_buttons.hidden || !alive(panel)) return;
+    Il2CppObject* b[3];
+    button_slots(panel, b);
+    for (int i = 0; i < 3; ++i) {
+        g_hidden_buttons.was_on[i] = active_self(b[i]);
+        set_active(b[i], false);
+    }
+    g_hidden_buttons.hidden = true;
+}
+
+void restore_buttons(Il2CppObject* panel) {
+    if (!g_hidden_buttons.hidden || !alive(panel)) return;
+    Il2CppObject* b[3];
+    button_slots(panel, b);
+    for (int i = 0; i < 3; ++i)
+        if (g_hidden_buttons.was_on[i]) set_active(b[i], true);
+    g_hidden_buttons.hidden = false;
+}
+
 void show(Il2CppObject* panel) {
     const net::Status st = netrt::status();
     const std::vector<net::Sleeper> all = everyone(st);
@@ -645,11 +687,10 @@ void show(Il2CppObject* panel) {
     set_text(label_at(panel, wait_screen ? kWaitTitle : kBedTitle), wait_screen ? "PASS TIME TOGETHER" : "SLEEP TOGETHER");
     set_text(label_at(panel, wait_screen ? kWaitDescription : kBedDescription), status);
     if (list_alive(panel)) paint_list(st, all, k);
-    if (in) {
-        set_active(get<Il2CppObject*>(panel, api.panel_sleep_button), false);
-        set_active(get<Il2CppObject*>(panel, api.panel_pick_up_button), false);
-        set_active(get<Il2CppObject*>(panel, api.panel_pass_button), false);
-    }
+    if (in)
+        hide_buttons(panel);
+    else
+        restore_buttons(panel);
     close_says(panel, !in                       ? nullptr
                       : g_mode == Mode::Shared  ? "STOP"
                       : g_kind == Kind::Wait    ? "STOP WAITING"
@@ -657,6 +698,7 @@ void show(Il2CppObject* panel) {
 }
 
 void leave_screen(Il2CppObject* panel) {
+    restore_buttons(panel);
     close_says(panel, nullptr);
     put<bool>(panel, api.panel_pass_allowed, g_saved_pass_allowed);
     put<int32_t>(panel, api.panel_min, g_saved_min);
@@ -1351,6 +1393,7 @@ bool init() {
     api.in_children = il2::find_method_params(component, "GetComponentInChildren", {"System.Type", "System.Boolean"});
     api.go_component = il2::find_method_params(game_object, "GetComponent", {"System.Type"});
     api.go_set_active = il2::find_method(game_object, "SetActive", 1);
+    api.go_active_self = il2::find_method(game_object, "get_activeSelf", 0);
     api.set_enabled = il2::find_method(il2::find_class(kCore, "UnityEngine", "Behaviour"), "set_enabled", 1);
     api.find_child = il2::find_method_params(transform, "Find", {"System.String"});
     api.get_position = il2::find_method(transform, "get_position", 0);
