@@ -49,7 +49,7 @@ struct Api {
     FieldInfo* containers = nullptr;               // static ContainerManager.m_Containers
     FieldInfo* corpses = nullptr;                  // static ContainerManager.m_CorpseContainers
     ptrdiff_t items = -1;                          // Container.m_Items (List<GearItemObject>)
-    ptrdiff_t to_make = -1;                        // Container.m_GearToInstantiate (List<GameObject>): rolled, not made yet
+    ptrdiff_t to_make = -1;                        // Container.m_GearToInstantiate (List<string>, 2.58): rolled, not made yet
     ptrdiff_t inspected = -1, not_populated = -1, no_save = -1;
     const MethodInfo* serialize = nullptr;         // Container.Serialize()
     const MethodInfo* total_weight = nullptr;      // Container.GetTotalWeightKG() (ItemWeight: int64 units)
@@ -175,7 +175,10 @@ std::vector<Il2CppObject*> all_containers() {
     return out;
 }
 
-// The GearItems in a container (Container.m_Items) and the prefabs it rolled but hasn't made yet.
+// The GearItems in a container (Container.m_Items) and the names of the gear it rolled but hasn't made yet.
+// TLDCoop_DLC: in 2.58 the rolled list holds names (strings), no longer prefabs. Read as Unity objects, a container
+// with rolled, unmade gear (a backpack, a car's glovebox no one had opened yet) crashed the game: it was the host's
+// crash whenever a friend opened one.
 std::vector<Il2CppObject*> gear_in(Il2CppObject* c) {
     std::vector<Il2CppObject*> out;
     Il2CppObject* list = get<Il2CppObject*>(c, api.items);
@@ -197,8 +200,8 @@ std::vector<std::string> rolled_in(Il2CppObject* c) {
     Il2CppObject* items = get<Il2CppObject*>(list, kListItems);
     const int32_t count = get<int32_t>(list, kListSize);
     for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i)
-        if (Il2CppObject* prefab = il2::array_object_at(items, static_cast<size_t>(i)); alive(prefab))
-            out.push_back(name_of(prefab));
+        if (Il2CppObject* name = il2::array_object_at(items, static_cast<size_t>(i)))
+            out.push_back(text(reinterpret_cast<Il2CppString*>(name)));
     return out;
 }
 
