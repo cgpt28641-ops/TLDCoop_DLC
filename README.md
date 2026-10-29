@@ -141,6 +141,11 @@ Każdy gracz instaluje ten sam zip.
 4. **Host** wciska **LET IN** przy każdym znajomym, a gdy wszyscy są READY, **START**. Wszyscy ładują się razem do
    świata hosta.
 
+**Tryb i mapę wybiera tylko host.** U znajomego, który zaczyna przez NEW, ekrany wyboru trybu (Pielgrzym,
+Prześladowca…) i mapy **przeklikują się same**: gra i tak toczy się w trybie hosta, a przy pierwszym wejściu znajomy
+pojawia się obok hosta. Jeśli któryś ekran nie zareaguje w ciągu kilku sekund, zostaje na ekranie i można wybrać
+ręcznie (w `coop.log` jest wtedy linia `joining: ... it's yours to choose`).
+
 Do gry, która już trwa, też da się dołączyć. Znajomy robi krok 3, a host dostaje komunikat w grze: **F9** wpuszcza,
 **F10** odrzuca.
 

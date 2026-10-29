@@ -18,6 +18,10 @@ Instalacja
 4. Skopiuj zawartosc zipa do folderu gry: winhttp.dll obok tld.exe i folder TLDCoop obok.
 5. Uruchom gre ze Steama. W Survival > NEW/RESUME/LOAD pojawi sie ekran SOLO OR CO-OP?
 
+Kto co wybiera
+- Tryb (Pielgrzym, Przesladowca...) i mape wybiera tylko HOST. U dolaczajacego (JOIN + NEW) te ekrany
+  przeklikuja sie same; po wejsciu do gry pojawia sie obok hosta.
+
 Sprawdzenie DLC
 - W TLDCoop\coop.log po starcie co-opa jest linia:
     dlc: installed optional content: ... (owned: ...)

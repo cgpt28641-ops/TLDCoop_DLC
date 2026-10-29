@@ -804,12 +804,116 @@ void start_hosting() {
     logx::info("menu: CO-OP picked; opening the %s lobby for code %s", s.transport.c_str(), s.code.c_str());
 }
 
+// --- TLDCoop_DLC: a friend joining with NEW doesn't choose a mode or a map --------------------------------------
+// Co-op plays the host's experience mode (world_mode) in the host's world, and a new save's first join takes the
+// friend to the host (world_join): TLD's difficulty and map screens would ask a friend for choices that change
+// nothing. So for a friend (JOIN) starting a NEW game they answer themselves, once each: the difficulty screen with
+// its selection (a custom mode's setup with CONTINUE), the map with RANDOM then CONTINUE; Male / Female is VOICE's
+// already. Only the host chooses. TLD ignores clicks while its screens animate, so each click is tried again every
+// few frames until the screen goes; if it hasn't after a few seconds, the screen is left to the player (logged).
+// Back on a screen after it was answered (BACK from a later one), it's the player's to choose.
+bool g_joining = false;  // the co-op flow is a friend's (JOIN), from the lobby on
+enum class AutoStep { None, Experience, CustomXP, Region };
+AutoStep g_auto = AutoStep::None;
+uintptr_t g_auto_panel = 0;
+int g_auto_frame = 0;   // frames since this screen's step began
+int g_auto_clicks = 0;  // clicks made on it
+bool g_auto_experience_done = false, g_auto_custom_done = false, g_auto_region_done = false;
+const MethodInfo* g_experience_clicked = nullptr;  // Panel_SelectExperience.OnExperienceClicked
+const MethodInfo* g_custom_continue = nullptr;     // Panel_CustomXPSetup.OnContinue
+const MethodInfo* g_region_random = nullptr;       // Panel_SelectRegion_Map.OnRandomSelected
+const MethodInfo* g_region_continue = nullptr;     // Panel_SelectRegion_Map.OnSelectRegionContinue
+const MethodInfo* g_region_busy = nullptr;         // Panel_SelectRegion_Map.IsAnyAnimationInProgress
+PanelEnableFn g_region_enable = nullptr;
+PanelEnableFn g_custom_enable = nullptr;
+constexpr int kAutoTryEvery = 15;  // frames between clicks
+constexpr int kAutoGiveUp = 360;   // about 6 s: the screen is the player's
+constexpr const char* kAutoNames[] = {"", "difficulty", "custom mode", "map"};
+
+void auto_stop() {
+    drop(g_auto_panel);
+    g_auto = AutoStep::None;
+    g_auto_frame = g_auto_clicks = 0;
+}
+
+void auto_reset() {
+    auto_stop();
+    g_joining = false;
+    g_auto_experience_done = g_auto_custom_done = g_auto_region_done = false;
+}
+
+void auto_begin(AutoStep step, Il2CppObject* panel) {
+    auto_stop();
+    if (!panel) return;
+    g_auto = step;
+    g_auto_panel = hold(panel);
+    logx::info("menu: joining: the %s screen answers itself (the host chooses)", kAutoNames[static_cast<int>(step)]);
+}
+
+bool panel_shown(Il2CppObject* panel) {
+    bool on = false;
+    Il2CppObject* go = go_of(panel);
+    return go && il2::invoke_value(api.go_active, go, on) && on;
+}
+
+void run_auto() {
+    Il2CppObject* panel = target(g_auto_panel);
+    const char* name = kAutoNames[static_cast<int>(g_auto)];
+    if (!panel || !g_joining || !g_coop_flow) {
+        auto_stop();
+        return;
+    }
+    const int f = ++g_auto_frame;
+    const bool shown = panel_shown(panel);
+    if (g_auto_clicks > 0 && !shown) {
+        logx::info("menu: joining: %s answered", name);
+        auto_stop();
+        return;
+    }
+    if (f > kAutoGiveUp) {
+        logx::warn("menu: joining: the %s screen didn't move on by itself; it's yours to choose", name);
+        auto_stop();
+        return;
+    }
+    if (!shown || f % kAutoTryEvery != 0) return;
+    switch (g_auto) {
+        case AutoStep::Experience: il2::invoke(g_experience_clicked, panel); break;
+        case AutoStep::CustomXP: il2::invoke(g_custom_continue, panel); break;
+        case AutoStep::Region: {
+            bool busy = false;
+            if (g_region_busy && il2::invoke_value(g_region_busy, panel, busy) && busy) return;
+            // RANDOM first (a region is then selected), CONTINUE after.
+            il2::invoke(g_auto_clicks == 0 ? g_region_random : g_region_continue, panel);
+            break;
+        }
+        case AutoStep::None: return;
+    }
+    ++g_auto_clicks;
+}
+
+bool joining_new_game() { return g_joining && g_coop_flow && g_setup_done && g_purpose == Purpose::NewGame; }
+
+void region_enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
+    g_region_enable(self, enable, method);
+    if (!enable || !joining_new_game() || g_auto_region_done || !g_region_random || !g_region_continue) return;
+    g_auto_region_done = true;
+    auto_begin(AutoStep::Region, self);
+}
+
+void custom_enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
+    g_custom_enable(self, enable, method);
+    if (!enable || !joining_new_game() || g_auto_custom_done || !g_custom_continue) return;
+    g_auto_custom_done = true;
+    auto_begin(AutoStep::CustomXP, self);
+}
+
 void end_coop_flow(const char* why) {
     if (!g_coop_flow) return;
     g_coop_flow = false;
     g_setup_done = false;
     g_started = false;
     g_survivor_skipped = false;
+    auto_reset();
     core::stop_coop(why);
 }
 
@@ -1521,7 +1625,10 @@ std::string lobby_help(const net::Status& st) {
     if (!st.connected) return std::string("Joining your friend's game...") + (st.link.empty() ? "" : "\n\n" + st.link);
     const net::PlayerInfo* h = lobby_host(st);
     if (h && h->ready) return host + " is already playing. Press READY to join them.";
-    if (!g.ready) return "Press READY when you are. The world loads when " + host + " starts the game.";
+    const std::string skip = g_purpose == Purpose::NewGame
+                                 ? "\n\n" + host + " chooses the difficulty and the map: your game skips those screens."
+                                 : std::string();
+    if (!g.ready) return "Press READY when you are. The world loads when " + host + " starts the game." + skip;
     return "READY. Waiting for " + host + " to start the game.";
 }
 
@@ -1643,8 +1750,14 @@ void go_on(const std::string& why) {
     g_setup_done = true;
     g_started = true;
     g_survivor_skipped = false;
+    auto_reset();
+    g_joining = g.mode == kJoin;
     logx::info("menu: %s; on to TLD's %s", why.c_str(), kPurposeTitles[static_cast<int>(g_purpose)]);
     release();
+    if (screen && g_joining && g_purpose == Purpose::NewGame && g_experience_clicked) {
+        g_auto_experience_done = true;  // the difficulty screen (TLD's, under ours until now)
+        auto_begin(AutoStep::Experience, screen);
+    }
     if (screen && g_purpose != Purpose::NewGame) continue_with_tld(screen, g_purpose);
 }
 
@@ -2022,6 +2135,28 @@ bool init() {
     const MethodInfo* sub_menu = il2::find_method(il2::find_class(kGame, "", "Panel_MainMenu"), "IsSubMenuEnabled", 0);
     if (!sub_menu || !hook("Panel_MainMenu.IsSubMenuEnabled", sub_menu, &sub_menu_enabled_detour, &g_sub_menu_enabled))
         logx::warn("menu: the main menu's home page will show behind the co-op screens (IsSubMenuEnabled not hooked)");
+    // TLDCoop_DLC: a joining friend's difficulty and map screens answer themselves (see run_auto). Optional: without
+    // them the friend chooses on TLD's screens, as before.
+    g_experience_clicked = il2::find_method_quiet(experience, "OnExperienceClicked", 0);
+    if (Il2CppClass* region = il2::find_class(kGame, "", "Panel_SelectRegion_Map")) {
+        g_region_random = il2::find_method_quiet(region, "OnRandomSelected", 0);
+        g_region_continue = il2::find_method_quiet(region, "OnSelectRegionContinue", 0);
+        g_region_busy = il2::find_method_quiet(region, "IsAnyAnimationInProgress", 0);
+        const MethodInfo* region_enable = il2::find_method_quiet(region, "Enable", 1);
+        if (!region_enable || !g_region_random || !g_region_continue ||
+            !hook("Panel_SelectRegion_Map.Enable", region_enable, &region_enable_detour, &g_region_enable)) {
+            g_region_random = g_region_continue = nullptr;
+            logx::warn("menu: a joining friend chooses the map themselves (Panel_SelectRegion_Map API missing)");
+        }
+    }
+    if (Il2CppClass* custom = il2::find_class(kGame, "", "Panel_CustomXPSetup")) {
+        g_custom_continue = il2::find_method_quiet(custom, "OnContinue", 0);
+        const MethodInfo* custom_enable = il2::find_method_quiet(custom, "Enable", 1);
+        if (!custom_enable || !g_custom_continue ||
+            !hook("Panel_CustomXPSetup.Enable", custom_enable, &custom_enable_detour, &g_custom_enable))
+            g_custom_continue = nullptr;
+    }
+    if (!g_experience_clicked) logx::warn("menu: a joining friend chooses the difficulty themselves (OnExperienceClicked missing)");
     return hook("Panel_Sandbox.OnClickNew", g_sandbox_new_info, &sandbox_new_detour, &g_sandbox_new) &&
            hook("Panel_Sandbox.OnClickResume", g_sandbox_resume_info, &sandbox_resume_detour, &g_sandbox_resume) &&
            hook("Panel_Sandbox.OnClickLoad", g_sandbox_load_info, &sandbox_load_detour, &g_sandbox_load) &&
@@ -2036,6 +2171,7 @@ bool init() {
 
 void on_frame() {
     if (g_pending_survivor) run_pending_survivor();
+    if (g_auto != AutoStep::None) run_auto();
     if (g_reopen_chooser_in > 0 && --g_reopen_chooser_in == 0) reopen_chooser();
     if (g_reopen_setup_in > 0 && --g_reopen_setup_in == 0) reopen_setup();
     if (ch.open) chooser_frame();
