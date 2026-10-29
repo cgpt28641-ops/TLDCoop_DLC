@@ -650,6 +650,19 @@ void hide_buttons(Il2CppObject* panel) {
     g_hidden_buttons.hidden = true;
 }
 
+// TLDCoop_DLC: the bed screen's SLEEP button, on. TLD 2.58 switches it off itself as the player falls asleep, before
+// hide_buttons saw it: remembered as off, it never came back, and the next time the host's bed screen had only its
+// close button (no way to sleep again). Out of bed, SLEEP is always there.
+void sleep_button_on(Il2CppObject* panel) {
+    if (g_screen_kind != Kind::Bed || !alive(panel)) return;
+    Il2CppObject* b[3];
+    button_slots(panel, b);
+    if (b[0] && !active_self(b[0])) {
+        set_active(b[0], true);
+        logx::info("sleep: the SLEEP button was off out of bed; on again");
+    }
+}
+
 void restore_buttons(Il2CppObject* panel) {
     if (!g_hidden_buttons.hidden || !alive(panel)) return;
     Il2CppObject* b[3];
@@ -657,6 +670,7 @@ void restore_buttons(Il2CppObject* panel) {
     for (int i = 0; i < 3; ++i)
         if (g_hidden_buttons.was_on[i]) set_active(b[i], true);
     g_hidden_buttons.hidden = false;
+    sleep_button_on(panel);
 }
 
 void show(Il2CppObject* panel) {
@@ -938,6 +952,7 @@ void enable_detour(Il2CppObject* self, bool enable, bool pass_only, const Method
             g_panel = il2::il2cpp_gchandle_new(self, false);
         }
         if (static_cast<int>(g_choice) > last_choice(kind)) g_choice = net::SleepChoice::H8;  // no REST passing time
+        if (g_mode == Mode::Awake) sleep_button_on(self);
         put<int32_t>(self, api.panel_min, kFirstChoice);
         put<int32_t>(self, api.panel_max, last_choice(kind));
         put<int32_t>(self, api.panel_hours, static_cast<int32_t>(g_choice));
