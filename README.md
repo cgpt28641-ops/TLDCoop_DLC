@@ -97,7 +97,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.58** (188966 S) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v30**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v31**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 

@@ -3,7 +3,7 @@ TLDCoop_DLC - co-op do The Long Dark (przerobka TLDCoop v0.13.1 pod gre 2.58 i D
 
 Wymagania
 - The Long Dark 2.58 188966 S na Steam (Windows), Steam wlaczony.
-- Kazdy gracz instaluje TEN SAM zip (protokol v30; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
+- Kazdy gracz instaluje TEN SAM zip (protokol v31; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
 - Gracz dolaczajacy musi miec zainstalowane wszystkie DLC, ktore ma host
   (np. Tales from the Far Territory, Iron Road). Wiecej DLC niz host - w porzadku.
 

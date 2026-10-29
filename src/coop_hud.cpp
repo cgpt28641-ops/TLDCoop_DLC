@@ -7,6 +7,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "avatar.h"
@@ -706,6 +707,46 @@ bool chart(const game::PlayerState& me, bool indoors, bool now) {
     return true;
 }
 
+// TLDCoop_DLC: the map is everyone's. Where a friend walks in our region is charted on our map too, the same way as
+// our own steps (the survey at their spot: DoNearbyDetailsCheck's override position), from the positions their
+// states already carry: nothing more goes over the network. What a friend charts while we're elsewhere isn't caught up.
+struct FriendChart {
+    bool before = false;
+    hud::V3 last{};
+};
+std::unordered_map<uint8_t, FriendChart> g_friend_chart;
+
+bool chart_friend(const avatar::Seen& f) {
+    if (!g_chart_ready) return false;
+    FriendChart& fc = g_friend_chart[f.player];
+    const hud::V3 there{f.x, f.y, f.z};
+    if (!hud::chart_here(fc.before, fc.last, there, kChartStepM)) return false;
+    Il2CppObject* map = map_panel();
+    const Region& region = region_now();
+    if (!map || !region.mappable || !region_fog(map)) return false;
+    fc.before = true;
+    fc.last = there;
+    const game::Vec3 pos{f.x, f.y, f.z};
+    hud::V2 at;
+    const float per_m = map_units_per_metre(map, pos);
+    Il2CppObject* spots = region_spots(map);
+    if (to_map(map, pos, at) && per_m > 0 && charted_near(spots, at, kChartStepM * per_m)) return false;
+    const int before = list_size(spots);
+    float radius = std::min(kChartRadiusM, std::max(1.0f, get<float>(map, api.map_survey_radius)));
+    bool force = true, use_override = true, vistas = false;
+    Vector3 where{f.x, f.y, f.z};
+    void* args[] = {&radius, &force, &use_override, &where, &vistas};
+    il2::invoke(api.map_survey, map, args);
+    const int after = list_size(region_spots(map));
+    if (after <= before) return false;
+    char note[200];
+    std::snprintf(note, sizeof(note), "charted where %s walks (%.0f, %.0f) in %s, %.0f m around: %d spots on our map",
+                  f.name.c_str(), f.x, f.z, region.name.c_str(), radius, after);
+    g_chart_state.note = note;
+    logx::info("hud: %s", note);
+    return true;
+}
+
 // --- the radar ---------------------------------------------------------------------------------------------------
 
 // A round map in the top right corner, as TLD's map screen looks: our copy of TLD's own hand-drawn region map where
@@ -713,7 +754,9 @@ bool chart(const game::PlayerState& me, bool indoors, bool now) {
 // us TLD's map arrow at its centre, friends the same arrow in rust red, an arrow on the edge for those beyond it.
 // Indoors (no map): the dark disc, friends by bearing and distance.
 constexpr int kRadarRadius = 62;            // UI units (the screen is 720 high)
-constexpr float kRadarMargin = 20;          // from the screen's top right corner
+constexpr float kRadarMargin = 20;          // from the screen's right edge
+// TLDCoop_DLC: from its top, below TLD 2.58's time-of-day sun in that corner (20 put the radar over it).
+constexpr float kRadarTopMargin = 96;
 constexpr float kRadarRangeM = 150;         // outdoors: metres from the centre to the ring
 constexpr float kRadarIndoorRangeM = 30;    // indoors
 constexpr int kRimSize = kRadarRadius * 2 + 14;
@@ -964,13 +1007,14 @@ float on_radar_deg(hud::V2 dir, float turn_deg) {
 float show_radar(const std::vector<avatar::Seen>& all, const game::PlayerState& me, bool indoors,
                  Il2CppObject* ui_camera, float width, float height, float px_per_unit) {
     const float r_px = kRadarRadius * px_per_unit, margin_px = kRadarMargin * px_per_unit;
-    const float below = height - margin_px - r_px - (kRimSize * 0.5f + 6) * px_per_unit;
+    const float top_px = kRadarTopMargin * px_per_unit;
+    const float below = height - top_px - r_px - (kRimSize * 0.5f + 6) * px_per_unit;
     if (!me.valid || (!live(g_radar_w.clip) && !make_radar())) return below;
     Il2CppObject* clip = live(g_radar_w.clip);
     Il2CppObject* over = live(g_radar_w.over);
     set_active(clip, true);
     set_active(over, true);
-    const float cx = width - margin_px - r_px, cy = height - margin_px - r_px;
+    const float cx = width - margin_px - r_px, cy = height - top_px - r_px;
     place_on_screen(go_transform(clip), ui_camera, cx, cy);
     place_on_screen(go_transform(over), ui_camera, cx, cy);
 
@@ -1316,7 +1360,10 @@ void set_switches(bool names, bool radar, bool chart) {
 }
 
 void on_frame(const std::string& scene, bool in_game) {
-    if (scene != g_scene) g_chart_state.before = false;  // a new scene: chart where we come in
+    if (scene != g_scene) {
+        g_chart_state.before = false;  // a new scene: chart where we come in
+        g_friend_chart.clear();
+    }
     g_scene = scene;
     g_in_game = in_game;
     if (!g_ready) return;
@@ -1346,6 +1393,9 @@ void late_update() {
     const game::PlayerState me = coop ? game::read_player() : game::PlayerState{};
     const std::vector<avatar::Seen> all = coop ? avatar::seen() : std::vector<avatar::Seen>{};
     if (coop && g_chart && me.valid) chart(me, indoors_now(), false);  // whether or not TLD shows its HUD
+    if (coop && g_chart && me.valid && !indoors_now())  // TLDCoop_DLC: where friends walk in our region too
+        for (const avatar::Seen& f : all)
+            if (f.playing && f.here && !f.dead) chart_friend(f);
     if (coop) show_map_marks(all);  // TLD's map is open over the game: its HUD is hidden then
     else hide_marks();
 

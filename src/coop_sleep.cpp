@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -35,15 +36,23 @@ constexpr float kSkipSeconds = 8;        // the shared skip's real seconds when 
 constexpr double kDoneSlackMs = 300;     // passing time this close to its real seconds is done, not stopped
 // SleepChoice H4..Rest: the list, what TLD's hours selector runs over. REST is the bed's only (lying in it): the pass
 // time screen's list ends at TILL DUSK.
-constexpr int kFirstChoice = 1, kLastChoice = 6, kLastSleep = 5;
-constexpr int kChoices = kLastChoice - kFirstChoice + 1;
+// TLDCoop_DLC: each screen's own list, in order (a bed: REST too; waiting: 1 and 2 hours too). The screen's
+// m_SleepHours holds the row (1 the first), not the choice. kChoices: rows made (the longer list).
+constexpr net::SleepChoice kBedList[] = {net::SleepChoice::H4,   net::SleepChoice::H8,   net::SleepChoice::H12,
+                                         net::SleepChoice::Dawn, net::SleepChoice::Dusk, net::SleepChoice::Rest};
+constexpr net::SleepChoice kWaitList[] = {net::SleepChoice::H1,  net::SleepChoice::H2,   net::SleepChoice::H4,
+                                          net::SleepChoice::H8,  net::SleepChoice::H12,  net::SleepChoice::Dawn,
+                                          net::SleepChoice::Dusk};
+constexpr int kFirstChoice = 1;  // the first row
+constexpr int kChoices = static_cast<int>(std::size(kWaitList) > std::size(kBedList) ? std::size(kWaitList)
+                                                                                     : std::size(kBedList));
 constexpr int kOverflowResizeFreely = 2, kOverflowResizeHeight = 3;  // UILabel.Overflow
 constexpr int kPivotLeft = 3, kPivotCenter = 4, kPivotRight = 5;      // UIWidget.Pivot
 constexpr int32_t kCancelButton = 4;     // Rest.PassTimeOptions.DisplayCancelButton: TLD's HUD button over GET UP
 
 // The list, in ControllerOffset/Shared's space (40 below the panel's centre): between the description and the stats.
-constexpr float kRowTopY = 106, kRowPitch = 23, kRowTextX = 205;  // six rows between the description and TLD's stats
-constexpr int kRowWidth = 450, kRowHeight = 21;
+constexpr float kRowTopY = 106, kRowPitch = 20, kRowTextX = 205;  // seven rows between the description and TLD's stats
+constexpr int kRowWidth = 450, kRowHeight = 19;
 constexpr int kNameFont = 20, kVotersFont = 16;
 
 // Panel_Rest's widgets (TLDCoop/ui/Panel_Rest.txt). RestOnly is the sleep screen's, PassTimeOnly the pass time one's.
@@ -419,7 +428,19 @@ std::string names(const net::Status& st, const std::vector<uint8_t>& ids, const 
     return s;
 }
 
-int last_choice(Kind kind) { return kind == Kind::Bed ? kLastChoice : kLastSleep; }
+// The screen's list: how many rows, the choice in a row (1 the first), a choice's row (0: not on this list).
+int last_choice(Kind kind) {
+    return static_cast<int>(kind == Kind::Bed ? std::size(kBedList) : std::size(kWaitList));
+}
+net::SleepChoice choice_at(Kind kind, int row) {
+    if (row < 1 || row > last_choice(kind)) return net::SleepChoice::None;
+    return kind == Kind::Bed ? kBedList[row - 1] : kWaitList[row - 1];
+}
+int row_of(Kind kind, net::SleepChoice c) {
+    for (int r = 1; r <= last_choice(kind); ++r)
+        if (choice_at(kind, r) == c) return r;
+    return 0;
+}
 
 // 0: up; 1: in for a sleep or to pass time; 2: resting (REST).
 uint8_t seen_as(const net::Sleeper& p) { return !p.in_bed ? 0 : p.vote == net::SleepChoice::Rest ? 2 : 1; }
@@ -605,9 +626,9 @@ void close_says(Il2CppObject* panel, const char* text) {
 void paint_list(const net::Status& st, const std::vector<net::Sleeper>& all, const net::SleepClock& k) {
     Il2CppObject* hovered = il2::invoke(api.hovered, nullptr);
     for (int i = 0; i < kChoices; ++i) {
-        const auto choice = static_cast<net::SleepChoice>(i + kFirstChoice);
+        const auto choice = choice_at(g_screen_kind, i + kFirstChoice);
         const Row& r = g_rows[i];
-        const bool listed = i + kFirstChoice <= last_choice(g_screen_kind);
+        const bool listed = choice != net::SleepChoice::None;
         for (uintptr_t h : {r.back, r.name, r.voters}) set_active(go_of(target(h)), listed);
         set_active(target(r.hit), listed);
         if (!listed) continue;
@@ -731,7 +752,7 @@ void close_screen() {
 
 // A choice picked on the list (a click), as TLD's arrows pick one.
 void pick(Il2CppObject* panel, net::SleepChoice choice, const char* how) {
-    put<int32_t>(panel, api.panel_hours, static_cast<int32_t>(choice));
+    put<int32_t>(panel, api.panel_hours, std::max(kFirstChoice, row_of(g_screen_kind, choice)));
     logx::info("sleep: %s %s%s", how, net::sleep_choice_name(choice), g_mode != Mode::Awake ? " (our vote)" : "");
     g_choice = choice;
 }
@@ -951,11 +972,11 @@ void enable_detour(Il2CppObject* self, bool enable, bool pass_only, const Method
             drop(g_panel);
             g_panel = il2::il2cpp_gchandle_new(self, false);
         }
-        if (static_cast<int>(g_choice) > last_choice(kind)) g_choice = net::SleepChoice::H8;  // no REST passing time
+        if (!row_of(kind, g_choice)) g_choice = net::SleepChoice::H8;  // not on this list (REST passing time...)
         if (g_mode == Mode::Awake) sleep_button_on(self);
         put<int32_t>(self, api.panel_min, kFirstChoice);
         put<int32_t>(self, api.panel_max, last_choice(kind));
-        put<int32_t>(self, api.panel_hours, static_cast<int32_t>(g_choice));
+        put<int32_t>(self, api.panel_hours, row_of(kind, g_choice));
         return;
     }
     if (g_screen && g_mode == Mode::RealTime && !g_ending && !g_closing) {
@@ -969,7 +990,7 @@ void enable_detour(Il2CppObject* self, bool enable, bool pass_only, const Method
 void visuals_detour(Il2CppObject* self, const MethodInfo* method) {
     if (!g_screen || self != screen()) return g_visuals(self, method);
     const int idx = std::clamp(get<int32_t>(self, api.panel_hours), kFirstChoice, last_choice(g_screen_kind));
-    g_choice = static_cast<net::SleepChoice>(idx);
+    g_choice = choice_at(g_screen_kind, idx);
     // TLD's own lines (the calories it burns...) for the choice's hours; the list's place back after.
     const float hours = net::sleep_hours(g_choice, sleep_clock());
     put<int32_t>(self, api.panel_hours, std::max(1, static_cast<int32_t>(std::lround(hours))));
@@ -989,7 +1010,8 @@ void increase_detour(Il2CppObject* self, const MethodInfo* method) {
         Il2CppObject* go = alive(button) ? go_of(button) : nullptr;
         for (int i = 0; go && i < kChoices; ++i)
             if (go == target(g_rows[i].hit)) {
-                pick(self, static_cast<net::SleepChoice>(i + kFirstChoice), "clicked");
+                const net::SleepChoice c = choice_at(g_screen_kind, i + kFirstChoice);
+                if (c != net::SleepChoice::None) pick(self, c, "clicked");
                 return;
             }
     }
@@ -999,8 +1021,8 @@ void increase_detour(Il2CppObject* self, const MethodInfo* method) {
 void do_rest_detour(Il2CppObject* self, int32_t hours, bool wake_at_full, const MethodInfo* method) {
     if (!g_screen || self != screen()) return g_do_rest(self, hours, wake_at_full, method);
     if (g_mode != Mode::Awake) return;  // in: the list is the vote
-    const int idx = std::clamp(get<int32_t>(self, api.panel_hours), kFirstChoice, kLastChoice);
-    g_choice = static_cast<net::SleepChoice>(idx);
+    const int idx = std::clamp(get<int32_t>(self, api.panel_hours), kFirstChoice, last_choice(g_screen_kind));
+    g_choice = choice_at(g_screen_kind, idx);
     const int whole = std::max(1, static_cast<int>(std::ceil(net::sleep_hours(g_choice, sleep_clock()))));
     ++g_in_do_rest;
     g_do_rest(self, whole, false, method);  // TLD's checks, then BeginSleeping: ours
@@ -1260,6 +1282,7 @@ Il2CppObject* nearest_bed() {
 
 net::SleepChoice choice_named(const std::string& name) {
     static const std::pair<const char*, net::SleepChoice> kNames[] = {
+        {"1", net::SleepChoice::H1}, {"2", net::SleepChoice::H2},
         {"4", net::SleepChoice::H4}, {"8", net::SleepChoice::H8}, {"12", net::SleepChoice::H12},
         {"dawn", net::SleepChoice::Dawn}, {"dusk", net::SleepChoice::Dusk}, {"rest", net::SleepChoice::Rest}};
     for (const auto& [n, choice] : kNames)
@@ -1378,7 +1401,8 @@ bool dev(const std::string& action, const std::string& arg) {
     if (action == "pick") {
         const net::SleepChoice choice = choice_named(arg);
         if (choice == net::SleepChoice::None) return false;
-        put<int32_t>(panel, api.panel_hours, static_cast<int32_t>(choice));  // as the arrows do
+        if (!row_of(g_screen_kind, choice)) return false;
+        put<int32_t>(panel, api.panel_hours, row_of(g_screen_kind, choice));  // as the arrows do
         g_choice = choice;
         logx::info("dev: sleep: picked %s", net::sleep_choice_name(choice));
         return true;
@@ -1386,7 +1410,9 @@ bool dev(const std::string& action, const std::string& arg) {
     if (action == "click") {
         const net::SleepChoice choice = choice_named(arg);
         if (choice == net::SleepChoice::None || !list_alive(panel)) return false;
-        Il2CppObject* button = component(target(g_rows[static_cast<int>(choice) - kFirstChoice].hit), api.button_type);
+        const int row = row_of(g_screen_kind, choice);
+        if (!row) return false;
+        Il2CppObject* button = component(target(g_rows[row - kFirstChoice].hit), api.button_type);
         if (!button) return false;
         logx::info("dev: sleep: clicking %s", net::sleep_choice_name(choice));
         il2::invoke(api.button_on_click, button);  // NGUI's click: its onClick, with UIButton.current set

@@ -5,8 +5,9 @@
 //           sight (off screen, behind us) an arrow at the screen's edge with the name; in another scene, where.
 //   radar - a small round map of the area around us in the top right corner: TLD's own region map as we have
 //           charted it, turned with where we face, friends on it (pinned to the rim beyond it). Indoors: friends only.
-//   chart - our map charts itself where we walk, as TLD's charcoal survey does, without charcoal. Each player's own
-//           map: nothing about it goes over the network.
+//   chart - our map charts itself where we walk, as TLD's charcoal survey does, without charcoal, and (TLDCoop_DLC)
+//           where friends walk in our region too: everyone's map fills in. Each game charts from the positions it
+//           already has; nothing more goes over the network.
 // Friends are on TLD's map screen too, as markers that aren't saved with the map. Everything hides when TLD hides its
 // HUD (its HUD setting off, screenshot mode, a menu over the game). Plain logic in net/hud.h (hud_test). Main thread.
 

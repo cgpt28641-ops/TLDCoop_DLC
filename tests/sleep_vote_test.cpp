@@ -74,7 +74,7 @@ int main() {
         expect("a vote that isn't a choice counts as no vote", o.kind == Kind::Waiting && o.awake[0] == 0);
     }
     {  // Resting (milestone 13): in bed to heal, no vote for a sleep.
-        expect("REST is a vote on the wire, and its name", net::is_sleep_choice(6) && !net::is_sleep_choice(7) &&
+        expect("REST is a vote on the wire, and its name", net::is_sleep_choice(6) && !net::is_sleep_choice(net::kSleepChoices) &&
                                                                std::string(net::sleep_choice_name(SleepChoice::Rest)) == "REST");
         expect("REST doesn't skip time", !net::skips_time(SleepChoice::Rest) && net::skips_time(SleepChoice::H4) &&
                                              !net::skips_time(SleepChoice::None));
@@ -91,6 +91,20 @@ int main() {
         expect("REST is no vote: none counted for it", o.kind == Kind::Waiting && o.votes[6] == 0 && o.votes[2] == 1);
         o = net::decide_sleep({{0, true, SleepChoice::H8}, {1, true, SleepChoice::H8}}, k);
         expect("once the one resting picks a sleep: everyone sleeps", o.kind == Kind::Shared && o.choice == SleepChoice::H8);
+    }
+    {  // TLDCoop_DLC: 1 and 2 hours (waiting)
+        const net::SleepClock k{12, 7, 19};
+        expect("1 and 2 hours are those", net::sleep_hours(SleepChoice::H1, k) == 1 && net::sleep_hours(SleepChoice::H2, k) == 2);
+        expect("their names", std::string(net::sleep_choice_name(SleepChoice::H1)) == "1 HOUR" &&
+                                  std::string(net::sleep_choice_name(SleepChoice::H2)) == "2 HOURS");
+        expect("they're votes that skip time", net::is_sleep_choice(7) && net::is_sleep_choice(8) &&
+                                                   !net::is_sleep_choice(9) && net::skips_time(SleepChoice::H1));
+        auto o = net::decide_sleep({{0, true, SleepChoice::H1, true}, {1, true, SleepChoice::H1, true}}, k);
+        expect("two waiting 1 hour: everyone passes 1 hour", o.kind == Kind::Shared && o.choice == SleepChoice::H1 && o.hours == 1);
+        o = net::decide_sleep({{0, true, SleepChoice::H2, true}, {1, true, SleepChoice::H8}}, k);
+        expect("a tie between 2 and 8 hours goes to 2", o.kind == Kind::Shared && o.choice == SleepChoice::H2);
+        o = net::decide_sleep({{0, true, SleepChoice::H1, true}, {1, true, SleepChoice::H4}, {2, true, SleepChoice::H4}}, k);
+        expect("most votes win: 4 hours over 1", o.choice == SleepChoice::H4);
     }
     std::printf("%s\n", g_failed ? "SOME CHECKS FAILED" : "ALL PASS");
     return g_failed ? 1 : 0;
