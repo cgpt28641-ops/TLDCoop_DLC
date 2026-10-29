@@ -33,6 +33,8 @@ struct Config {
     std::string name = "Player";
     std::string body = "capsule";  // how the others see us; an id such as "mackenzie"
     std::string game_version;      // must match exactly on both sides
+    std::string content = "?";     // our installed optional content (DLC), net/content.h's text; "?" unknown
+    bool content_check = true;     // host: a friend must have every DLC we have installed (else MissingContent)
     bool ask_to_join = false;      // host: a new friend waits until admit() (or turn_away()); one let in before comes
                                    // back by itself after a dropped link, one turned away can't for this session
 };
@@ -67,6 +69,8 @@ struct Status {
     // Host (ask_to_join): friends asking to join, oldest first (link: their ticket for admit / turn_away; id 0).
     std::vector<PlayerInfo> asking;
     bool waiting = false;      // client: the host has us waiting to be let in (peer_name: the host)
+    uint8_t reject_reason = 0; // client: why the host refused us (RejectReason), 0 none
+    std::string reject_detail; // client: the host's detail (MissingContent: the DLC ids we lack)
     bool turned_away = false;  // client: the host didn't let us in, or kicked us (rejected is set too)
 };
 

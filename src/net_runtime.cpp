@@ -61,7 +61,8 @@ void stop() {
 // Settings that need a new session (a new lobby, socket or handshake) when they change; the body doesn't.
 bool same_link(const net::Config& a, const net::Config& b) {
     return a.role == b.role && a.transport == b.transport && a.bind_ip == b.bind_ip && a.host_ip == b.host_ip &&
-           a.port == b.port && a.code == b.code && a.name == b.name && a.game_version == b.game_version;
+           a.port == b.port && a.code == b.code && a.name == b.name && a.game_version == b.game_version &&
+           a.content == b.content && a.content_check == b.content_check;
 }
 
 bool restart(const net::Config& config) {

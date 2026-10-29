@@ -17,6 +17,7 @@
 #include "log.h"
 #include "net/held.h"
 #include "net_runtime.h"
+#include "optional_content.h"
 #include "coop_death.h"
 #include "coop_give.h"
 #include "coop_lapse.h"
@@ -174,6 +175,8 @@ void apply_net_settings(const config::Settings& s, bool startup) {
         c.body = "capsule";
     }
     c.game_version = paths::game_version();
+    c.content = optional_content::installed();
+    c.content_check = s.dlc_check;
     c.ask_to_join = s.ask_to_join && !startup;  // autostart (testing) lets friends straight in
     avatar::use_tld_shaders(s.body_shader == "tld");
     g_net_enabled = netrt::restart(c);

@@ -1,0 +1,31 @@
+TLDCoop_DLC - co-op do The Long Dark (przerobka TLDCoop v0.13.1 pod gre 2.58 i DLC)
+=================================================================================
+
+Wymagania
+- The Long Dark 2.58 188966 S na Steam (Windows), Steam wlaczony.
+- Kazdy gracz instaluje TEN SAM zip (protokol v28; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
+- Gracz dolaczajacy musi miec zainstalowane wszystkie DLC, ktore ma host
+  (np. Tales from the Far Territory, Iron Road). Wiecej DLC niz host - w porzadku.
+
+Przed instalacja
+- Zrob kopie zapisow: %LOCALAPPDATA%\Hinterland\TheLongDark
+
+Instalacja
+1. Zamknij gre.
+2. Steam > The Long Dark > Zarzadzaj > Przegladaj pliki lokalne (folder z tld.exe).
+3. Jesli jest tam juz winhttp.dll od MelonLoadera (Wlasciwosci > Szczegoly: MelonLoader.Bootstrap),
+   zmien jego nazwe na winmm.dll. MelonLoader jako version.dll lub winmm.dll - nic nie ruszaj.
+4. Skopiuj zawartosc zipa do folderu gry: winhttp.dll obok tld.exe i folder TLDCoop obok.
+5. Uruchom gre ze Steama. W Survival > NEW/RESUME/LOAD pojawi sie ekran SOLO OR CO-OP?
+
+Sprawdzenie DLC
+- W TLDCoop\coop.log po starcie co-opa jest linia:
+    dlc: installed optional content: ... (owned: ...)
+  To lista DLC, ktora widzi gra. Gracz bez DLC hosta dostanie komunikat "MISSING DLC" z ich nazwami.
+- Host moze wylaczyc sprawdzanie: TLDCoop\coop.ini, sekcja [net], dlc_check=0 (na wlasne ryzyko).
+
+Wylaczenie / odinstalowanie
+- Wylacz: pusty plik o nazwie disabled w folderze TLDCoop.
+- Odinstaluj: usun winhttp.dll i folder TLDCoop.
+
+Bledy: dolacz coop.log od KAZDEGO gracza (plik nadpisuje sie przy kazdym starcie gry).

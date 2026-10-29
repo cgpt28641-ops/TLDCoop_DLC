@@ -6,6 +6,9 @@
 // options: --name N  --body B (how the game draws the bot)  --cycle B1,B2,.. --cycle-seconds S
 //          --seconds S (exit after S seconds, print a summary)  --radius R  --speed DEG_PER_SEC
 //          --game-version VERSION (default: read from ..\tld_Data\StreamingAssets\version.txt)
+//          --content IDS: the DLC the bot says it has (comma-separated TLD content ids, as coop.log prints them on
+//          the host; default "?": unknown, which a host with DLC installed refuses), --no-dlc-check (hosting: let
+//          anyone in whatever DLC they have)
 // scenes (milestone 6): --park-at X,Y,Z stays at that spot in the real player's scene; --repark parks again
 //          where the player is after a teleport within a scene.
 // scenes (milestone 6): --park stays where the real player first was (same scene, same spot) instead of
@@ -222,6 +225,7 @@ int usage() {
         "       tldbot host [port] [options]\n"
         "options: --name N, --body B, --cycle B1,B2,... (switch body every --cycle-seconds, default 10),\n"
         "         --seconds S, --radius R, --speed DEG_PER_SEC, --game-version V\n"
+        "         --content IDS (the DLC ids the bot has, as the host's coop.log lists them), --no-dlc-check\n"
         "         --park (stay where the real player first was instead of following them),\n"
         "         --repark (park again where they are after a teleport), --park-at X,Y,Z (stay there)\n"
         "animals: join: --record-animals FILE; host: --replay-animals FILE\n"
@@ -284,6 +288,8 @@ int main(int argc, char** argv) {
         else if (a == "--radius") radius = static_cast<float>(atof(next().c_str()));
         else if (a == "--speed") speed_deg = static_cast<float>(atof(next().c_str()));
         else if (a == "--game-version") cfg.game_version = next();
+        else if (a == "--content") cfg.content = next();
+        else if (a == "--no-dlc-check") cfg.content_check = false;
         else if (a == "--record-world") record_world = next();
         else if (a == "--world-file") world_file = next();
         else if (a == "--time") time_opt = next();

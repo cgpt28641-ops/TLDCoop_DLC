@@ -1,5 +1,7 @@
 #include "net/session.h"
 
+#include "net/content.h"
+
 #include <windows.h>
 
 #include <cstdarg>
@@ -54,6 +56,7 @@ const char* reject_text(RejectReason reason) {
         case RejectReason::GameVersion: return "game version differs";
         case RejectReason::Full: return "the game is full (4 players)";
         case RejectReason::TurnedAway: return "the host turned us away";
+        case RejectReason::MissingContent: return "the host's world uses DLC we don't have installed";
     }
     return "unknown reason";
 }
@@ -133,6 +136,9 @@ struct Session::Impl {
     bool turned_away = false;              // client
     std::map<uint8_t, Other> others;  // client
     bool rejected = false;
+    uint8_t reject_reason = 0;        // client: the host's RejectReason, once refused
+    std::string reject_detail;
+    bool content_unknown_logged = false;  // host
     uint8_t self_id = 0;
     uint32_t nonce = 0;  // client: this connection's (new each time we start connecting), in every Hello
     bool ready = false;  // ours (Session::set_ready)
@@ -222,7 +228,32 @@ struct Session::Impl {
         w.put_str(cfg.game_version, kVersionLen);
         w.put_str(cfg.name, kNameLen);
         w.put(nonce);
+        w.put_str(cfg.content, kContentLen);
         send(host.addr, w);
+    }
+
+    // Host: does a friend saying hello have every DLC we have installed (net/content.h)? If not, they're refused with
+    // MissingContent and the ids they lack. Logged once per connection attempt (hellos repeat).
+    bool content_ok(PeerId from, const std::string& name, const std::string& theirs, bool linked) {
+        if (!cfg.content_check || linked) return true;
+        if (!content_known(cfg.content)) {
+            if (!content_unknown_logged) logf("our installed DLC is unknown; letting friends in without checking theirs");
+            content_unknown_logged = true;
+            return true;
+        }
+        const std::vector<std::string> ours = content_split(cfg.content);
+        if (ours.empty()) return true;  // nothing of ours a friend could lack
+        if (!content_known(theirs)) {
+            logf("'%s' couldn't tell which DLC they have; we have %s", name.c_str(), cfg.content.c_str());
+            send_reject(from, RejectReason::MissingContent, kContentUnknown);
+            return false;
+        }
+        const std::vector<std::string> missing = content_missing(cfg.content, theirs);
+        if (missing.empty()) return true;
+        logf("'%s' lacks DLC our world may use: %s (they have: %s; we have: %s)", name.c_str(),
+             content_join(missing).c_str(), theirs.empty() ? "none" : theirs.c_str(), cfg.content.c_str());
+        send_reject(from, RejectReason::MissingContent, content_detail(missing, kDetailLen - 1));
+        return false;
     }
 
     void send_reject(PeerId to, RejectReason reason, const std::string& detail) {
@@ -564,11 +595,13 @@ struct Session::Impl {
                 const std::string game_version = r.get_str(kVersionLen);
                 const std::string name = r.get_str(kNameLen);
                 const auto their_nonce = r.get<uint32_t>();
+                const std::string their_content = r.get_str(kContentLen);
                 if (!r.ok()) return;
                 if (game_version != cfg.game_version) {
                     send_reject(from, RejectReason::GameVersion, "host has " + cfg.game_version);
                     return;
                 }
+                if (!content_ok(from, name, their_content, linked)) return;
                 if (has(kept_out, from)) {
                     send_reject(from, RejectReason::TurnedAway, "");
                     return;
@@ -636,6 +669,8 @@ struct Session::Impl {
                     break;
                 }
                 rejected = true;
+                reject_reason = static_cast<uint8_t>(reason);
+                reject_detail = detail;
                 logf("host refused us: %s (%s); not retrying", reject_text(reason), detail.c_str());
                 break;
             }
@@ -1016,6 +1051,8 @@ struct Session::Impl {
     Status status() const {
         Status st;
         st.rejected = rejected;
+        st.reject_reason = reject_reason;
+        st.reject_detail = reject_detail;
         st.self_id = self_id;
         st.link = link_status;
         st.states_sent = states_sent;

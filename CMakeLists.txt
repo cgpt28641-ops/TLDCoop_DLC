@@ -52,6 +52,7 @@ add_library(tldcoop SHARED
   src/il2cpp_api.cpp
   src/log.cpp
   src/net_runtime.cpp
+  src/optional_content.cpp
   src/paths.cpp
   src/steam_dispatch.cpp
   src/test_harness.cpp
@@ -101,3 +102,5 @@ add_executable(hud_test tests/hud_test.cpp)
 target_link_libraries(hud_test PRIVATE tldnet)
 add_executable(handover_test tests/handover_test.cpp)
 target_link_libraries(handover_test PRIVATE tldnet)
+add_executable(content_test tests/content_test.cpp)
+target_link_libraries(content_test PRIVATE tldnet)

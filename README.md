@@ -1,3 +1,22 @@
+# TLDCoop_DLC
+
+A personal fork of [TLDCoop](https://github.com/ScarredVeins/TLDCo-Op) by ScarredVeins (all credit for the mod is
+theirs; see [Credits](#credits)), with:
+
+- **The Long Dark 2.58 188966 S**: the API adaptations by [afkfatih](https://github.com/afkfatih/TLDCo-Op/tree/support-tld-2.58)
+  (see [issue #1](https://github.com/ScarredVeins/TLDCo-Op/issues/1)).
+- **DLC awareness** (protocol **v28**): each player's installed optional content is read from the game itself
+  (`TLD.OptionalContent.OptionalContentManager.InstalledContent`, no DLC list in the mod, so Tales from the Far
+  Territory, Iron Road and later packs all count). A friend must have every DLC the host has installed; one who
+  doesn't is told which ones they lack (**MISSING DLC**). `dlc_check=0` in `coop.ini` turns the check off.
+  See `src/net/content.h`, `src/optional_content.cpp`, `tests/content_test.cpp`.
+- **Not yet:** Iron Road's train (`TLD.SteamTrain.*`) isn't synchronized between players yet.
+
+Builds come from GitHub Actions (`.github/workflows/build.yml`): the `TLDCoop_DLC` artifact is the zip to install
+(`INSTALL.txt` inside, in Polish). Players of this fork can't play with players of the original v0.13.1.
+
+---
+
 # TLDCoop: co-op for The Long Dark
 
 **Play The Long Dark's Survival mode together: 2 to 4 players in one world, over Steam, with join codes.**

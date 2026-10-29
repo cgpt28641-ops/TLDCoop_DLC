@@ -7,11 +7,13 @@
 // other: their states, who's there, and the world changes, as its own).
 //
 //   Hello    client->host  game_version[24] name[32] u32 nonce (new each time the client starts connecting: a known
-//                          address saying hello with another nonce is a new connection, the old one is gone)
+//                          address saying hello with another nonce is a new connection, the old one is gone),
+//                          content[256] (the client's installed optional content, i.e. DLC: net/content.h)
 //   Welcome  host->client  name[32] u8 player (the id the host gave the client: 1..3; the host is 0)
 //   Wait     host->client  name[32]: the answer to a Hello while the host decides whether to let them in (a host that
 //                          asks: Config.ask_to_join); they keep saying hello until a Welcome or a Reject
-//   Reject   host->client  u8 reason, detail[64]; TurnedAway also ends a connection that is up (the host kicked them)
+//   Reject   host->client  u8 reason, detail[64]; TurnedAway also ends a connection that is up (the host kicked them).
+//                          MissingContent: detail is the host's DLC ids the client lacks (net/content.h)
 //   Ping     either        f64 sender time (ms)
 //   Pong     either        f64 echoed sender time
 //   State    either        u32 seq, f64 capture time (sender clock, ms), u8 valid, scene[48],
@@ -99,7 +101,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 27;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 28;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -127,6 +129,8 @@ constexpr uint16_t kProtocolVersion = 27;  // v4: World. v5: Animals. v6: sounds
                                            // v27: handing an item to a friend (Give), State's kStateEating
                                            // (the food in held), kStateBed with bed, kStateCrouched, and the
                                            // sleep list's REST
+                                           // v28 (TLDCoop_DLC): Hello's content (installed DLC), Reject's
+                                           // MissingContent
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -150,7 +154,7 @@ enum class Msg : uint8_t {
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37
 };
-enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4 };
+enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
 struct StateMsg {
     uint32_t seq = 0;

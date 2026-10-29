@@ -1,0 +1,60 @@
+# Builds winhttp.dll on Windows with MSVC (as build.cmd does), runs the offline tests, and packs the zip players
+# install: winhttp.dll, the TLDCoop folder (the characters and animations, taken from the original v0.13.1 release,
+# unchanged) and INSTALL.txt. The zip is this run's artifact ("TLDCoop_DLC").
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure and build
+        shell: cmd
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release || exit /b 1
+          cmake --build build || exit /b 1
+
+      - name: Offline tests
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($t in Get-ChildItem build\*_test.exe) {
+            Write-Host "=== $($t.Name)"
+            & $t.FullName
+            if ($LASTEXITCODE -ne 0) { $failed += $t.Name }
+          }
+          if ($failed.Count) { Write-Error "failed: $($failed -join ', ')"; exit 1 }
+
+      - name: Pack the zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force pack, upstream | Out-Null
+          gh release download v0.13.1 -R ScarredVeins/TLDCo-Op -p "TLDCoop-v0.13.1.zip" -D upstream
+          Expand-Archive upstream\TLDCoop-v0.13.1.zip upstream\zip
+          Copy-Item -Recurse upstream\zip\TLDCoop pack\TLDCoop
+          Copy-Item build\winhttp.dll pack\
+          Copy-Item INSTALL_DLC.txt pack\INSTALL.txt
+          Get-FileHash pack\winhttp.dll, pack\TLDCoop\*.bundle | Format-Table Hash, Path -AutoSize | Out-String -Width 300 | Write-Host
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TLDCoop_DLC
+          path: pack/
+          if-no-files-found: error

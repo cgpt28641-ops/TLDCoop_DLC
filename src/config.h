@@ -17,6 +17,7 @@ struct Settings {
     std::string body = "capsule";      // how the other player sees you (see the list in coop.ini)
     std::string voice = "male";        // male | female: your survivor's voice (TLD's own Male/Female choice)
     bool ask_to_join = true;           // hosting from the menu: each friend asks to join (LET IN / TURN AWAY)
+    bool dlc_check = true;             // hosting: a friend must have every DLC we have installed (net/content.h)
     std::string body_shader = "own";   // own | tld: shaders used to draw the other player's story body
     float picker_scale = 0.5f;         // [struggle] how long TLD's weapon picker stays up in co-op (1 = TLD's own)
     // [hud] finding each other (milestone 12), each player's own:

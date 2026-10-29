@@ -17,6 +17,7 @@
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "net/content.h"
 #include "net_runtime.h"
 
 namespace coop_menu {
@@ -1507,6 +1508,13 @@ std::string lobby_help(const net::Status& st) {
     }
     const std::string host = host_name(st);
     if (st.turned_away) return host + " didn't let you in.\n\nPress BACK to join someone else.";
+    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::MissingContent)) {
+        if (st.reject_detail == net::kContentUnknown)
+            return "Couldn't join: your game couldn't tell which DLC it has installed, and " + host +
+                   "'s world uses DLC.\n\nRestart The Long Dark and try again. Press BACK.";
+        return "Couldn't join: " + host + "'s world uses DLC you don't have installed:\n" + st.reject_detail +
+               "\n\nInstall it on Steam, or ask " + host + " to set dlc_check=0 in coop.ini. Press BACK.";
+    }
     if (st.rejected)
         return "Couldn't join: your friend's game is a different version (of The Long Dark, or of co-op).\n\nPress BACK.";
     if (st.waiting) return "Waiting for " + host + " to let you in...";
@@ -1530,6 +1538,7 @@ std::string code_line(const net::Status& st) {
     if (g.mode == kHost) return local ? std::string("LOCAL GAME") : "YOUR CODE: " + g.settings.code;
     if (st.connected) return "IN " + upper(host_name(st)) + "'S GAME";
     if (st.turned_away) return "NOT LET IN";
+    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::MissingContent)) return "MISSING DLC";
     if (st.rejected) return "COULDN'T JOIN";
     if (st.waiting) return "WAITING TO BE LET IN";
     return "JOINING " + (local ? std::string("BY IP") : g.join_code) + "...";
