@@ -32,4 +32,5 @@ Wylaczenie / odinstalowanie
 - Wylacz: pusty plik o nazwie disabled w folderze TLDCoop.
 - Odinstaluj: usun winhttp.dll i folder TLDCoop.
 
-Bledy: dolacz coop.log od KAZDEGO gracza (plik nadpisuje sie przy kazdym starcie gry).
+Bledy: dolacz coop.log od KAZDEGO gracza. Po crashu i ponownym uruchomieniu gry log z crashem to
+  coop-prev.log (a jeszcze wczesniejszy coop-prev2.log). Linie [FAULT] pokazuja, gdzie gra sie wywalila.

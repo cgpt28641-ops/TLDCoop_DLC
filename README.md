@@ -223,8 +223,9 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
   ponownie i zmień nazwę jego pliku na `winmm.dll`.
 - **Znajomi wyglądają jak kolorowe kapsuły:** u osoby, która widzi kapsuły, brakuje
   `TLDCoop\tldcoop_bodies.bundle`. Skopiuj go z zipa.
-- **Zgłaszanie błędu:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Plik nadpisuje się przy każdym starcie gry,
-  więc skopiuj go przed ponownym uruchomieniem.
+- **Zgłaszanie błędu:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Przy starcie gry poprzedni log
+  zostaje jako `coop-prev.log` (a jeszcze wcześniejszy jako `coop-prev2.log`), więc po crashu i ponownym
+  uruchomieniu log z crashem to `coop-prev.log`. Linie `[FAULT]` pokazują, w którym miejscu gra się wywaliła.
 
 ## Czego jeszcze nie ma
 

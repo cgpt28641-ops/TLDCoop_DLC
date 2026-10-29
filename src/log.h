@@ -3,7 +3,7 @@
 
 namespace logx {
 
-// Opens <mod dir>/coop.log (truncated each launch). Safe to call once from DllMain.
+// Opens <mod dir>/coop.log (the previous two kept as coop-prev.log, coop-prev2.log) and logs fatal faults. Safe to call once from DllMain.
 void open(const std::filesystem::path& file);
 
 void info(const char* fmt, ...);
