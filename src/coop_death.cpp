@@ -107,6 +107,19 @@ struct Api {
     Il2CppObject* audio_type = nullptr;             // typeof(AudioCallback)
     const MethodInfo* audio_toggle = nullptr;       // AudioCallback.ToggleDisableAudioEvents(bool)
     const MethodInfo* fade_in = nullptr;            // static CameraFade.FadeIn(float, float, Action)
+    // TLDCoop_DLC: what a death can leave locked (a death in a wolf's struggle: the camera couldn't turn after respawn).
+    const MethodInfo* get_camera = nullptr;         // static GameManager.GetVpFPSCamera()
+    const MethodInfo* cam_locked = nullptr;         // vp_FPSCamera.IsRotationLimitLocked()
+    const MethodInfo* cam_unlock = nullptr;         // vp_FPSCamera.UnlockRotationLimit()
+    const MethodInfo* cam_free_on = nullptr;        // vp_FPSCamera.IsFreeCameraLookEnabled()
+    const MethodInfo* cam_free_off = nullptr;       // vp_FPSCamera.DisableFreeCameraLook()
+    const MethodInfo* get_struggle = nullptr;       // static GameManager.GetPlayerStruggleComponent()
+    const MethodInfo* in_struggle = nullptr;        // PlayerStruggle.InStruggle()
+    const MethodInfo* break_struggle = nullptr;     // PlayerStruggle.BreakStruggle()
+    FieldInfo* block_input = nullptr;               // static GameManager.m_BlockNonMovementInput
+    FieldInfo* lock_timer = nullptr;                // static GameManager.m_LockControlsTimer
+    FieldInfo* block_move = nullptr;                // static GameManager.m_BlockMoveInputUntilReleased
+    ptrdiff_t freeze_movement = -1;                 // PlayerManager.m_FreezeMovement
     // The fresh character
     Il2CppClass* game_manager = nullptr;
     ptrdiff_t hp = -1, max_hp = -1;                 // Condition
@@ -646,6 +659,57 @@ void sounds_back() {
     }
 }
 
+// TLDCoop_DLC: what TLD's death (its struggle, its death screen) left locked goes: a new survivor can look and move.
+// TLD's own death ends in a scene load that resets these; co-op's respawn doesn't load anything, so after a death in a
+// wolf's struggle the camera stayed locked to the struggle's view.
+void controls_back(Il2CppObject* pm) {
+    std::string undone;
+    auto note = [&](const char* what) { undone += undone.empty() ? what : std::string(", ") + what; };
+    if (Il2CppObject* st = api.get_struggle ? il2::invoke(api.get_struggle, nullptr) : nullptr) {
+        bool in = false;
+        if (api.in_struggle && api.break_struggle && il2::invoke_value(api.in_struggle, st, in) && in) {
+            il2::invoke(api.break_struggle, st);
+            note("the struggle");
+        }
+    }
+    if (Il2CppObject* cam = api.get_camera ? il2::invoke(api.get_camera, nullptr) : nullptr) {
+        bool locked = false, free_look = false;
+        if (api.cam_locked && api.cam_unlock && il2::invoke_value(api.cam_locked, cam, locked) && locked) {
+            il2::invoke(api.cam_unlock, cam);
+            note("the camera's turn limit");
+        }
+        if (api.cam_free_on && api.cam_free_off && il2::invoke_value(api.cam_free_on, cam, free_look) && free_look) {
+            il2::invoke(api.cam_free_off, cam);
+            note("free look");
+        }
+    }
+    auto clear_bool = [&](FieldInfo* f, const char* what) {
+        if (!f) return;
+        bool v = false;
+        il2::il2cpp_field_static_get_value(f, &v);
+        if (!v) return;
+        v = false;
+        il2::il2cpp_field_static_set_value(f, &v);
+        note(what);
+    };
+    clear_bool(api.block_input, "blocked input");
+    clear_bool(api.block_move, "blocked movement");
+    if (api.lock_timer) {
+        float t = 0;
+        il2::il2cpp_field_static_get_value(api.lock_timer, &t);
+        if (t > 0) {
+            t = 0;
+            il2::il2cpp_field_static_set_value(api.lock_timer, &t);
+            note("the controls' lock timer");
+        }
+    }
+    if (pm && api.freeze_movement >= 0 && get<bool>(pm, api.freeze_movement)) {
+        put<bool>(pm, api.freeze_movement, false);
+        note("frozen movement");
+    }
+    logx::info("death: controls back: %s", undone.empty() ? "nothing was locked" : undone.c_str());
+}
+
 // Beside another living player in our scene; a friend with nobody here goes to the host; otherwise where we died.
 std::string go_somewhere() {
     const std::string here = game::active_scene();
@@ -689,6 +753,7 @@ bool do_respawn(const std::string& wanted) {
     int32_t normal = kNormal;
     void* mode_args[] = {&normal};
     il2::invoke(api.set_mode, pm, mode_args);
+    controls_back(pm);
     g_dead = false;  // (before moving: our state says alive again)
     const std::string where = go_somewhere();
     if (api.fade_in) {
@@ -996,6 +1061,24 @@ bool init() {
         api.audio_toggle = il2::find_method(audio, "ToggleDisableAudioEvents", 1);
     }
     api.fade_in = il2::find_method(il2::find_class(kGame, "", "CameraFade"), "FadeIn", 3);
+    api.get_camera = il2::find_method_quiet(game_manager, "GetVpFPSCamera", 0);
+    if (Il2CppClass* cam = il2::find_class(kGame, "", "vp_FPSCamera")) {
+        api.cam_locked = il2::find_method_quiet(cam, "IsRotationLimitLocked", 0);
+        api.cam_unlock = il2::find_method_quiet(cam, "UnlockRotationLimit", 0);
+        api.cam_free_on = il2::find_method_quiet(cam, "IsFreeCameraLookEnabled", 0);
+        api.cam_free_off = il2::find_method_quiet(cam, "DisableFreeCameraLook", 0);
+    }
+    api.get_struggle = il2::find_method_quiet(game_manager, "GetPlayerStruggleComponent", 0);
+    if (Il2CppClass* st = il2::find_class(kGame, "", "PlayerStruggle")) {
+        api.in_struggle = il2::find_method_quiet(st, "InStruggle", 0);
+        api.break_struggle = il2::find_method_quiet(st, "BreakStruggle", 0);
+    }
+    if (game_manager) {
+        api.block_input = il2::il2cpp_class_get_field_from_name(game_manager, "m_BlockNonMovementInput");
+        api.lock_timer = il2::il2cpp_class_get_field_from_name(game_manager, "m_LockControlsTimer");
+        api.block_move = il2::il2cpp_class_get_field_from_name(game_manager, "m_BlockMoveInputUntilReleased");
+    }
+    api.freeze_movement = il2::field_offset_quiet(player_manager, "m_FreezeMovement");
     api.hp = il2::field_offset(il2::find_class(kGame, "", "Condition"), "m_CurrentHP");
     api.max_hp = il2::field_offset(il2::find_class(kGame, "", "Condition"), "m_MaxHP");
     api.calories = il2::field_offset(il2::find_class(kGame, "", "Hunger"), "m_CurrentReserveCalories");

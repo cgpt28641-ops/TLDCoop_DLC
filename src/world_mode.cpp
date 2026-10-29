@@ -201,14 +201,15 @@ void stop_overriding(const char* why, bool put_back) {
     g_own.clear();
 }
 
-// TLD restoring a save's global data (a save load, and every scene load) sets the save's mode: that's our own, and
-// the host's goes back on right after.
+// TLD restoring a save's global data (a save load, and every scene load) sets the save's mode: that's our own (kept
+// for saving), and the host's is what's loaded instead.
+//   TLDCoop_DLC: TLD 2.58 loads the mode's config as an addressable asset. Loading ours and then the host's right
+// after, in the middle of a scene load, left a friend whose save's mode differs from the host's on a black screen
+// going into a building (the load never finished). So TLD's call loads the host's mode only: one load, as TLD expects.
 void deserialize_detour(Il2CppObject* self, Il2CppString* text, const MethodInfo* method) {
     if (!g_overriding || g_applying) return g_deserialize(self, text, method);
-    g_deserialize(self, text, method);
     const std::string restored = text ? il2::to_utf8(text) : std::string();
     if (!restored.empty()) g_own = restored;
-    remember_own_config();
     g_applying = true;
     g_deserialize(self, il2::il2cpp_string_new(g_host.c_str()), method);
     g_applying = false;
@@ -225,8 +226,12 @@ Il2CppString* serialize_detour(Il2CppObject* self, const MethodInfo* method) {
     return g_serialize(self, method);
 }
 
+bool config_alive(Il2CppObject* config) {  // UnityEngine.Object.m_CachedPtr: null once the asset is gone
+    return config && il2::read_field<void*>(config, 0x10) != nullptr;
+}
+
 void save_info_detour(Il2CppObject* slot, const MethodInfo* method) {
-    Il2CppObject* host_config = g_overriding ? current_config() : nullptr;
+    Il2CppObject* host_config = g_overriding && config_alive(g_own_config) ? current_config() : nullptr;
     const bool swapped = host_config && g_own_config && g_own_config != host_config && set_current_config(g_own_config);
     g_save_info(slot, method);
     if (swapped && !set_current_config(host_config)) logx::warn("mode: couldn't put the host's mode back after saving");
@@ -266,7 +271,8 @@ void host_frame() {
     }
 }
 
-void client_frame(bool in_game) {
+// The host's mode and seed, as they come (also at the main menu: a friend's NEW picks the host's mode there).
+void take_packets() {
     static std::vector<net::Packet> in;
     in.clear();
     netrt::drain_packets(net::Msg::GameMode, in);
@@ -287,6 +293,10 @@ void client_frame(bool in_game) {
             if (g_applied) g_applied = false;  // a change: take it again
         }
     }
+}
+
+void client_frame(bool in_game) {
+    take_packets();
     if (netrt::status().connected) {
         if (g_linked_at < 0) g_linked_at = net::now_ms();
     } else {
@@ -340,6 +350,7 @@ void on_frame(const std::string& scene, bool in_game) {
         stop_overriding("back at the main menu", false);
         g_told.fill(0);
         g_sent.clear();
+        if (is_client()) take_packets();
         return;  // (the host's seed stays: a friend loading in rolls with it from the first frame)
     }
     if (is_host()) return host_frame();
@@ -364,6 +375,12 @@ void describe() {
                             : "our own (nothing overridden)",
                seed ? std::to_string(*seed).c_str() : "?",
                g_have_seed ? (", rolls use the host's " + std::to_string(g_host_seed)).c_str() : "");
+}
+
+std::string host_mode_type() {
+    if (!g_ready || !is_client() || g_host.empty()) return std::string();
+    const std::string name = mode_name(g_host);
+    return name == "?" ? std::string() : name;
 }
 
 bool ready() {

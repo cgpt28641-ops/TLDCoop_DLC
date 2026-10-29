@@ -19,6 +19,7 @@
 #include "log.h"
 #include "net/content.h"
 #include "net_runtime.h"
+#include "world_mode.h"
 
 namespace coop_menu {
 namespace {
@@ -826,6 +827,16 @@ const MethodInfo* g_region_continue = nullptr;     // Panel_SelectRegion_Map.OnS
 const MethodInfo* g_region_busy = nullptr;         // Panel_SelectRegion_Map.IsAnyAnimationInProgress
 PanelEnableFn g_region_enable = nullptr;
 PanelEnableFn g_custom_enable = nullptr;
+// TLDCoop_DLC: the difficulty screen picks the host's mode, so the friend's new save has the host's mode and nothing is
+// swapped on every scene load (see world_mode: that swap left a friend on a black screen going indoors).
+ptrdiff_t g_xp_items = -1;        // Panel_SelectExperience.m_MenuItems (List<XPModeMenuItem>)
+ptrdiff_t g_xp_menu = -1;         // Panel_SelectExperience.m_BasicMenu
+ptrdiff_t g_item_config = -1;     // XPModeMenuItem.m_SandboxConfig
+ptrdiff_t g_config_mode = -1;     // GameModeConfig.m_XPMode (ExperienceMode)
+ptrdiff_t g_mode_type = -1;       // ExperienceMode.m_ModeType (ExperienceModeType)
+Il2CppClass* g_mode_enum = nullptr;  // ExperienceModeType
+const MethodInfo* g_menu_value_index = nullptr;  // BasicMenu.GetItemValueIndex(int)
+const MethodInfo* g_menu_click = nullptr;        // BasicMenu.OnItemClicked(int)
 constexpr int kAutoTryEvery = 15;  // frames between clicks
 constexpr int kAutoGiveUp = 360;   // about 6 s: the screen is the player's
 constexpr const char* kAutoNames[] = {"", "difficulty", "custom mode", "map"};
@@ -856,6 +867,41 @@ bool panel_shown(Il2CppObject* panel) {
     return go && il2::invoke_value(api.go_active, go, on) && on;
 }
 
+// The difficulty screen's item for the host's mode, selected the way a click on it does. False (the screen's own
+// selection stays) when the host's mode isn't known, or the screen has no item for it (a custom mode: the host's goes
+// on in play as before).
+bool select_host_mode(Il2CppObject* panel) {
+    const std::string want = world_mode::host_mode_type();
+    if (want.empty() || want == "Custom" || g_xp_items < 0 || g_xp_menu < 0 || g_item_config < 0 || g_config_mode < 0 ||
+        g_mode_type < 0 || !g_mode_enum || !g_menu_click)
+        return false;
+    Il2CppObject* list = il2::read_field<Il2CppObject*>(panel, g_xp_items);
+    Il2CppObject* menu = il2::read_field<Il2CppObject*>(panel, g_xp_menu);
+    if (!list || !menu) return false;
+    Il2CppObject* items = il2::read_field<Il2CppObject*>(list, 0x10);
+    const int32_t count = il2::read_field<int32_t>(list, 0x18);
+    for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i) {
+        Il2CppObject* item = il2::array_object_at(items, static_cast<size_t>(i));
+        Il2CppObject* config = item ? il2::read_field<Il2CppObject*>(item, g_item_config) : nullptr;
+        Il2CppObject* mode = config ? il2::read_field<Il2CppObject*>(config, g_config_mode) : nullptr;
+        if (!mode) continue;
+        const int32_t type = il2::read_field<int32_t>(mode, g_mode_type);
+        if (il2::enum_name(g_mode_enum, type) != want) continue;
+        int32_t index = i;
+        if (g_menu_value_index) {
+            int32_t value = i, found = -1;
+            void* args[] = {&value};
+            if (il2::invoke_value(g_menu_value_index, menu, found, args) && found >= 0) index = found;
+        }
+        void* args[] = {&index};
+        il2::invoke(g_menu_click, menu, args);
+        logx::info("menu: joining: the difficulty screen picks the host's mode, %s", want.c_str());
+        return true;
+    }
+    logx::warn("menu: joining: no difficulty for the host's mode %s here; the screen's own selection goes", want.c_str());
+    return false;
+}
+
 void run_auto() {
     Il2CppObject* panel = target(g_auto_panel);
     const char* name = kAutoNames[static_cast<int>(g_auto)];
@@ -877,7 +923,11 @@ void run_auto() {
     }
     if (!shown || f % kAutoTryEvery != 0) return;
     switch (g_auto) {
-        case AutoStep::Experience: il2::invoke(g_experience_clicked, panel); break;
+        case AutoStep::Experience:
+            // TLDCoop_DLC: first the host's mode (its item selected), then CONTINUE.
+            if (g_auto_clicks == 0 && select_host_mode(panel)) break;
+            il2::invoke(g_experience_clicked, panel);
+            break;
         case AutoStep::CustomXP: il2::invoke(g_custom_continue, panel); break;
         case AutoStep::Region: {
             bool busy = false;
@@ -2138,6 +2188,17 @@ bool init() {
     // TLDCoop_DLC: a joining friend's difficulty and map screens answer themselves (see run_auto). Optional: without
     // them the friend chooses on TLD's screens, as before.
     g_experience_clicked = il2::find_method_quiet(experience, "OnExperienceClicked", 0);
+    g_xp_items = il2::field_offset_quiet(experience, "m_MenuItems");
+    g_xp_menu = il2::field_offset_quiet(experience, "m_BasicMenu");
+    if (Il2CppClass* item = il2::find_nested_class(experience, "XPModeMenuItem"))
+        g_item_config = il2::field_offset_quiet(item, "m_SandboxConfig");
+    g_config_mode = il2::field_offset_quiet(il2::find_class(kGame, "TLD.Gameplay", "GameModeConfig"), "m_XPMode");
+    g_mode_type = il2::field_offset_quiet(il2::find_class(kGame, "TLD.Gameplay", "ExperienceMode"), "m_ModeType");
+    g_mode_enum = il2::find_class(kGame, "", "ExperienceModeType");
+    if (Il2CppClass* basic = il2::find_class(kGame, "", "BasicMenu")) {
+        g_menu_value_index = il2::find_method_quiet(basic, "GetItemValueIndex", 1);
+        g_menu_click = il2::find_method_quiet(basic, "OnItemClicked", 1);
+    }
     if (Il2CppClass* region = il2::find_class(kGame, "", "Panel_SelectRegion_Map")) {
         g_region_random = il2::find_method_quiet(region, "OnRandomSelected", 0);
         g_region_continue = il2::find_method_quiet(region, "OnSelectRegionContinue", 0);

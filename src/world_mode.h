@@ -20,6 +20,10 @@ void on_frame(const std::string& scene, bool in_game);
 // waits for it, so a first join loads the host's scene at the host's mode.
 bool ready();
 
+// TLDCoop_DLC, client: the host's experience mode type as TLD names it ("Stalker", "Pilgrim"...), "" before the host
+// said (it does on connect, the lobby included). A friend's NEW game picks it on the difficulty screen.
+std::string host_mode_type();
+
 // Dev command `mode`: the experience mode in place (GetCurrentExperienceModeType), and what a save would write.
 void describe();
 

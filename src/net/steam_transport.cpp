@@ -77,6 +77,7 @@ constexpr int kChannel = 0;
 constexpr int kSendFlags = 32;  // k_nSteamNetworkingSend_Unreliable | AutoRestartBrokenSession
 constexpr double kSearchRetryMs = 4000;  // the host may not be up yet: keep looking
 constexpr double kMemberPollMs = 1000;
+constexpr double kReknockMs = 3000;  // every member is knocked again this often (TLDCoop_DLC)
 
 constexpr int kLobbyTypePublic = 2;  // searchable by our code filter (no one else queries TLDCoop lobbies)
 constexpr int kComparisonEqual = 0;
@@ -288,19 +289,39 @@ public:
                     stage_ = Stage::Verifying;
                 }
                 break;
-            case Stage::Hosting:
-                // Our side must message a new member once for Steam to accept their session.
+            case Stage::Hosting: {
+                // Our side must message a member for Steam to accept their session.
+                //   TLDCoop_DLC: not only once. A friend whose game went down (a crash, a restart) and who comes back
+                // has a new session on their side, and ours with them is dead: knocked only the first time, the host
+                // never heard their hellos again (joining a game in progress didn't work until the host hosted
+                // again). So a member new to the lobby, or back in it, gets a fresh session (the old one closed) and
+                // a knock, and every member is knocked again every kReknockMs (one byte the session ignores).
                 if (now - last_member_poll_ < kMemberPollMs) break;
                 last_member_poll_ = now;
+                const bool reknock = now - last_reknock_ >= kReknockMs;
+                if (reknock) last_reknock_ = now;
+                std::set<uint64_t> present;
                 for (int i = 0, n = api_.member_count(mm_, lobby_); i < n; ++i) {
                     const uint64_t member = api_.member_by_index(mm_, lobby_, i);
-                    if (member && member != self_ && knocked_.insert(member).second) {
-                        const uint8_t knock = 0;
-                        send(member, &knock, 1);
-                        set_status("hosting; " + describe(member) + " found your game");
+                    if (!member || member == self_) continue;
+                    present.insert(member);
+                    const bool arrived = !members_.count(member);
+                    if (!arrived && !reknock) continue;
+                    if (arrived) {
+                        const bool back = !knocked_.insert(member).second;
+                        if (back && msgs_) {  // their old session (from before they left) is no use any more
+                            Identity id{};
+                            api_.set_id(&id, member);
+                            api_.close_session(msgs_, &id);
+                        }
+                        set_status("hosting; " + describe(member) + (back ? " is back in your game" : " found your game"));
                     }
+                    const uint8_t knock = 0;
+                    send(member, &knock, 1);
                 }
+                members_ = std::move(present);
                 break;
+            }
             case Stage::Searching: {
                 LobbyMatchList r{};
                 const Reply reply = result(r, kLobbyMatchListId);
@@ -382,6 +403,7 @@ public:
             }
         }
         knocked_.clear();
+        members_.clear();
         host_ = 0;
         stage_ = Stage::Closed;
     }
@@ -507,6 +529,8 @@ private:
     uint64_t host_ = 0;
     double retry_at_ = 0, last_member_poll_ = 0;
     std::set<uint64_t> knocked_;
+    std::set<uint64_t> members_;  // in the lobby at the last poll (one who wasn't is new, or back)
+    double last_reknock_ = 0;
     std::string status_;
 };
 
