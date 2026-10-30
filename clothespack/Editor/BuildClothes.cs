@@ -700,6 +700,72 @@ public static class BuildClothes {
             weights.Add(w >= 0.999f ? new BoneWeight { boneIndex0 = hi, weight0 = 1 }
                       : new BoneWeight { boneIndex0 = hi, weight0 = w, boneIndex1 = ni, weight1 = 1 - w });
         }
+        // The back and the crown (the head's own skin there is under the hair, not drawn) and the neck down to the
+        // shoulders: a knitted shell over the skull and a tube round the neck, flaring at the bottom.
+        float sc = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f);
+        void Ring(List<Vector3> ring, List<Vector3> rn, int boneA, float wA, int boneB) {
+            int start = verts.Count;
+            for (int i = 0; i < ring.Count; i++) {
+                verts.Add(ring[i]); normals.Add(rn[i]);
+                float th = Mathf.Atan2(ring[i].x - head.x, ring[i].z - head.z);
+                uvs.Add(new Vector2(th / (2 * Mathf.PI) * 14f, ring[i].y * 9f));
+                weights.Add(wA >= 0.999f ? new BoneWeight { boneIndex0 = boneA, weight0 = 1 }
+                          : new BoneWeight { boneIndex0 = boneA, weight0 = wA, boneIndex1 = boneB, weight1 = 1 - wA });
+            }
+        }
+        void Stitch(int a0, int a1, int count, Vector3 centre) {  // two rings of `count` (+1 closing) vertices
+            for (int i = 0; i < count; i++) {
+                int a = a0 + i, b = a0 + i + 1, c = a1 + i + 1, d = a1 + i;
+                foreach (var (x, y, z) in new[] { (a, b, c), (a, c, d) }) {
+                    var n = Vector3.Cross(verts[y] - verts[x], verts[z] - verts[x]);
+                    var outward = (verts[x] + verts[y] + verts[z]) / 3 - centre;
+                    outward.y *= 0.3f;
+                    if (Vector3.Dot(n, outward) < 0) { tris.Add(x); tris.Add(z); tris.Add(y); } else { tris.Add(x); tris.Add(y); tris.Add(z); }
+                }
+            }
+        }
+        {
+            var c = head + new Vector3(0, 0.085f, -0.012f) * sc;
+            float rx = 0.088f * sc, ry = 0.115f * sc, rz = 0.1f * sc;
+            const int around = 40, up = 12;
+            int first = -1, prev = -1;
+            for (int j = 0; j <= up; j++) {
+                float e = Mathf.Lerp(-0.55f, Mathf.PI / 2, j / (float)up);  // from below the ears to the crown
+                var ring = new List<Vector3>(); var rn = new List<Vector3>();
+                for (int i = 0; i <= around; i++) {
+                    float th = Mathf.PI * 0.35f + i * Mathf.PI * 1.3f / around;  // round the back, ear to ear past them
+                    var dir = new Vector3(Mathf.Cos(e) * Mathf.Sin(th), Mathf.Sin(e), Mathf.Cos(e) * Mathf.Cos(th));
+                    var pnt = c + new Vector3(dir.x * rx, dir.y * ry, dir.z * rz);
+                    ring.Add(pnt); rn.Add(new Vector3((pnt.x - c.x) / (rx * rx), (pnt.y - c.y) / (ry * ry), (pnt.z - c.z) / (rz * rz)).normalized);
+                }
+                int at = verts.Count;
+                Ring(ring, rn, hi, 1, ni);
+                if (prev >= 0) Stitch(prev, at, around, c);
+                if (first < 0) first = at;
+                prev = at;
+            }
+        }
+        {
+            const int around = 32, down = 6;
+            int prev = -1;
+            var axis = new Vector3(neck.x, 0, neck.z + 0.005f * sc);
+            for (int j = 0; j <= down; j++) {
+                float t = j / (float)down;
+                float y = neck.y + (0.04f - 0.12f * t) * sc;
+                float r = (0.062f + 0.035f * t * t) * sc;  // flaring onto the shoulders
+                var ring = new List<Vector3>(); var rn = new List<Vector3>();
+                for (int i = 0; i <= around; i++) {
+                    float th = i * 2 * Mathf.PI / around;
+                    var dir = new Vector3(Mathf.Sin(th), 0, Mathf.Cos(th));
+                    ring.Add(new Vector3(axis.x + dir.x * r * 1.05f, y, axis.z + dir.z * r)); rn.Add(dir);
+                }
+                int at = verts.Count;
+                float w = Mathf.Clamp01((y - neck.y) / Mathf.Max(0.01f, head.y - neck.y));
+                Ring(ring, rn, hi, w, ni);
+                if (prev >= 0) Stitch(prev, at, around, new Vector3(axis.x, y, axis.z));
+                prev = at;
+            }
+        }
         submeshes.Add(tris.ToArray());
         var colour = KnitMaterial(g, file, item, twoSided, matNames);
         Debug.Log($"[Clothes] {character}/{item}: a mask made from the head ({verts.Count} vertices, colour {colour})");
