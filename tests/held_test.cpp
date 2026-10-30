@@ -44,17 +44,21 @@ int main() {
     }
     {  // What lights the world around them.
         for (HeldKind k : {HeldKind::Torch, HeldKind::FlareRed, HeldKind::FlareBlue, HeldKind::Lantern,
-                           HeldKind::Flashlight}) {
+                           HeldKind::Flashlight, HeldKind::Match}) {
             const std::string what = std::string("a lit ") + held_kind_name(k) + " gives light, unlit it doesn't";
             expect(what.c_str(), gives_light(k, kHeldLit) && !gives_light(k, 0));
         }
         expect("a rifle never does", !gives_light(HeldKind::Rifle, kHeldLit));
         expect("a noisemaker's fuse doesn't", !gives_light(HeldKind::NoiseMaker, kHeldLit));
+        expect("a match being struck isn't lit yet", !gives_light(HeldKind::Match, kHeldIgniting));
+        expect("being lit shows in the log", describe_held("GEAR_FlareA", HeldKind::FlareRed, kHeldIgniting) ==
+                                                 "a red flare (GEAR_FlareA), lighting it");
     }
     {  // The wire's kind byte: one from a newer game reads as "an item", never past the names.
         expect("known kinds read back", held_kind(static_cast<uint8_t>(HeldKind::Bow)) == HeldKind::Bow);
         expect("an unknown kind is an item", held_kind(200) == HeldKind::Other);
         expect("every kind has a name", std::string(held_kind_name(HeldKind::NoiseMaker)) == "noisemaker" &&
+                                            std::string(held_kind_name(HeldKind::Match)) == "match" &&
                                             std::string(held_kind_name(HeldKind::None)) == "nothing");
         expect("the log line", describe_held("GEAR_Flashlight", HeldKind::Flashlight, kHeldLit | kHeldHigh) ==
                                    "a lit flashlight (high beam) (GEAR_Flashlight)" &&

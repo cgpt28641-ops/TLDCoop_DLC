@@ -62,7 +62,7 @@ struct HeldApi {
     const MethodInfo* sanitize = nullptr;          // static Utils.SanitizePrefabName(string)
     // GearItem's parts, which say what kind of item it is.
     ptrdiff_t torch = -1, flare = -1, lamp = -1, flashlight = -1, gun = -1, bow = -1, spear = -1, stone = -1,
-              noise_maker = -1;
+              noise_maker = -1, matches = -1;
     const MethodInfo* torch_burning = nullptr;  // TorchItem.IsBurning()
     const MethodInfo* flare_burning = nullptr;  // FlareItem.IsBurning()
     ptrdiff_t flare_type = -1;                  // FlareItem.m_Type (FlareType)
@@ -71,6 +71,9 @@ struct HeldApi {
     ptrdiff_t gun_type = -1;                    // GunItem.m_GunType (Revolver, Rifle, FlareGun, Camera)
     ptrdiff_t spear_state = -1;                 // BearSpearItem.m_CurrentSpearState (None, Setting, Raised, ...)
     ptrdiff_t bow_state = -1;                   // BowItem.m_BowState (Unloaded, Ready, ReadyToAim, Aim, ...)
+    // TLDCoop_DLC: being lit (m_IgniteAfterDelay: TLD's ignite delay running) and a match's flame
+    ptrdiff_t flare_igniting = -1, torch_igniting = -1, match_igniting = -1;
+    ptrdiff_t match_ignited = -1;               // MatchesItem.m_Ignited
 } h;
 
 constexpr ptrdiff_t kCachedPtr = 0x10;  // UnityEngine.Object.m_CachedPtr: null once the native object is destroyed
@@ -98,6 +101,13 @@ void init_held(Il2CppClass* game_manager) {
     h.spear = il2::field_offset(gear, "m_BearSpearItem");
     h.stone = il2::field_offset(gear, "m_StoneItem");
     h.noise_maker = il2::field_offset(gear, "m_NoiseMakerItem");
+    h.matches = il2::field_offset(gear, "m_MatchesItem");
+    if (Il2CppClass* matches = il2::find_class(kGame, "", "MatchesItem")) {
+        h.match_ignited = il2::field_offset(matches, "m_Ignited");
+        h.match_igniting = il2::field_offset(matches, "m_IgniteAfterDelay");
+    }
+    h.flare_igniting = il2::field_offset(il2::find_class(kGame, "", "FlareItem"), "m_IgniteAfterDelay");
+    h.torch_igniting = il2::field_offset(il2::find_class(kGame, "", "TorchItem"), "m_IgniteAfterDelay");
     Il2CppClass* flare = il2::find_class(kGame, "", "FlareItem");
     h.torch_burning = il2::find_method(il2::find_class(kGame, "", "TorchItem"), "IsBurning", 0);
     h.flare_burning = il2::find_method(flare, "IsBurning", 0);
@@ -238,9 +248,15 @@ HeldState read_held() {
     if (Il2CppObject* torch = part(gi, h.torch)) {
         kind = HeldKind::Torch;
         if (says_yes(h.torch_burning, torch)) out.flags |= net::kHeldLit;
+        else if (il2::read_field<bool>(torch, h.torch_igniting)) out.flags |= net::kHeldIgniting;
     } else if (Il2CppObject* flare = part(gi, h.flare)) {
         kind = il2::read_field<int32_t>(flare, h.flare_type) == net::kFlareBlue ? HeldKind::FlareBlue : HeldKind::FlareRed;
         if (says_yes(h.flare_burning, flare)) out.flags |= net::kHeldLit;
+        else if (il2::read_field<bool>(flare, h.flare_igniting)) out.flags |= net::kHeldIgniting;
+    } else if (Il2CppObject* match = part(gi, h.matches)) {  // TLDCoop_DLC
+        kind = HeldKind::Match;
+        if (il2::read_field<bool>(match, h.match_ignited)) out.flags |= net::kHeldLit;
+        else if (il2::read_field<bool>(match, h.match_igniting)) out.flags |= net::kHeldIgniting;
     } else if (Il2CppObject* lamp = part(gi, h.lamp)) {
         kind = HeldKind::Lantern;
         if (says_yes(h.lamp_on, lamp)) out.flags |= net::kHeldLit;

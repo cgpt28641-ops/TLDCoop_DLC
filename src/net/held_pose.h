@@ -149,6 +149,7 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
         case HeldKind::None:
             return h;
         case HeldKind::Torch:
+        case HeldKind::Match:  // TLDCoop_DLC: as a flare
         case HeldKind::FlareRed:
         case HeldKind::FlareBlue:  // held out before the chest, flame up and leaning forward, at head height
             h.right = true;

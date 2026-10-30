@@ -208,6 +208,19 @@ struct Parts {
     Il2CppObject* random_intensity_type = nullptr;                                 // LightRandomIntensity
     const MethodInfo* set_min_max = nullptr;      // LightRandomIntensity.SetMinMax(float, float)
     const MethodInfo* curve_evaluate = nullptr;   // AnimationCurve.Evaluate(float)
+    // TLDCoop_DLC: a flare's flame (FlareIntensity, on its FX object): the same curves for its lights, and its
+    // particles' rates, which TLD's FlareIntensityManager sets every frame (without it: no light, no flame).
+    Il2CppObject* flare_intensity_type = nullptr;
+    ptrdiff_t fi_in_min = -1, fi_in_max = -1, fi_out_min = -1, fi_out_max = -1;
+    ptrdiff_t fi_in_light = -1, fi_out_light = -1;
+    ptrdiff_t fi_smoke = -1, fi_core = -1, fi_spark = -1;               // GameObjects
+    ptrdiff_t fi_smoke_rate = -1, fi_core_rate = -1, fi_spark_rate = -1;  // curves: particles a second
+    Il2CppObject* particles_type = nullptr;       // ParticleSystem
+    const MethodInfo* ps_emit = nullptr;          // ParticleSystem.Emit(int)
+    const MethodInfo* ps_play = nullptr;          // ParticleSystem.Play()
+    // TLDCoop_DLC: a light of our own for what lights up without one in its model (a match)
+    const MethodInfo* light_range = nullptr;      // Light.set_range(float)
+    Il2CppObject* light_tracking_type = nullptr;  // LightTracking (TLD's lighting knows the light)
 } parts;
 
 bool g_ready = false;
@@ -275,6 +288,14 @@ struct HeldCopy {
     std::vector<uintptr_t> hide_lit;                   // GameObjects hidden while lit (a flare's cap)
     std::vector<uintptr_t> hide_always;                // a torch's burnt-out model
     std::string flicker;                               // for the log: a torch's lights' strength ranges as set
+    // TLDCoop_DLC: a flare's particles, emitted by us while lit (particles a second; what's left of one)
+    struct Emitter {
+        uintptr_t ps = 0;
+        float rate = 0, carry = 0;
+    };
+    std::vector<Emitter> emitters;
+    double emitted_ms = 0;
+    bool own_light = false;  // its lights are ours (made for a match)
     // Its shape in its own space (measured once it is awake, unturned): bounds centre from its pivot, its long axis
     // (towards its front or top), the axis for its roll, half its length.
     bool measured = false;
@@ -314,6 +335,8 @@ struct Avatar {
     std::string status = "no data yet";
     std::string visibility;   // last logged reason for hiding, or "shown"
     bool shown_down = false;  // shown knocked down (in a fight)
+    float ground_y = 0;       // TLDCoop_DLC: their feet's height when last on their feet (a fight lifts TLD's player)
+    bool has_ground = false;
     uintptr_t ai_target = 0;  // AiTarget on the root: what the host's animals see, hear and hunt (milestone 7c)
     Vector3 last_pos{};
     double last_pos_time = 0;
@@ -811,6 +834,7 @@ void forget_held(HeldCopy& h) {
     for (auto* v : {&h.fx_low, &h.fx_high, &h.lights_in, &h.lights_out, &h.lights_in_high, &h.lights_out_high,
                     &h.hide_lit, &h.hide_always})
         drop_all(*v);
+    for (HeldCopy::Emitter& e : h.emitters) drop(e.ps);
     h = HeldCopy{};
 }
 
@@ -826,6 +850,95 @@ Il2CppObject* field_object(Il2CppObject* obj, ptrdiff_t offset) {
 
 void keep(std::vector<uintptr_t>& into, Il2CppObject* obj) {
     if (obj) into.push_back(hold(obj));
+}
+
+template <typename T>
+void set_value(const MethodInfo* setter, Il2CppObject* obj, T value) {
+    void* args[] = {&value};
+    if (obj) il2::invoke(setter, obj, args);
+}
+
+float curve_at_full(Il2CppObject* owner, ptrdiff_t curve) {
+    float full = 1.0f, v = 0;
+    void* args[] = {&full};
+    Il2CppObject* c = owner && curve >= 0 ? il2::read_field<Il2CppObject*>(owner, curve) : nullptr;
+    return c && parts.curve_evaluate && il2::invoke_value(parts.curve_evaluate, c, v, args) ? v : -1.0f;
+}
+
+// TLDCoop_DLC: a flare's flame. Its FX object (FlareIntensity's) is what shows while lit, its lights flicker in the
+// range its curves give at full strength, and its smoke, core and sparks are emitted by us (TLD's
+// FlareIntensityManager, which does both every frame, doesn't know our copy).
+void read_flare_flame(HeldCopy& h, Il2CppObject* copy) {
+    if (!parts.flare_intensity_type) return;
+    Il2CppObject* found = components_in_children(copy, parts.flare_intensity_type);
+    Il2CppObject* fi = il2::array_length(found) ? il2::array_object_at(found, 0) : nullptr;
+    if (!fi) return;
+    if (h.fx_low.empty()) keep(h.fx_low, il2::invoke(pv.component_go, fi));
+    for (auto [light, lo, hi] : {std::tuple{parts.fi_in_light, parts.fi_in_min, parts.fi_in_max},
+                                 std::tuple{parts.fi_out_light, parts.fi_out_min, parts.fi_out_max}}) {
+        Il2CppObject* go = field_object(fi, light);
+        void* type_arg[] = {parts.random_intensity_type};
+        Il2CppObject* random = go && parts.random_intensity_type ? il2::invoke(api.get_component, go, type_arg) : nullptr;
+        float min = curve_at_full(fi, lo), max = curve_at_full(fi, hi);
+        if (!random || !parts.set_min_max || min < 0 || max < 0) continue;
+        if (max <= 0) min = max = 1.0f;  // (curves that say nothing: a plain light)
+        void* args[] = {&min, &max};
+        il2::invoke(parts.set_min_max, random, args);
+        h.flicker += (h.flicker.empty() ? "" : ", ") + name_of(go) + " " + std::to_string(min).substr(0, 4) + "-" +
+                     std::to_string(max).substr(0, 4);
+    }
+    if (!parts.particles_type || !parts.ps_emit) return;
+    for (auto [obj, rate] : {std::pair{parts.fi_smoke, parts.fi_smoke_rate}, std::pair{parts.fi_core, parts.fi_core_rate},
+                             std::pair{parts.fi_spark, parts.fi_spark_rate}}) {
+        Il2CppObject* go = field_object(fi, obj);
+        void* type_arg[] = {parts.particles_type};
+        Il2CppObject* ps = go ? il2::invoke(api.get_component, go, type_arg) : nullptr;
+        const float r = curve_at_full(fi, rate);
+        if (ps && r > 0) h.emitters.push_back({hold(ps), std::min(r, 200.0f), 0});
+    }
+}
+
+// TLDCoop_DLC: a light of our own on the copy, for what has none in its model (a match: TLD lights the hand's match
+// with an FX of the player's, not of the item). Warm and small, as a match's flame.
+void add_own_light(HeldCopy& h, Il2CppObject* copy) {
+    if (!pv.light_type || !api.add_component || !h.lights_in.empty() || !h.lights_out.empty()) return;
+    Il2CppObject* go = new_game_object("TLDCoop_Flame");
+    Il2CppObject* tf = transform_of(go);
+    if (!tf) return;
+    set_parent(tf, transform_of(copy));
+    set_vec(api.set_local_position, tf, {0, 0, 0});
+    void* type_arg[] = {pv.light_type};
+    Il2CppObject* light = il2::invoke(api.add_component, go, type_arg);
+    if (!light) return;
+    set_value(pv.light_kind, light, 2);  // LightType.Point
+    set_value(pv.light_intensity, light, 1.6f);
+    set_value(pv.light_color, light, Color{1.0f, 0.62f, 0.3f, 1.0f});
+    if (parts.light_range) set_value(parts.light_range, light, 6.0f);
+    if (parts.light_tracking_type) {
+        void* tracking_arg[] = {parts.light_tracking_type};
+        il2::invoke(api.add_component, go, tracking_arg);
+    }
+    keep(h.lights_in, light);
+    keep(h.lights_out, light);
+    h.own_light = true;
+}
+
+// TLDCoop_DLC: a lit flare's particles, as many as its rates give since the last frame.
+void emit_flame(HeldCopy& h) {
+    const double now = net::now_ms();
+    const float dt = h.emitted_ms > 0 ? static_cast<float>(std::min(0.1, (now - h.emitted_ms) / 1000.0)) : 0;
+    h.emitted_ms = now;
+    if (h.lit_shown < 1) return;
+    for (HeldCopy::Emitter& e : h.emitters) {
+        Il2CppObject* ps = target(e.ps);
+        if (!is_alive(ps)) continue;
+        e.carry += e.rate * dt;
+        int32_t n = static_cast<int32_t>(e.carry);
+        if (n <= 0) continue;
+        e.carry -= static_cast<float>(n);
+        void* args[] = {&n};
+        il2::invoke(parts.ps_emit, ps, args);
+    }
 }
 
 // The copy's own lit parts, read from its item script before the scripts go (Instantiate points the copy's fields
@@ -917,6 +1030,7 @@ void read_parts(HeldCopy& h, Il2CppObject* copy) {
                          std::to_string(max).substr(0, 4);
         }
     }
+    read_flare_flame(h, copy);
 }
 
 // TLD's generic light scripts stay: the colour (LightFlickering, between its two colours), the flicker in strength
@@ -981,6 +1095,9 @@ void light_up(HeldCopy& h, int level, bool indoors) {
     const std::vector<uintptr_t>* on = !lit ? nullptr : high && !hi->empty() ? hi : low;
     for (const auto* list : {&h.lights_in, &h.lights_out, &h.lights_in_high, &h.lights_out_high})
         for (uintptr_t l : *list) set_light(l, on && std::find(on->begin(), on->end(), l) != on->end());
+    if (lit && parts.ps_play)  // TLDCoop_DLC: the flame's particles live (we emit them)
+        for (HeldCopy::Emitter& e : h.emitters)
+            if (Il2CppObject* ps = target(e.ps); is_alive(ps)) il2::invoke(parts.ps_play, ps);
     h.lit_shown = level;
     h.indoors_shown = indoors;
 }
@@ -1180,6 +1297,7 @@ bool make_held(Avatar& a, const std::string& gear, net::HeldKind kind) {
     void* name_args[] = {il2::il2cpp_string_new(name.c_str())};
     il2::invoke(api.set_name, copy, name_args);
     read_parts(h, copy);
+    if (kind == net::HeldKind::Match) add_own_light(h, copy);  // TLDCoop_DLC
     const int removed = strip_held(copy);
     if (awake_copy) {
         if (const int woken = wake_renderers(copy))
@@ -1225,6 +1343,7 @@ void sync_held(Avatar& a, const net::StateMsg& s, bool indoors) {
     if (!a.held.go) return;
     const int level = !net::gives_light(kind, s.held_flags) ? 0 : (s.held_flags & net::kHeldHigh) ? 2 : 1;
     if (level != a.held.lit_shown || indoors != a.held.indoors_shown) light_up(a.held, level, indoors);
+    if (!a.held.emitters.empty()) emit_flame(a.held);  // TLDCoop_DLC
 }
 
 // Holds as tuned with the dev command `hold` (else net::pose::hold_for), and items whose long axis is the other way
@@ -1425,6 +1544,13 @@ void late_one(Avatar& a) {
                                             pole_for(main_frame));
     const PVec grip = palm(a, main);
     place_held(a, h, grip, right);
+    if (a.held_flags & net::kHeldIgniting) {
+        // TLDCoop_DLC: being lit (a flare's cap, a match on the box): the other hand strikes along it, back and forth.
+        const double t = std::fmod(net::now_ms() / 1000.0 * 2.5, 1.0);
+        const float along = 0.04f + 0.18f * static_cast<float>(t < 0.5 ? t * 2 : 2 - t * 2);
+        reach(a, other, grip + right.dir(h.item_dir) * along, pole_for(other_frame));
+        return;
+    }
     if (h.in_left ? h.right : h.left) {
         const PVec to = h.left_on_item >= 0 ? grip + right.dir(h.item_dir) * h.left_on_item
                                             : other_frame.at(h.in_left ? h.right_hand : h.left_hand);
@@ -1749,7 +1875,14 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
             z += (a.spot.z - z) * f;
             yaw += d * f;
         }
-        set_vec(api.set_position, root_transform, {x, s.y + (tip_over ? 0.2f : 0.0f), z});
+        // TLDCoop_DLC: in a fight, on the ground where they stood (TLD moves its player up and about for the
+        // struggle's camera: the body floated).
+        if (!down) {
+            a.ground_y = s.y;
+            a.has_ground = true;
+        }
+        const float y = down && a.has_ground ? std::min(s.y, a.ground_y) : s.y;
+        set_vec(api.set_position, root_transform, {x, y + (tip_over ? 0.2f : 0.0f), z});
         set_vec(api.set_euler, root_transform, {tip_over ? -80.0f : 0.0f, yaw, 0.0f});
         a.shown_yaw = yaw;
     }
@@ -1810,12 +1943,6 @@ void set_layer_everywhere(Il2CppObject* go, int layer) {
         void* args[] = {&layer};
         if (each) il2::invoke(pv.go_layer, each, args);
     }
-}
-
-template <typename T>
-void set_value(const MethodInfo* setter, Il2CppObject* obj, T value) {
-    void* args[] = {&value};
-    if (obj) il2::invoke(setter, obj, args);
 }
 
 // A component on a new child of the stage, placed and turned (local).
@@ -2101,7 +2228,31 @@ bool init() {
         parts.random_intensity_type = il2::type_object(random);
         parts.set_min_max = il2::find_method(random, "SetMinMax", 2);
         parts.curve_evaluate = il2::find_method(il2::find_class(kCore, "UnityEngine", "AnimationCurve"), "Evaluate", 1);
-        for (Il2CppObject* t : {parts.torch_intensity_type, parts.random_intensity_type})
+        if (Il2CppClass* fi = il2::find_class(kGame, "", "FlareIntensity")) {  // TLDCoop_DLC
+            parts.flare_intensity_type = il2::type_object(fi);
+            parts.fi_in_min = il2::field_offset(fi, "m_IndoorIntensityMin");
+            parts.fi_in_max = il2::field_offset(fi, "m_IndoorIntensityMax");
+            parts.fi_out_min = il2::field_offset(fi, "m_OutdoorIntensityMin");
+            parts.fi_out_max = il2::field_offset(fi, "m_OutdoorIntensityMax");
+            parts.fi_in_light = il2::field_offset(fi, "m_IndoorLight");
+            parts.fi_out_light = il2::field_offset(fi, "m_OutdoorLight");
+            parts.fi_smoke = il2::field_offset(fi, "m_SmokeParticles");
+            parts.fi_core = il2::field_offset(fi, "m_CoreParticles");
+            parts.fi_spark = il2::field_offset(fi, "m_SparkParticles");
+            parts.fi_smoke_rate = il2::field_offset(fi, "m_SmokeRate");
+            parts.fi_core_rate = il2::field_offset(fi, "m_CoreRate");
+            parts.fi_spark_rate = il2::field_offset(fi, "m_SparkRate");
+        }
+        if (Il2CppClass* ps = il2::find_class("UnityEngine.ParticleSystemModule.dll", "UnityEngine", "ParticleSystem")) {
+            parts.particles_type = il2::type_object(ps);
+            parts.ps_emit = il2::find_method_params(ps, "Emit", {"System.Int32"});
+            parts.ps_play = il2::find_method(ps, "Play", 0);
+        }
+        if (Il2CppClass* tracking = il2::find_class(kGame, "", "LightTracking"))
+            parts.light_tracking_type = il2::type_object(tracking);
+        parts.light_range = il2::find_method(il2::find_class(kCore, "UnityEngine", "Light"), "set_range", 1);
+        for (Il2CppObject* t : {parts.torch_intensity_type, parts.random_intensity_type, parts.flare_intensity_type,
+                                parts.particles_type, parts.light_tracking_type})
             if (t) il2::il2cpp_gchandle_new(t, false);
     }
     const bool holding = (api.load_gear || api.instantiate_gear) && api.gear_type && api.get_position && api.get_rotation && api.set_rotation &&

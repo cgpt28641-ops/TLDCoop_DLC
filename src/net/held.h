@@ -27,6 +27,7 @@ enum class HeldKind : uint8_t {
     Spear,       // BearSpearItem
     Stone,       // StoneItem
     NoiseMaker,  // NoiseMakerItem
+    Match,       // TLDCoop_DLC: MatchesItem (a match, lit or about to be)
     Count
 };
 
@@ -35,6 +36,7 @@ constexpr uint8_t kHeldAiming = 2;  // raised to aim or throw (PlayerAnimation T
                                     // a bow: drawn, BowState ReadyToAim, Aim, Firing)
 constexpr uint8_t kHeldRaised = 4;  // a bear spear set and raised (BearSpearItem SpearState Raised)
 constexpr uint8_t kHeldHigh = 8;    // with kHeldLit: a flashlight on its high beam
+constexpr uint8_t kHeldIgniting = 16;  // TLDCoop_DLC: being lit (a flare struck, a match struck: TLD's ignite delay)
 
 constexpr int32_t kFlareRed = 0, kFlareBlue = 1;  // TLD's FlareType
 
@@ -45,7 +47,8 @@ inline HeldKind held_kind(uint8_t wire) {
 inline const char* held_kind_name(HeldKind k) {
     constexpr const char* kNames[] = {"nothing", "item",     "torch",     "red flare", "blue flare",
                                       "lantern", "flashlight", "rifle",   "revolver",  "flare gun",
-                                      "camera",  "bow",      "bear spear", "stone",    "noisemaker"};
+                                      "camera",  "bow",      "bear spear", "stone",    "noisemaker",
+                                      "match"};
     const auto i = static_cast<size_t>(k);
     return i < sizeof(kNames) / sizeof(kNames[0]) ? kNames[i] : "item";
 }
@@ -64,7 +67,7 @@ inline bool holds_raised_spear(HeldKind k, uint8_t flags) { return k == HeldKind
 inline bool gives_light(HeldKind k, uint8_t flags) {
     if (!(flags & kHeldLit)) return false;
     return k == HeldKind::Torch || k == HeldKind::FlareRed || k == HeldKind::FlareBlue || k == HeldKind::Lantern ||
-           k == HeldKind::Flashlight;
+           k == HeldKind::Flashlight || k == HeldKind::Match;
 }
 
 // "a lit torch (GEAR_Torch), aiming" for the log.
@@ -77,6 +80,7 @@ inline std::string describe_held(const std::string& gear, HeldKind k, uint8_t fl
     if (!gear.empty()) s += " (" + gear + ")";
     if (flags & kHeldAiming) s += ", aiming";
     if (flags & kHeldRaised) s += ", raised";
+    if (flags & kHeldIgniting) s += ", lighting it";
     return s;
 }
 

@@ -35,6 +35,13 @@ constexpr double kSettleLitMs = 0;
 // TLDCoop_DLC: the host tells its friends where a pot that is cooking (food, snow, water) is this often, so it is
 // ready at the same moment in every game (each game's own cooking skill and fire made it differ by minutes).
 constexpr double kPotSyncMs = 5000;
+// TLDCoop_DLC: the host tells how long a burning flare or torch on the ground has burnt this often, so it goes out at
+// the same moment everywhere.
+constexpr double kBurnSyncMs = 10000;
+// TLDCoop_DLC: while a burning flare or torch flies (just thrown), loose items are checked this often and where it is
+// goes out at once, not after it lands and lies still.
+constexpr double kFastScanMs = 100;
+constexpr double kFastScanForMs = 3000;
 constexpr float kStillMetres = 0.02f;  // moving less than this between scans: still
 constexpr float kMovedMetres = 0.3f;   // closer than this to where the other player has it: the same place
 constexpr double kListGraceMs = 5000;  // client: our own changes this recent aren't undone by the host's list
@@ -101,6 +108,8 @@ struct Api {
     ptrdiff_t snare = -1;                          // GearItem.m_SnareItem
     ptrdiff_t flare = -1, torch = -1;              // GearItem.m_FlareItem, m_TorchItem (TLDCoop_DLC: kSettleLitMs)
     const MethodInfo* flare_burning = nullptr;     // FlareItem.IsBurning()
+    // TLDCoop_DLC: FlareItem / TorchItem m_ElapsedBurnMinutes, m_BurnLifetimeMinutes
+    ptrdiff_t flare_elapsed = -1, flare_life = -1, torch_elapsed = -1, torch_life = -1;
     const MethodInfo* torch_burning = nullptr;     // TorchItem.IsBurning()
     ptrdiff_t snare_state = -1;                    // SnareItem.m_State (SnareState: 0 not set, 1 set, 2 broken, 3 caught)
     ptrdiff_t snare_rabbit = -1;                   // SnareItem.m_RabbitPrefab
@@ -387,6 +396,7 @@ struct Known {
     bool unique = false;     // one of a kind (is_unique): never shared
     int snare = -1;          // a snare's state (snare_state), -1 for other items
     bool opened = false;     // TLDCoop_DLC: a can opened or smashed open (opened_of)
+    bool burning = false;    // TLDCoop_DLC: a flare or torch burning (burning_light)
 };
 std::unordered_map<std::string, Known> g_known;  // our pdid -> item
 // TLDCoop_DLC: what a pot holds, to see changes the hooks don't (melting snow in 2.58, water once it's in, food ready
@@ -401,6 +411,7 @@ std::unordered_map<Il2CppObject*, PotSig> g_pot_sig;
 std::string g_scene;                             // the scene g_known is about ("" = none)
 bool g_baseline = false;                         // g_known holds at least one full scan of g_scene
 double g_last_scan = 0;
+double g_fast_until = 0;  // TLDCoop_DLC: scan every kFastScanMs until then (a burning flare or torch flies)
 uint32_t g_seq = 0;                              // our change counter
 netrt::Newest g_newest;                          // wire pdid -> each player's newest change applied
 // Ids differ when ours was taken (by an item in our pack, both games having loaded the same save).
@@ -532,6 +543,42 @@ std::string json_string(const std::string& text, const std::string& key) {
         out += c == 'n' ? '\n' : c == 't' ? '\t' : c == 'r' ? '\r' : c;  // \" \\ \/ as themselves
     }
     return out;
+}
+
+// A JSON number value ("key":12.5) in TLD's save text; `fallback` if there's none.
+double json_number(const std::string& text, const std::string& key, double fallback) {
+    const std::string at = "\"" + key + "\":";
+    const size_t i = text.find(at);
+    if (i == std::string::npos) return fallback;
+    char* end = nullptr;
+    const double v = std::strtod(text.c_str() + i + at.size(), &end);
+    return end == text.c_str() + i + at.size() ? fallback : v;
+}
+
+// TLDCoop_DLC: the other player's record of a flare or torch we have lying burning: how long it has burnt (the host's
+// says; a friend's is loaded the same way, as it's theirs). Burnt out there: it goes out here (TLD's own Update does
+// that once it has burnt its lifetime).
+void load_burn(Il2CppObject* gi, const std::string& gear, Known& k) {
+    struct Kind { ptrdiff_t part, elapsed, life; const char* key; int burnt_out; };
+    for (const Kind& kind : {Kind{api.flare, api.flare_elapsed, api.flare_life, "m_FlareItemSerialized", 2},
+                             Kind{api.torch, api.torch_elapsed, api.torch_life, "m_TorchItemSerialized", 3}}) {
+        Il2CppObject* item = kind.part >= 0 ? get<Il2CppObject*>(gi, kind.part) : nullptr;
+        if (!alive(item) || kind.elapsed < 0 || kind.life < 0) continue;
+        const std::string text = json_string(gear, kind.key);
+        if (text.empty() || !burning_light(gi)) return;
+        const int state = static_cast<int>(json_number(text, "m_StateProxy", -1));
+        double theirs = json_number(text, "m_ElapsedBurnMinutesProxy", -1);
+        const float life = get<float>(item, kind.life);
+        if (state == kind.burnt_out) theirs = life;
+        if (theirs < 0) return;
+        const float ours = get<float>(item, kind.elapsed);
+        if (std::fabs(theirs - ours) < 0.25) return;
+        put<float>(item, kind.elapsed, static_cast<float>(theirs));
+        if (state == kind.burnt_out)
+            logx::info("items: the other player's %s burnt out; goes out here too", name_of(gi).c_str());
+        k.burning = burning_light(gi);
+        return;
+    }
 }
 
 // The other player's record of a snare we have: its state and when it last rolled, as loading a save does.
@@ -1008,6 +1055,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                        short_id(m.pdid).c_str(), pos.x, pos.y, pos.z);
         load_snare(gi, m.gear, m.pdid, k);
         load_opened(gi, m.gear, k);
+        load_burn(gi, m.gear, k);
         load_pot(gi, m.gear, m.pdid);
         return;
     }
@@ -1266,6 +1314,7 @@ void scan(double now) {
             k.snare = snare_state(l.gi);
             k.unique = is_unique(l.gi);
             k.opened = opened_of(l.gi);
+            k.burning = burning_light(l.gi);
             if (k.unique) {
                 logx::info("items: %s (%s) at (%.1f, %.1f, %.1f) is one of a kind: %s", k.prefab.c_str(),
                            short_id(l.pdid).c_str(), l.pos.x, l.pos.y, l.pos.z,
@@ -1282,6 +1331,12 @@ void scan(double now) {
             k.pos = l.pos;
             k.rot = l.rot;
             k.moved_ms = now;
+            // TLDCoop_DLC: a burning flare or torch in flight goes out as it flies (and we look again soon).
+            if (!k.unique && burning_light(l.gi)) {
+                g_fast_until = now + kFastScanForMs;
+                if (now - k.changed_ms >= kFastScanMs * 2 && (!k.shared || distance(k.pos, k.told) > kMovedMetres))
+                    send_put(l.gi, l.pdid, k, now, 0, 0, "");
+            }
             continue;
         }
         if (k.unique) continue;
@@ -1328,6 +1383,17 @@ void scan(double now) {
                     send_put(food, id, fk, now, 0, 0, "went into a pot");
                 }
                 send_put(l.gi, l.pdid, k, now, 0, 0, tell ? describe_pot(pot).c_str() : "");
+                continue;
+            }
+        }
+        if (const bool burning = burning_light(l.gi); burning != k.burning || (burning && k.shared && hosting() &&
+                                                                               now - k.changed_ms >= kBurnSyncMs)) {
+            // TLDCoop_DLC: lit or gone out here (a friend's game goes by the host's), or how long it has burnt.
+            const bool went_out = k.burning && !burning;
+            const bool lit = !k.burning && burning;
+            k.burning = burning;
+            if (k.shared && (hosting() || lit)) {
+                send_put(l.gi, l.pdid, k, now, 0, 0, went_out ? "went out" : lit ? "was lit" : "");
                 continue;
             }
         }
@@ -1748,10 +1814,14 @@ bool init() {
     if (Il2CppClass* flare = il2::find_class(kGame, "", "FlareItem")) {
         api.flare = il2::field_offset(gear, "m_FlareItem");
         api.flare_burning = il2::find_method_quiet(flare, "IsBurning", 0);
+        api.flare_elapsed = il2::field_offset(flare, "m_ElapsedBurnMinutes");
+        api.flare_life = il2::field_offset(flare, "m_BurnLifetimeMinutes");
     }
     if (Il2CppClass* torch = il2::find_class(kGame, "", "TorchItem")) {
         api.torch = il2::field_offset(gear, "m_TorchItem");
         api.torch_burning = il2::find_method_quiet(torch, "IsBurning", 0);
+        api.torch_elapsed = il2::field_offset(torch, "m_ElapsedBurnMinutes");
+        api.torch_life = il2::field_offset(torch, "m_BurnLifetimeMinutes");
     }
     if (Il2CppClass* snare = il2::find_class(kGame, "", "SnareItem")) {
         api.snare = il2::field_offset(gear, "m_SnareItem");
@@ -1858,7 +1928,7 @@ void on_frame(bool in_game) {
     }
     receive(now);
     if (g_scene.empty()) return;
-    if (now - g_last_scan >= kScanMs) {
+    if (now - g_last_scan >= (now < g_fast_until ? kFastScanMs : kScanMs)) {
         g_last_scan = now;
         scan(now);
     }
