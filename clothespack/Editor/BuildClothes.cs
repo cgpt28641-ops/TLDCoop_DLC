@@ -822,31 +822,40 @@ public static class BuildClothes {
             if (above < clearance) { push[i] = skin.n[best] * (clearance - above); moved++; }
             else if (most > 0 && above > most && verts[i].y < pullBelow) { pull[i] = -skin.n[best] * (above - most); pulled++; }
         }
-        // Layers move together: a coat's lining lies a few millimetres inside its shell, and pushing only the lining would
-        // send it through the shell. Each vertex takes the biggest push within 2.5 cm (pointing its way).
+        // The pushes and pulls as a smooth field over the piece: each vertex moves by the distance-weighted average of
+        // the moves within 6 cm (a piece far inside the base keeps its shape and folds, moved as a whole, instead of every
+        // vertex jumping on its own; shell and lining a few millimetres apart move alike). The second pass of Wrap then
+        // places what this left short.
         {
-            const float reach = 0.025f;
+            const float radius = 0.06f;
             var grid = new Dictionary<Vector3Int, List<int>>();
-            Vector3Int G(Vector3 v) => new Vector3Int(Mathf.FloorToInt(v.x / reach), Mathf.FloorToInt(v.y / reach), Mathf.FloorToInt(v.z / reach));
-            for (int i = 0; i < verts.Count; i++)
-                if (push[i] != Vector3.zero) {
-                    var c = G(verts[i]);
-                    if (!grid.TryGetValue(c, out var l)) grid[c] = l = new List<int>();
-                    l.Add(i);
-                }
-            var widened = new Vector3[push.Length];
+            Vector3Int G(Vector3 v) => new Vector3Int(Mathf.FloorToInt(v.x / radius), Mathf.FloorToInt(v.y / radius), Mathf.FloorToInt(v.z / radius));
             for (int i = 0; i < verts.Count; i++) {
-                var best = push[i];
                 var c = G(verts[i]);
+                if (!grid.TryGetValue(c, out var l)) grid[c] = l = new List<int>();
+                l.Add(i);
+            }
+            var smoothPush = new Vector3[push.Length];
+            var smoothPull = new Vector3[pull.Length];
+            for (int i = 0; i < verts.Count; i++) {
+                var c = G(verts[i]);
+                Vector3 sp = Vector3.zero, sl = Vector3.zero;
+                float wsum = 0;
                 for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
                     if (grid.TryGetValue(new Vector3Int(c.x + dx, c.y + dy, c.z + dz), out var l))
-                        foreach (int k in l)
-                            if (push[k].sqrMagnitude > best.sqrMagnitude && (verts[k] - verts[i]).sqrMagnitude < reach * reach &&
-                                (best == Vector3.zero || Vector3.Dot(push[k].normalized, best.normalized) > 0.5f))
-                                best = push[k];
-                widened[i] = best;
+                        foreach (int k in l) {
+                            float d2 = (verts[k] - verts[i]).sqrMagnitude;
+                            if (d2 > radius * radius) continue;
+                            float w = 1 - Mathf.Sqrt(d2) / radius;
+                            sp += push[k] * w; sl += pull[k] * w; wsum += w;
+                        }
+                smoothPush[i] = wsum > 0 ? sp / wsum : push[i];
+                smoothPull[i] = wsum > 0 ? sl / wsum : pull[i];
+                // never less than most of its own push: what is under the skin must come out
+                if (smoothPush[i].magnitude < push[i].magnitude * 0.7f) smoothPush[i] = push[i] * 0.7f;
             }
-            push = widened;
+            push = smoothPush;
+            pull = smoothPull;
         }
         // smooth the pushes twice over the piece's edges (a vertex keeps at least its own push)
         var neighbours = new List<int>[verts.Count];
