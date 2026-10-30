@@ -207,7 +207,11 @@ public static class BuildClothes {
             foreach (var (bItem, bFile, bGrey) in baseList) {
                 if (!File.Exists(bFile)) continue;
                 bool bMirror = list.mirror_items != null && list.mirror_items.Contains(bItem);
-                triangles += Convert(bFile, character, bItem, materials, opaque, twoSided, 0, 0, -1, float.NaN, false, false, null, 0,
+                float bCollar = float.NaN;
+                if (list.collar_items != null)
+                    for (int i = 0; i < list.collar_items.Length && i < list.collar_metres.Length; i++)
+                        if (list.collar_items[i] == bItem) bCollar = list.collar_metres[i];
+                triangles += Convert(bFile, character, bItem, materials, opaque, twoSided, 0, 0, -1, bCollar, false, false, null, 0,
                                      new string[0], -1, false, 0, bMirror, bGrey, true);
                 meshes++;
             }
@@ -353,7 +357,10 @@ public static class BuildClothes {
 
         if (wrap > 0) {
             float neckY = JointPos(g, bin, skin, "Neck_jnt").y;
-            Wrap(verts, submeshes, character, wrap, $"{character}/{item}", onHead, wrapMax, float.IsNaN(neckY) ? 1.5f : neckY - 0.06f);
+            // twice: the smoothing of the first pass leaves a few vertices short of their layer, the second places them
+            for (int pass = 0; pass < 2; pass++)
+                Wrap(verts, submeshes, character, wrap, $"{character}/{item}" + (pass > 0 ? " (2nd pass)" : ""), onHead, wrapMax,
+                     float.IsNaN(neckY) ? 1.5f : neckY - 0.06f);
         }
         if (isBase) {  // the surface the other pieces lie over
             if (!BaseSurface.TryGetValue(character, out var surf)) BaseSurface[character] = surf = (new List<Vector3>(), new List<Vector3>());
@@ -799,7 +806,7 @@ public static class BuildClothes {
         if (skin == null) return;
         var push = new Vector3[verts.Count];
         var pull = new Vector3[verts.Count];
-        int moved = 0, pulled = 0, reachCells = most > 0 ? 2 : 1;
+        int moved = 0, pulled = 0, reachCells = 3;  // the nearest surface point within 9-12 cm
         for (int i = 0; i < verts.Count; i++) {
             var c = Cell(verts[i]);
             int best = -1; float bestD = float.MaxValue;

@@ -113,7 +113,8 @@
     "GEAR_PlaidShirt",
     "GEAR_SweaterChristmasA",
     "GEAR_WoolShirt",
-    "GEAR_WoolSweater"
+    "GEAR_WoolSweater",
+    "TLDCoop_BaseTop"
   ],
   "collar_metres": [
     -0.01,
@@ -141,7 +142,8 @@
     -0.01,
     -0.01,
     -0.01,
-    -0.01
+    -0.01,
+    -0.045
   ],
   "preview_characters": [
     "mackenzie_indoor",
