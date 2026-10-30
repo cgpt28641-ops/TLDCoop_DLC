@@ -380,18 +380,7 @@ public static class BuildClothes {
         if (sockColourFrom != null) {
             // A worn sock: the shape of this character's low shoes (file), 4 mm inside them, one knitted material in
             // the sock's own colour, ribs round each foot (the catalog's sock is a single flat ground model).
-            SockFromShoe(verts, normals, submeshes, $"{character}/{item}");
-            var sides = new[] { -1, 1 }.ToDictionary(sd => sd, sd => {
-                var l = verts.Where(v => Mathf.Sign(v.x) == sd).ToList();
-                return l.Count > 0 ? new Vector3(l.Average(v => v.x), 0, l.Average(v => v.z)) : Vector3.zero;
-            });
-            for (int i = 0; i < verts.Count; i++) {
-                var ctr = sides[verts[i].x < 0 ? -1 : 1];
-                float th = Mathf.Atan2(verts[i].x - ctr.x, verts[i].z - ctr.z);
-                uvs[i] = new Vector2(th / (2 * Mathf.PI) * 8f, verts[i].y * 12f);
-            }
-            var all = submeshes.SelectMany(t => t).ToArray();
-            submeshes.Clear(); submeshes.Add(all);
+            SockSweep(verts, normals, uvs, weights, submeshes, $"{character}/{item}");
             matNames.Clear();
             var gs = JsonUtility.FromJson<Gltf>(File.ReadAllText(sockColourFrom));
             var colour = KnitMaterial(gs, sockColourFrom, item, twoSided, matNames);
@@ -1212,6 +1201,83 @@ public static class BuildClothes {
     }
 
     static readonly Dictionary<string, List<int>> BaseTris = new Dictionary<string, List<int>>();
+
+    // A sock swept along each foot, sized by the shoe (file) on that side: a knitted tube from 5 cm over the shoe's top
+    // down the ankle, round the heel and forward along the sole to a rounded toe; each ring takes its bones from the
+    // nearest point of the shoe; ribs round it.
+    static void SockSweep(List<Vector3> verts, List<Vector3> normals, List<Vector2> uvs, List<BoneWeight> weights,
+                          List<int[]> submeshes, string what) {
+        var shoeP = verts.ToArray(); var shoeW = weights.ToArray();
+        verts.Clear(); normals.Clear(); uvs.Clear(); weights.Clear(); submeshes.Clear();
+        var tris = new List<int>();
+        const int round = 16;
+        foreach (int side in new[] { -1, 1 }) {
+            var foot = Enumerable.Range(0, shoeP.Length).Where(i => Mathf.Sign(shoeP[i].x) == side).ToList();
+            if (foot.Count < 50) continue;
+            float P(Func<int, float> f, float q) { var l = foot.Select(f).OrderBy(x => x).ToList(); return l[Mathf.Clamp((int)(q * l.Count), 0, l.Count - 1)]; }
+            float y0 = P(i => shoeP[i].y, 0.01f), y1 = P(i => shoeP[i].y, 0.99f);
+            float heel = P(i => shoeP[i].z, 0.01f), toe = P(i => shoeP[i].z, 0.99f);
+            float cx = foot.Average(i => shoeP[i].x);
+            float half = (P(i => shoeP[i].x, 0.97f) - P(i => shoeP[i].x, 0.03f)) / 2 - 0.006f;
+            float ankleZ = heel + 0.05f, soleY = y0 + 0.035f, top = y1 + 0.05f, bend = 0.045f;
+            // the centre line: down the ankle, a quarter circle round the heel, forward to the toe
+            var path = new List<(Vector3 p, Vector3 t, float a, float b)>();
+            for (int k = 0; k <= 8; k++) {
+                float y = Mathf.Lerp(top, soleY + bend, k / 8f);
+                path.Add((new Vector3(cx, y, ankleZ), Vector3.down, 0.043f, 0.043f));
+            }
+            for (int k = 1; k <= 6; k++) {
+                float an = k / 6f * Mathf.PI / 2;
+                var p = new Vector3(cx, soleY + bend - Mathf.Sin(an) * bend, ankleZ + (1 - Mathf.Cos(an)) * bend);
+                var t = new Vector3(0, -Mathf.Cos(an), Mathf.Sin(an));
+                float u = k / 6f;
+                path.Add((p, t, Mathf.Lerp(0.043f, half, u), Mathf.Lerp(0.043f, 0.034f, u)));
+            }
+            float start = ankleZ + bend, end = toe - 0.012f;
+            for (int k = 1; k <= 10; k++) {
+                float u = k / 10f, z = Mathf.Lerp(start, end, u);
+                float shrink = u < 0.7f ? 1 : Mathf.Sqrt(Mathf.Max(0.05f, 1 - Mathf.Pow((u - 0.7f) / 0.3f, 2)));  // the round toe
+                path.Add((new Vector3(cx, soleY - 0.006f * u, z), Vector3.forward, half * shrink, Mathf.Lerp(0.034f, 0.024f, u) * Mathf.Max(0.35f, shrink)));
+            }
+            float along = 0; int first = verts.Count;
+            for (int k = 0; k < path.Count; k++) {
+                var (p, t, a, b) = path[k];
+                if (k > 0) along += (p - path[k - 1].p).magnitude;
+                var side1 = Vector3.right;  // across the foot
+                var side2 = Vector3.Cross(t, side1).normalized;  // up from the sole / forward from the shin
+                int nearest = 0; float best = float.MaxValue;
+                foreach (int i in foot) { float d = (shoeP[i] - p).sqrMagnitude; if (d < best) { best = d; nearest = i; } }
+                for (int j = 0; j <= round; j++) {
+                    float an = j * 2 * Mathf.PI / round;
+                    var off = side1 * Mathf.Cos(an) * a + side2 * Mathf.Sin(an) * b;
+                    verts.Add(p + off);
+                    normals.Add((side1 * Mathf.Cos(an) / a + side2 * Mathf.Sin(an) / b).normalized);
+                    uvs.Add(new Vector2(j / (float)round * 8f, along * 12f));
+                    weights.Add(shoeW[nearest]);
+                }
+            }
+            for (int k = 0; k + 1 < path.Count; k++)
+                for (int j = 0; j < round; j++) {
+                    int a0 = first + k * (round + 1) + j, a1 = a0 + 1, b0 = a0 + round + 1, b1 = b0 + 1;
+                    foreach (var (x, y, z) in new[] { (a0, a1, b1), (a0, b1, b0) }) {
+                        var n = Vector3.Cross(verts[y] - verts[x], verts[z] - verts[x]);
+                        if (Vector3.Dot(n, normals[x] + normals[y] + normals[z]) < 0) { tris.Add(x); tris.Add(z); tris.Add(y); }
+                        else { tris.Add(x); tris.Add(y); tris.Add(z); }
+                    }
+                }
+            // close the toe
+            int lastRing = first + (path.Count - 1) * (round + 1), tip = verts.Count;
+            verts.Add(path[path.Count - 1].p + Vector3.forward * 0.006f); normals.Add(Vector3.forward);
+            uvs.Add(new Vector2(0, along * 12f)); weights.Add(weights[lastRing]);
+            for (int j = 0; j < round; j++) {
+                int x = lastRing + j, y = x + 1;
+                var n = Vector3.Cross(verts[y] - verts[x], verts[tip] - verts[x]);
+                if (Vector3.Dot(n, Vector3.forward) < 0) { tris.Add(x); tris.Add(tip); tris.Add(y); } else { tris.Add(x); tris.Add(y); tris.Add(tip); }
+            }
+        }
+        submeshes.Add(tris.ToArray());
+        Debug.Log($"[Clothes] {what}: socks swept along the feet ({verts.Count} vertices)");
+    }
 
     // A shoe made a sock: welded, laces and other small loose parts left out, smoothed (Taubin, 25 rounds: no seams,
     // laces' ridges or sole edges), the sole's thickness taken off the bottom, then 5 mm inside the shoe's surface.
