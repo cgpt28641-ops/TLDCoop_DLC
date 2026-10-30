@@ -507,13 +507,13 @@ void region_update_detour(Il2CppObject* region, const MethodInfo* method) {
             logx::info("wildlife: spawn regions within %.0f m of a friend are kept on as near us", g_region_reach);
         }
         const Vector3 c = il2::read_field<Vector3>(region, api.region_center);
-        bool near = false;
+        bool friend_near = false;  // (not 'near': windows.h makes that a macro)
         for (const Vector3& f : g_friend_spots) {
             const float dx = c.x - f.x, dz = c.z - f.z;
-            near |= dx * dx + dz * dz <= g_region_reach * g_region_reach;
+            friend_near |= dx * dx + dz * dz <= g_region_reach * g_region_reach;
         }
         char* flag = reinterpret_cast<char*>(region) + g_region_override;
-        if (near && !*flag) {
+        if (friend_near && !*flag) {
             *flag = 1;
             forced = true;
             if (g_regions_kept++ == 0) logx::info("wildlife: a spawn region near a friend kept on (SpawnRegion.UpdateFromManager)");
