@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -73,6 +74,7 @@ namespace {
 
 constexpr const char* kCodeKey = "tldcoop_code";
 constexpr const char* kVersionKey = "tldcoop_version";
+constexpr const char* kHostKey = "tldcoop_host";  // TLDCoop_DLC: the host's Steam id (the lobby may pass to someone else)
 constexpr int kChannel = 0;
 constexpr int kSendFlags = 32;  // k_nSteamNetworkingSend_Unreliable | AutoRestartBrokenSession
 constexpr double kSearchRetryMs = 4000;  // the host may not be up yet: keep looking
@@ -131,6 +133,7 @@ struct Api {
     uint64_t (*join_lobby)(void*, uint64_t) = nullptr;
     void (*leave_lobby)(void*, uint64_t) = nullptr;
     uint64_t (*lobby_owner)(void*, uint64_t) = nullptr;
+    const char* (*get_lobby_data)(void*, uint64_t, const char*) = nullptr;  // TLDCoop_DLC (optional)
     int (*member_count)(void*, uint64_t) = nullptr;
     uint64_t (*member_by_index)(void*, uint64_t, int) = nullptr;
     bool (*call_completed)(void*, uint64_t, bool*) = nullptr;
@@ -197,6 +200,7 @@ struct Api {
         manual_call_result =
             reinterpret_cast<decltype(manual_call_result)>(GetProcAddress(dll, "SteamAPI_ManualDispatch_GetAPICallResult"));
         failure_reason = reinterpret_cast<decltype(failure_reason)>(GetProcAddress(dll, "SteamAPI_ISteamUtils_GetAPICallFailureReason"));
+        get_lobby_data = reinterpret_cast<decltype(get_lobby_data)>(GetProcAddress(dll, "SteamAPI_ISteamMatchmaking_GetLobbyData"));
         set_config_int = reinterpret_cast<decltype(set_config_int)>(
             GetProcAddress(dll, "SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32"));
         return ok;
@@ -249,6 +253,7 @@ public:
                 lobby_ = r.lobby;
                 api_.set_lobby_data(mm_, lobby_, kCodeKey, code_.c_str());
                 api_.set_lobby_data(mm_, lobby_, kVersionKey, version_.c_str());
+                api_.set_lobby_data(mm_, lobby_, kHostKey, std::to_string(self_).c_str());  // TLDCoop_DLC
                 set_status("hosting; your code is " + code_ + " (checking it's findable on Steam)");
                 // Self-check: look our own code up the way a friend will, so problems show up before they try.
                 api_.add_string_filter(mm_, kCodeKey, code_.c_str(), kComparisonEqual);
@@ -336,7 +341,13 @@ public:
                     set_status("no game with code " + code_ + " yet; still looking");
                     break;
                 }
-                lobby_ = api_.lobby_by_index(mm_, 0);
+                // TLDCoop_DLC: a game with this code may be there more than once: when a host leaves, Steam hands
+                // their lobby to someone still in it (a friend then joined that one and connected to that friend,
+                // not the host's new game). Each is tried in turn; one whose host isn't in it is left again.
+                candidates_.clear();
+                for (uint32_t i = 0; i < r.count; ++i) candidates_.push_back(api_.lobby_by_index(mm_, static_cast<int>(i)));
+                lobby_ = candidates_.front();
+                candidates_.erase(candidates_.begin());
                 issue(api_.join_lobby(mm_, lobby_), kLobbyEnterId, sizeof(LobbyEnter));
                 stage_ = Stage::Joining;
                 set_status("found code " + code_ + "; joining");
@@ -355,14 +366,59 @@ public:
                     set_status("couldn't join the game with code " + code_ + " (it may be full); retrying");
                     break;
                 }
-                host_ = api_.lobby_owner(mm_, lobby_);
+                host_ = lobby_host();
+                if (!host_in_lobby()) {  // TLDCoop_DLC: their host left this one: the next, or look again
+                    if (log_) log_("steam: the game's host (" + describe(host_) + ") isn't in this lobby any more; leaving it");
+                    api_.leave_lobby(mm_, lobby_);
+                    lobby_ = 0;
+                    host_ = 0;
+                    if (!candidates_.empty()) {
+                        lobby_ = candidates_.front();
+                        candidates_.erase(candidates_.begin());
+                        issue(api_.join_lobby(mm_, lobby_), kLobbyEnterId, sizeof(LobbyEnter));
+                        break;
+                    }
+                    stage_ = Stage::Retrying;
+                    retry_at_ = now + kSearchRetryMs;
+                    set_status("the game with code " + code_ + " has no host right now; still looking");
+                    break;
+                }
                 stage_ = Stage::Joined;
+                last_member_poll_ = now;
                 set_status("connecting to " + describe(host_));
+                break;
+            }
+            case Stage::Joined: {
+                // TLDCoop_DLC: the host gone from the lobby (they quit, or their game went down): leave it and look
+                // for their game again, so we're in the one they make next, not left with whoever got this one.
+                if (now - last_member_poll_ < kMemberPollMs) break;
+                last_member_poll_ = now;
+                if (host_in_lobby()) break;
+                if (log_) log_("steam: the host (" + describe(host_) + ") left the lobby; looking for their game again");
+                api_.leave_lobby(mm_, lobby_);
+                lobby_ = 0;
+                host_ = 0;
+                stage_ = Stage::Retrying;
+                retry_at_ = now + 1000;
+                set_status("the host left; looking for code " + code_ + " again");
                 break;
             }
             default:
                 break;
         }
+    }
+
+    // TLDCoop_DLC: who hosts this lobby's game: its tldcoop_host (the owner may have changed), else its owner.
+    uint64_t lobby_host() const {
+        const char* v = api_.get_lobby_data ? api_.get_lobby_data(mm_, lobby_, kHostKey) : nullptr;
+        const uint64_t id = v && *v ? std::strtoull(v, nullptr, 10) : 0;
+        return id ? id : api_.lobby_owner(mm_, lobby_);
+    }
+    bool host_in_lobby() const {
+        if (!host_ || !lobby_) return false;
+        for (int i = 0, n = api_.member_count(mm_, lobby_); i < n; ++i)
+            if (api_.member_by_index(mm_, lobby_, i) == host_) return true;
+        return false;
     }
 
     bool host_peer(PeerId& out) override {
@@ -542,6 +598,7 @@ private:
     uint64_t call_ = 0;
     uint64_t lobby_ = 0;
     uint64_t host_ = 0;
+    std::vector<uint64_t> candidates_;  // TLDCoop_DLC: other lobbies with our code, to try next
     double retry_at_ = 0, last_member_poll_ = 0;
     std::set<uint64_t> knocked_;
     std::set<uint64_t> members_;  // in the lobby at the last poll (one who wasn't is new, or back)

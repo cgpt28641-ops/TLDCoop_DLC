@@ -50,7 +50,11 @@ constexpr int32_t kKindWolf = 1;
 constexpr int32_t kAiModeFlee = 4;
 constexpr int32_t kAiModeDead = 2;
 constexpr double kFightTimeoutMs = 45000;  // no answer from their game: the animal gives up and flees
-constexpr float kSwitchMargin = 0.8f;  // the other player must be this much closer (fraction) to switch over
+constexpr float kSwitchMargin = 0.6f;  // the other player must be this much closer (fraction) to switch over
+// TLDCoop_DLC: and at least this many metres closer, and not sooner than this after its last switch: with three or
+// four players close together a wolf switched every second or two and ran in circles between them.
+constexpr float kSwitchMinMetres = 8.0f;
+constexpr double kSwitchHoldMs = 8000;
 constexpr float kSwitchCloserFactor = 0.5f;  // already after one: the other must be under half as far...
 constexpr float kSwitchMaxMetres = 30.0f;     // ...and this close
 constexpr int32_t kAiModeStruggle = 14;
@@ -273,7 +277,11 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
         if (c.metres < nearest->metres) nearest = &c;
 
     const Candidate* now = was;
-    if (nearest != was) {
+    static std::unordered_map<uintptr_t, double> last_switch;  // TLDCoop_DLC
+    const double t = GetTickCount64();
+    const auto held = last_switch.find(key);
+    const bool may_switch = held == last_switch.end() || t - held->second >= kSwitchHoldMs;
+    if (nearest != was && may_switch && was->metres - nearest->metres >= kSwitchMinMetres) {
         if (!busy) {
             // Not after anyone yet: the nearest one, with a little stickiness so it doesn't flip between them.
             if (nearest->metres < was->metres * kSwitchMargin) now = nearest;
@@ -288,6 +296,7 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
             }
         }
     }
+    if (now->player != was->player) last_switch[key] = t;
     if (now->player != was->player && g_switches_logged < 200) {
         ++g_switches_logged;
         char from[32];
