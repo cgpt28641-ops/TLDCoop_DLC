@@ -485,6 +485,44 @@ bool can_update_detour(Il2CppObject* ai, const MethodInfo* method) {
     return true;
 }
 
+// TLDCoop_DLC: TLD switches off spawn regions (and their animals) far from its own player, so the host's world had
+// no animals where only a friend was (a friend away from the host saw none, or a lone, stuck one). A region a friend
+// is near is updated as one whose distance to the camera doesn't count (SpawnRegion.m_OverrideDistanceToCamera), just
+// for that update.
+using RegionUpdateFn = void (*)(Il2CppObject* region, const MethodInfo* method);
+RegionUpdateFn g_region_update = nullptr;
+ptrdiff_t g_region_override = -1;
+float g_region_reach = 0;  // SpawnRegionManager.m_SpawnRegionDisableDistance (read once)
+int g_regions_kept = 0;
+
+void region_update_detour(Il2CppObject* region, const MethodInfo* method) {
+    bool forced = false;
+    if (!g_friend_spots.empty() && g_region_override >= 0 && api.region_center >= 0 && region) {
+        if (g_region_reach <= 0) {
+            Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
+            static ptrdiff_t off = il2::field_offset_quiet(il2::find_class(kGame, "", "SpawnRegionManager"),
+                                                           "m_SpawnRegionDisableDistance");
+            const float d = manager && off >= 0 ? il2::read_field<float>(manager, off) : 0;
+            g_region_reach = d > 50 ? d : 250;
+            logx::info("wildlife: spawn regions within %.0f m of a friend are kept on as near us", g_region_reach);
+        }
+        const Vector3 c = il2::read_field<Vector3>(region, api.region_center);
+        bool near = false;
+        for (const Vector3& f : g_friend_spots) {
+            const float dx = c.x - f.x, dz = c.z - f.z;
+            near |= dx * dx + dz * dz <= g_region_reach * g_region_reach;
+        }
+        char* flag = reinterpret_cast<char*>(region) + g_region_override;
+        if (near && !*flag) {
+            *flag = 1;
+            forced = true;
+            if (g_regions_kept++ == 0) logx::info("wildlife: a spawn region near a friend kept on (SpawnRegion.UpdateFromManager)");
+        }
+    }
+    g_region_update(region, method);
+    if (forced) *(reinterpret_cast<char*>(region) + g_region_override) = 0;
+}
+
 void capture(const std::string& scene, double now) {
     const game::PlayerState me = game::read_player();
     std::vector<net::StateMsg> friends_here = netrt::remote_states();
@@ -1560,6 +1598,11 @@ bool init() {
         if (const MethodInfo* spawn = il2::find_method(spawn_region, "Spawn", 1))
             hooks::install_method("SpawnRegion.Spawn", spawn, reinterpret_cast<void*>(&spawn_detour),
                                   reinterpret_cast<void**>(&g_spawn));
+        g_region_override = il2::field_offset_quiet(spawn_region, "m_OverrideDistanceToCamera");  // TLDCoop_DLC
+        if (const MethodInfo* region_update = il2::find_method_quiet(spawn_region, "UpdateFromManager", 0);
+            region_update && g_region_override >= 0)
+            hooks::install_method("SpawnRegion.UpdateFromManager", region_update,
+                                  reinterpret_cast<void*>(&region_update_detour), reinterpret_cast<void**>(&g_region_update));
         if (const MethodInfo* can_update = il2::find_method(ai_manager, "CanUpdateAI", 1))  // TLDCoop_DLC
             hooks::install_method("BaseAiManager.CanUpdateAI", can_update, reinterpret_cast<void*>(&can_update_detour),
                                   reinterpret_cast<void**>(&g_can_update));
