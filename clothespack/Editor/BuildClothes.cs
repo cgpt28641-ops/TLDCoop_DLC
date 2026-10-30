@@ -447,7 +447,7 @@ public static class BuildClothes {
         mesh.RecalculateTangents();
         mesh.RecalculateBounds();
         var ao = BakeOcclusion(verts, normals, submeshes, character);
-        if (skinMask || scarf || beanie)  // knitted pieces sit over hair the game hides: only a light shade, no dark blotches
+        if (skinMask || scarf || beanie || sockColourFrom != null)  // knitted pieces sit over hair the game hides: only a light shade, no dark blotches
             for (int i = 0; i < ao.Length; i++) { float o = 0.8f + 0.2f * ao[i].r; ao[i] = new Color(o, o, o, 1); }
         mesh.colors = ao;
         // Depth bias by layer (the further out, the more it wins a depth tie): where an inner and an outer piece lie
