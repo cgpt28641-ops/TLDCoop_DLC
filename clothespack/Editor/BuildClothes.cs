@@ -498,7 +498,7 @@ public static class BuildClothes {
 
     // As tools/bodycut/cut.py names them: the torso's lower part in 3 cm bands from BandTop down.
     static readonly string[] Regions = new[] { "head", "neck", "torso", "arms", "hands", "hips", "legs", "feet" }
-        .Concat(Enumerable.Range(0, 15).Select(k => "band" + k)).ToArray();
+        .Concat(Enumerable.Range(0, 15).Select(k => "band" + k)).Concat(new[] { "eyes" }).ToArray();
     const float BandTop = 1.25f, BandStep = 0.03f;
 
     // A body's mesh again, the same vertices and bones, its triangles split by region inside each of its submeshes:

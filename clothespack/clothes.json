@@ -293,7 +293,21 @@
   "hide_rules": [
     {
       "under": [
-        "GEAR_Balaclava",
+        "GEAR_Balaclava"
+      ],
+      "words": [
+        "Hair",
+        "Toque",
+        "Beanie",
+        "Hat"
+      ],
+      "regions": [
+        "head",
+        "neck"
+      ]
+    },
+    {
+      "under": [
         "GEAR_WoolWrapCap"
       ],
       "words": [
