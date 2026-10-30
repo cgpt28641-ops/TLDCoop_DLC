@@ -39,6 +39,8 @@
 #include "world_fires.h"
 #include "world_water.h"
 #include "world_blood.h"
+#include "coop_backup.h"
+#include "world_spray.h"
 #include "world_objects.h"
 #include "world_items.h"
 #include "world_join.h"
@@ -159,6 +161,7 @@ void apply_net_settings(const config::Settings& s, bool startup) {
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
     coop_hud::set_colours(s.hud_colours);
     coop_emotes::set_keys(s.emote_keys);
+    coop_backup::set_count(s.backups);
     if (s.mode == "off") return coop_off("solo");
     if (s.mode != "host" && s.mode != "join") {
         logx::warn("net: unknown mode '%s' (use off, host or join)", s.mode.c_str());
@@ -205,6 +208,7 @@ void start_networking() {
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
         coop_hud::set_colours(s.hud_colours);
         coop_emotes::set_keys(s.emote_keys);
+        coop_backup::set_count(s.backups);
         logx::info("net: offline until CO-OP is picked (NEW, RESUME or LOAD in the Survival menu)");
         return;
     }
@@ -377,6 +381,17 @@ void push_local_state(const std::string& scene) {
         m.held_kind = held.kind;
         m.held_flags = held.flags;
         coop_emotes::current(m.emote, m.emote_seq);  // TLDCoop_DLC
+        {  // TLDCoop_DLC: how we're doing, read once a second
+            static double health_read = -1e18;
+            static uint8_t condition = 100;
+            static uint32_t afflictions = 0;
+            if (now - health_read >= 1000) {
+                health_read = now;
+                game::read_health(condition, afflictions);
+            }
+            m.condition = condition;
+            m.afflictions = afflictions;
+        }
         if (const std::string food = coop_lapse::eating(); !food.empty()) {  // in hand while it's eaten
             m.flags |= net::kStateEating;
             m.held = food;
@@ -481,6 +496,8 @@ void on_frame() {
     world_fires::on_frame(in_game);
     world_water::on_frame(in_game);
     world_blood::on_frame(in_game);
+    world_spray::on_frame(in_game);
+    coop_backup::on_frame(game::active_scene(), g_net_enabled);
     world_join::on_frame(scene, in_game);
     coop_death::on_frame(scene, in_game);
     coop_lapse::on_frame(scene, in_game);
@@ -603,6 +620,8 @@ void on_runtime_ready() {
     world_fires::init();
     world_water::init();
     world_blood::init();
+    coop_backup::init();
+    world_spray::init();
     world_join::init();
     coop_death::init();
     coop_lapse::init();

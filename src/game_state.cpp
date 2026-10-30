@@ -1,5 +1,9 @@
 #include "game_state.h"
 
+#include <iterator>
+
+#include "net/afflictions.h"
+
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/held.h"
@@ -135,6 +139,59 @@ bool says_yes(const MethodInfo* m, Il2CppObject* obj) {
 
 bool g_ready = false;
 
+
+// --- TLDCoop_DLC: health, for the others --------------------------------------------------------------------------
+
+struct AfflictionCheck {
+    const char* getter;     // static GameManager.Get<X>Component()
+    const char* klass;      // its class
+    const char* check;      // a bool method saying the player has it
+    net::Affliction what;
+    const MethodInfo* get = nullptr;
+    const MethodInfo* has = nullptr;
+    ptrdiff_t display = -1;  // LocalizedString m_LocalizedDisplayName, when it has one
+};
+AfflictionCheck g_checks[] = {
+    {"GetHypothermiaComponent", "Hypothermia", "HasHypothermia", net::Affliction::Hypothermia},
+    {"GetFrostbiteComponent", "Frostbite", "HasFrostbite", net::Affliction::Frostbite},
+    {"GetFoodPoisoningComponent", "FoodPoisoning", "HasFoodPoisoning", net::Affliction::FoodPoisoning},
+    {"GetDysenteryComponent", "Dysentery", "HasDysentery", net::Affliction::Dysentery},
+    {"GetSprainedAnkleComponent", "SprainedAnkle", "HasSprainedAnkle", net::Affliction::SprainedAnkle},
+    {"GetSprainedWristComponent", "SprainedWrist", "HasSprainedWrist", net::Affliction::SprainedWrist},
+    {"GetBloodLossComponent", "BloodLoss", "HasBloodLoss", net::Affliction::BloodLoss},
+    {"GetInfectionComponent", "Infection", "HasInfection", net::Affliction::Infection},
+    {"GetInfectionRiskComponent", "InfectionRisk", "HasInfectionRisk", net::Affliction::InfectionRisk},
+    {"GetBrokenRibComponent", "BrokenRib", "HasBrokenRib", net::Affliction::BrokenRib},
+    {"GetBurnsComponent", "Burns", "HasBurns", net::Affliction::Burns},
+    {"GetIntestinalParasitesComponent", "IntestinalParasites", "HasIntestinalParasites",
+     net::Affliction::IntestinalParasites},
+    {"GetCabinFeverComponent", "CabinFever", "HasCabinFever", net::Affliction::CabinFever},
+    {"GetHungerComponent", "Hunger", "IsStarving", net::Affliction::Starving},
+    {"GetThirstComponent", "Thirst", "IsDehydrated", net::Affliction::Dehydrated},
+    {"GetFatigueComponent", "Fatigue", "IsExhausted", net::Affliction::Exhausted},
+    {"GetFreezingComponent", "Freezing", "IsFreezing", net::Affliction::Freezing},
+};
+const MethodInfo* g_get_condition = nullptr;
+ptrdiff_t g_hp = -1, g_max_hp = -1;
+const MethodInfo* g_localized_text = nullptr;  // LocalizedString.Text()
+
+void init_health(Il2CppClass* game_manager) {
+    int found = 0;
+    for (AfflictionCheck& c : g_checks) {
+        Il2CppClass* k = il2::find_class(kGame, "", c.klass);
+        c.get = il2::find_method_quiet(game_manager, c.getter, 0);
+        c.has = k ? il2::find_method_quiet(k, c.check, 0) : nullptr;
+        c.display = k ? il2::field_offset(k, "m_LocalizedDisplayName") : -1;
+        if (c.get && c.has) ++found;
+    }
+    Il2CppClass* condition = il2::find_class(kGame, "", "Condition");
+    g_get_condition = il2::find_method(game_manager, "GetConditionComponent", 0);
+    g_hp = il2::field_offset(condition, "m_CurrentHP");
+    g_max_hp = il2::field_offset(condition, "m_MaxHP");
+    g_localized_text = il2::find_method(il2::find_class(kGame, "", "LocalizedString"), "Text", 0);
+    logx::info("game state: %d of %zu afflictions can be read (the others see them)", found, std::size(g_checks));
+}
+
 }  // namespace
 
 bool init() {
@@ -182,6 +239,7 @@ bool init() {
     g.get_struggle = il2::find_method(game_manager, "GetPlayerStruggleComponent", 0);
     g.in_struggle = il2::find_method(il2::find_class(kGame, "", "PlayerStruggle"), "InStruggle", 0);
     init_held(game_manager);
+    init_health(game_manager);
 
     g_ready = g.active_scene && g.get_player_transform && g.transform_position;
     logx::info("game state: %s", g_ready ? "ready" : "INCOMPLETE (see warnings above)");
@@ -339,6 +397,32 @@ WorldState read_world() {
     }
     if (Il2CppObject* wind = il2::invoke(g.get_wind, nullptr)) il2::invoke_value(g.wind_speed, wind, w.wind_mph);
     return w;
+}
+
+void read_health(uint8_t& condition, uint32_t& afflictions) {
+    afflictions = 0;
+    for (const AfflictionCheck& c : g_checks) {
+        if (!c.get || !c.has) continue;
+        Il2CppObject* comp = il2::invoke(c.get, nullptr);
+        bool yes = false;
+        if (comp && il2::invoke_value(c.has, comp, yes) && yes) afflictions |= net::affliction_bit(c.what);
+    }
+    Il2CppObject* cond = g_get_condition ? il2::invoke(g_get_condition, nullptr) : nullptr;
+    const float hp = cond ? il2::read_field<float>(cond, g_hp) : 100.0f;
+    const float max = cond ? il2::read_field<float>(cond, g_max_hp) : 100.0f;
+    const float pct = max > 0 ? hp / max * 100.0f : 100.0f;
+    condition = static_cast<uint8_t>(pct < 0 ? 0 : pct > 100 ? 100 : pct + 0.5f);
+}
+
+std::string affliction_display_name(int affliction) {
+    for (const AfflictionCheck& c : g_checks) {
+        if (static_cast<int>(c.what) != affliction || !c.get || c.display < 0 || !g_localized_text) continue;
+        Il2CppObject* comp = il2::invoke(c.get, nullptr);
+        Il2CppObject* ls = comp ? il2::read_field<Il2CppObject*>(comp, c.display) : nullptr;
+        Il2CppObject* text = ls ? il2::invoke(g_localized_text, ls) : nullptr;
+        return text ? il2::to_utf8(reinterpret_cast<Il2CppString*>(text)) : std::string();
+    }
+    return {};
 }
 
 }  // namespace game

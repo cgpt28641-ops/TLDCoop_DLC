@@ -62,6 +62,11 @@ struct HeldState {
 };
 HeldState read_held();
 
+// TLDCoop_DLC: how we're doing, for State: condition (0-100 %) and net::Affliction bits (net/afflictions.h).
+void read_health(uint8_t& condition, uint32_t& afflictions);
+// TLDCoop_DLC: TLD's own (localized) name of an affliction, "" if it has none here.
+std::string affliction_display_name(int affliction);
+
 PlayerState read_player();
 WorldState read_world();
 

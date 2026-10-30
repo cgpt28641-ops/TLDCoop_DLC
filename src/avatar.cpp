@@ -2558,6 +2558,8 @@ std::vector<Seen> seen() {
         v.playing = a->fresh && a->last.valid;
         v.dead = (a->last.flags & net::kStateDead) != 0;
         v.crouched = (a->last.flags & net::kStateCrouched) != 0;
+        v.condition = a->last.condition;
+        v.afflictions = a->last.afflictions;
         v.at_x = a->last.x;
         v.at_z = a->last.z;
         if (v.playing) v.scene = a->last.scene;

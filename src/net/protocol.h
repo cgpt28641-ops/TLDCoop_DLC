@@ -89,6 +89,10 @@
 //   BloodMark either       scene[48], u8 kind, f32 x y z, f32 a b, i32 count: blood a bleeding player left in the
 //                          sender's world (TLD's BloodTrail: kind 0 a drop at x y z, 1 a stain (a b: its scale's range),
 //                          2 a cluster of `count` drops); the others' games leave the same (TLDCoop_DLC)
+//   SprayMark either       scene[48], decal id (u16 n + n), u8 gone, then (not gone) decal name (u16 n + n), f32 pos
+//                          xyz, normal xyz, scale xyz, yaw, colour rgba, i32 projectile, u8 indoors: a spray paint
+//                          marking put on or taken off a wall in the sender's world (it's on TLD's map too); the
+//                          others' games paint or wipe the same (TLDCoop_DLC)
 //   WaterList host->client scene[48], u32 n, then n times id (u16 n + n), u32 n + n bytes: every water source the host
 //                          has there, when a friend comes into its scene (TLDCoop_DLC)
 //   CaughtUp client->host  u32 n: once linked (again), after the n world changes the client made while the link was
@@ -114,7 +118,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 33;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 34;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -152,6 +156,8 @@ constexpr uint16_t kProtocolVersion = 33;  // v4: World. v5: Animals. v6: sounds
                                            // v32 (TLDCoop_DLC): gestures (State's emote, emote_seq); held
                                            // kind Match, held flag kHeldIgniting
                                            // v33 (TLDCoop_DLC): players' blood (BloodMark)
+                                           // v34 (TLDCoop_DLC): spray paint markings (SprayMark); State's
+                                           // condition and afflictions
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -174,7 +180,7 @@ enum class Msg : uint8_t {
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
-    BloodMark = 41
+    BloodMark = 41, SprayMark = 42
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -199,6 +205,8 @@ struct StateMsg {
                                            // world x y z, rotation x y z w)
     uint8_t emote = 0;      // TLDCoop_DLC: the gesture they make right now (net::Emote; net/emotes.h), 0 none
     uint8_t emote_seq = 0;  // TLDCoop_DLC: changes with each gesture they start
+    uint8_t condition = 100;   // TLDCoop_DLC: their condition, 0-100 %
+    uint32_t afflictions = 0;  // TLDCoop_DLC: net::Affliction bits (net/afflictions.h)
 };
 constexpr uint8_t kStateStruggling = 1;  // in a fight with an animal (TLD's PlayerStruggle)
 constexpr uint8_t kStateDead = 2;        // dead, choosing their next survivor (their body lies where they died)
@@ -501,6 +509,8 @@ inline void write_state(Writer& w, const StateMsg& s) {
     for (float v : s.bed) w.put(v);
     w.put(s.emote);
     w.put(s.emote_seq);
+    w.put(s.condition);
+    w.put(s.afflictions);
 }
 
 inline bool read_state(Reader& r, StateMsg& s) {
@@ -524,6 +534,8 @@ inline bool read_state(Reader& r, StateMsg& s) {
     for (float& v : s.bed) v = r.get<float>();
     s.emote = r.get<uint8_t>();
     s.emote_seq = r.get<uint8_t>();
+    s.condition = r.get<uint8_t>();
+    s.afflictions = r.get<uint32_t>();
     return r.ok();
 }
 
@@ -1100,6 +1112,53 @@ inline bool read_blood_mark(Reader& r, BloodMarkMsg& m) {
     if (kind > static_cast<uint8_t>(BloodKind::Cluster)) return false;
     m.kind = static_cast<BloodKind>(kind);
     return r.ok() && std::isfinite(m.x) && std::isfinite(m.y) && std::isfinite(m.z) && m.count >= 0 && m.count <= 64;
+}
+
+// Spray paint markings (TLDCoop_DLC): TLD's DynamicDecalsManager decals of type SprayPaint, by their id.
+constexpr size_t kDecalNameMax = 96;
+struct SprayMarkMsg {
+    std::string scene;
+    std::string id;
+    bool gone = false;
+    std::string name;
+    float pos[3] = {}, normal[3] = {}, scale[3] = {};
+    float yaw = 0;
+    float colour[4] = {1, 1, 1, 1};
+    int32_t projectile = 0;
+    bool indoors = false;
+};
+
+inline void write_spray_mark(Writer& w, const SprayMarkMsg& m) {
+    w.put_str(m.scene, kSceneLen);
+    w.put_blob(m.id, kPdidMax);
+    w.put(static_cast<uint8_t>(m.gone ? 1 : 0));
+    if (m.gone) return;
+    w.put_blob(m.name, kDecalNameMax);
+    for (float v : m.pos) w.put(v);
+    for (float v : m.normal) w.put(v);
+    for (float v : m.scale) w.put(v);
+    w.put(m.yaw);
+    for (float v : m.colour) w.put(v);
+    w.put(m.projectile);
+    w.put(static_cast<uint8_t>(m.indoors ? 1 : 0));
+}
+
+inline bool read_spray_mark(Reader& r, SprayMarkMsg& m) {
+    m.scene = r.get_str(kSceneLen);
+    m.id = r.get_blob(kPdidMax);
+    m.gone = r.get<uint8_t>() != 0;
+    if (m.gone) return r.ok() && !m.id.empty();
+    m.name = r.get_blob(kDecalNameMax);
+    for (float& v : m.pos) v = r.get<float>();
+    for (float& v : m.normal) v = r.get<float>();
+    for (float& v : m.scale) v = r.get<float>();
+    m.yaw = r.get<float>();
+    for (float& v : m.colour) v = r.get<float>();
+    m.projectile = r.get<int32_t>();
+    m.indoors = r.get<uint8_t>() != 0;
+    for (float v : m.pos)
+        if (!std::isfinite(v)) return false;
+    return r.ok() && !m.id.empty();
 }
 
 // Water sources (TLDCoop_DLC): toilets, tanks... TLD's WaterSource, named by its persistent id (or its position when it

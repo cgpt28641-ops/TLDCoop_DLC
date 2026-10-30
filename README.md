@@ -59,6 +59,11 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
 - Widać, co trzymają w rękach. Latarnia, pochodnia czy raca naprawdę oświetlają otoczenie.
 - Postacie jedzą, śpią w łóżku, kucają i podają przedmioty.
 - **Krew:** ślady krwi krwawiącego gracza (krople, plamy po walce ze zwierzęciem) widzą wszyscy.
+- **Stan znajomego:** patrząc na znajomego z bliska (do 5 m) widzisz pod jego nazwą ogólny stan i dolegliwości
+  (np. hipotermia, zatrucie, skręcenie, krwawienie).
+- **Wspólne oznaczenia:** oznaczenia sprayem (a więc i znaczniki na mapie, które z nich powstają) widzą wszyscy.
+- **Kopia zapasowa:** przed każdą grą w co-op zapisy są kopiowane do `TLDCoop\backups` (5 ostatnich kopii,
+  ustawienie `backups=` w `coop.ini`).
 - **Gesty:** machanie (F5), wskazywanie (F6), „chodź tu” (F7), „stój” (F8), kiwanie głową na tak (F3) i na nie (F4).
   Klawisze można zmienić w `coop.ini`, sekcja `[emotes]`.
 - **Kolory graczy:** każdy gracz ma swój kolor na radarze, mapie i nad głową. Kolor znajomego można zmienić w
@@ -102,7 +107,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v33**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v34**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 

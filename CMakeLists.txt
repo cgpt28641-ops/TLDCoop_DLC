@@ -72,6 +72,8 @@ add_library(tldcoop SHARED
   src/world_sync.cpp
   src/world_water.cpp
   src/world_blood.cpp
+  src/coop_backup.cpp
+  src/world_spray.cpp
 )
 set_target_properties(tldcoop PROPERTIES OUTPUT_NAME winhttp)
 target_link_libraries(tldcoop PRIVATE minhook tldnet)
@@ -115,3 +117,5 @@ add_executable(emotes_test tests/emotes_test.cpp)
 target_link_libraries(emotes_test PRIVATE tldnet)
 add_executable(blood_test tests/blood_test.cpp)
 target_link_libraries(blood_test PRIVATE tldnet)
+add_executable(afflictions_test tests/afflictions_test.cpp)
+target_link_libraries(afflictions_test PRIVATE tldnet)

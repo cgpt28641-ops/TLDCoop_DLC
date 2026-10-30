@@ -47,6 +47,9 @@ constexpr const char* kDefaultIni =
     "; DLC regions and items won't work for them).\n"
     "dlc_check=1\n"
     "\n"
+    "; Before each co-op game your saves are copied to TLDCoop\\backups; this many copies are kept (0: none)\n"
+    "backups=5\n"
+    "\n"
     "; How the other player sees you (they need TLDCoop\\tldcoop_bodies.bundle for anything but capsule):\n"
     ";   capsule, mackenzie, mackenzie_indoor, astrid, astrid_outdoor, molly, jane, jane_outdoor,\n"
     ";   jeremiah, methuselah, heller, jace, mathis, terry, atwood, convict_c, convict_e, convict_f, convict_g,\n"
@@ -164,6 +167,7 @@ Settings load() {
     s.voice = read(ini, L"voice", s.voice);
     s.ask_to_join = GetPrivateProfileIntW(L"net", L"ask_to_join", 1, ini.c_str()) != 0;
     s.dlc_check = GetPrivateProfileIntW(L"net", L"dlc_check", 1, ini.c_str()) != 0;
+    s.backups = static_cast<int>(GetPrivateProfileIntW(L"net", L"backups", 5, ini.c_str()));
     s.body_shader = read(ini, L"body_shader", s.body_shader);
     const std::string picker = read(ini, L"picker_scale", "", L"struggle");
     if (!picker.empty()) s.picker_scale = static_cast<float>(atof(picker.c_str()));

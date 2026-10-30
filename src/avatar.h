@@ -69,6 +69,8 @@ struct Seen {
     float yaw = 0;              // which way they face (Unity's yaw)
     float at_x = 0, at_z = 0;   // where their latest state has them (not where a handover draws them)
     bool crouched = false;
+    uint8_t condition = 100;   // TLDCoop_DLC: their condition, 0-100 %
+    uint32_t afflictions = 0;  // TLDCoop_DLC: net::Affliction bits
 };
 std::vector<Seen> seen();
 

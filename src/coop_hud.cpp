@@ -15,6 +15,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/hud.h"
+#include "net/afflictions.h"
 #include "net_runtime.h"
 
 namespace coop_hud {
@@ -332,7 +333,8 @@ Color g_text_color{0.86f, 0.84f, 0.78f, 1};  // TLD's hover text colour (read fr
 // One friend in our scene: the dot over their head (the name with it when close or looked at), or the arrow at the edge.
 struct Tag {
     uintptr_t go = 0, dot = 0, name = 0, distance = 0, arrow = 0;
-    std::string shown_name, shown_distance;
+    uintptr_t health = 0;      // TLDCoop_DLC: under the name, up close: their condition and afflictions
+    std::string shown_name, shown_distance, shown_health;
     bool name_wanted = false;  // close, or we look at them: the name fades in
     float name_fade = 0;       // 0 hidden .. 1 shown
     std::string state;         // for the log: "dot over their head", "name over their head", "arrow at the edge"...
@@ -352,7 +354,8 @@ Il2CppObject* hud_crosshair() { return hud_part(api.hud_crosshair); }
 
 void drop_tag(Tag& t) {
     destroy(live(t.go));
-    for (uintptr_t* h : {&t.go, &t.dot, &t.name, &t.distance, &t.arrow}) drop(*h);
+    for (uintptr_t* h : {&t.go, &t.dot, &t.name, &t.distance, &t.arrow, &t.health}) drop(*h);
+    t.shown_health.clear();
 }
 
 void forget_radar();
@@ -453,6 +456,7 @@ bool make_tag(Tag& t, uint8_t player) {
     t.arrow = hold(make_sprite(tf, "Arrow", "arrow_nav3", kArrowSize));
     t.name = hold(make_label(tf, "Name", kNameFont, kPivotLeft));
     t.distance = hold(make_label(tf, "Distance", kDistanceFont, kPivotLeft));
+    t.health = hold(make_label(tf, "Health", kDistanceFont, kPivotLeft));
     t.name_fade = 0;
     return live(t.name) != nullptr;
 }
@@ -470,6 +474,36 @@ void lay_out_name(Tag& t, float x, float y, float alpha) {
     set_color(name, c);
     c.a = alpha * kDistanceAlpha;
     set_color(distance, c);
+}
+
+// TLDCoop_DLC: a friend we look at up close: their condition in a word and their afflictions (TLD's names for them),
+// one line under their name.
+constexpr float kHealthMetres = 5;
+constexpr float kHealthBelow = 14;  // UI units under the name's line
+
+std::string health_text(const avatar::Seen& who) {
+    std::string out = net::condition_word(who.condition);
+    for (int i = 0; i < static_cast<int>(net::Affliction::Count); ++i) {
+        if (!(who.afflictions & net::affliction_bit(static_cast<net::Affliction>(i)))) continue;
+        std::string name = game::affliction_display_name(i);
+        if (name.empty()) name = net::affliction_name(static_cast<net::Affliction>(i));
+        out += " - " + name;
+    }
+    return upper(out);
+}
+
+void show_health(Tag& t, const avatar::Seen& who, float metres, float alpha) {
+    Il2CppObject* label = live(t.health);
+    const bool show = label && metres <= kHealthMetres && t.name_wanted && alpha > 0.01f;
+    set_active(go_of(label), show);
+    if (!show) return;
+    const std::string text = health_text(who);
+    if (text != t.shown_health) set_text(label, t.shown_health = text);
+    const Vector2 size = printed(label);
+    set_vec(api.set_local_position, transform_of(label), {-size.x * 0.5f, kTextAbove - kHealthBelow, 0});
+    Color c = who.condition < 35 ? Color{0.85f, 0.35f, 0.3f, 1} : g_text_color;
+    c.a = alpha * kNameAlpha;
+    set_color(label, c);
 }
 
 void show_tag(uint8_t player, const avatar::Seen& who, const game::PlayerState& me, Il2CppObject* game_camera,
@@ -506,11 +540,13 @@ void show_tag(uint8_t player, const avatar::Seen& who, const game::PlayerState& 
     set_active(go_of(live(t.name)), t.name_fade > 0);
     set_active(go_of(live(t.distance)), t.name_fade > 0);
     Color c = colour_for(player, who.name);  // TLDCoop_DLC: their colour (the name stays in TLD's text colour)
+    set_active(go_of(live(t.health)), false);  // (show_health shows it up close)
     if (at.on_screen) {
         const float near_far = hud::tag_alpha(metres);  // out of the way up close, fainter far off
         c.a = kDotAlpha * near_far;
         set_color(dot, c);
         if (t.name_fade > 0) lay_out_name(t, 0, kTextAbove, t.name_fade * near_far);
+        show_health(t, who, metres, t.name_fade * near_far);
         t.state = t.name_wanted ? "name over their head" : "dot over their head";
         return;
     }
