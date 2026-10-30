@@ -68,6 +68,7 @@ struct Api {
     ptrdiff_t water_source = -1;                // PlayerManager.m_WaterSourceToDrinkFrom (WaterSupply)
     const MethodInfo* component_go = nullptr;   // Component.get_gameObject()
     const MethodInfo* object_name = nullptr;    // Object.get_name()
+    const MethodInfo* hud_accel = nullptr;      // Panel_HUD.EnableTimeOfDayScaleDisplay(bool) (TLDCoop_DLC)
 } api;
 
 constexpr ptrdiff_t kDelegateMethod = 0x28;  // Il2CppDelegate.method: the MethodInfo it calls
@@ -228,6 +229,15 @@ void set_scale_detour(Il2CppObject* tod, float scale, const MethodInfo* method) 
     g_set_scale(tod, a.world, method);
     if (g_body.active && !was) began(tod);
     else if (was && !g_body.active) ended(tod, kind == lapse::Kind::Action ? "" : " (sleep or passing time began)");
+}
+
+// TLDCoop_DLC: TLD shows its sped-up action's popup (the ring filling as the action goes: breaking down, crafting...)
+// while the clock runs fast (SetDayLengthScale asks TimeOfDay.IsTimeLapseActive). In co-op the clock stays, so the
+// ring went too, leaving only the screen dimmed: while our body lives an action, it shows as in TLD.
+using HudAccelFn = void (*)(Il2CppObject* hud, bool enable, const MethodInfo* method);
+HudAccelFn g_hud_accel = nullptr;
+void hud_accel_detour(Il2CppObject* hud, bool enable, const MethodInfo* method) {
+    g_hud_accel(hud, enable || g_body.active, method);
 }
 
 void reapply_detour(Il2CppObject* self, const MethodInfo* method) {
@@ -484,6 +494,10 @@ bool init() {
     logx::info("lapse: %s", g_ready ? "ready (in co-op an action's hours are our body's; the clock stays)"
                                     : "UNAVAILABLE (hooks failed)");
     // Not needed for the clock: without it the others see us eat until the bar's time is up.
+    api.hud_accel = il2::find_method_params(il2::find_class(kGame, "", "Panel_HUD"), "EnableTimeOfDayScaleDisplay",
+                                            {"System.Boolean"});
+    if (!api.hud_accel || !hook("Panel_HUD.EnableTimeOfDayScaleDisplay", api.hud_accel, &hud_accel_detour, &g_hud_accel))
+        logx::warn("lapse: a sped-up action's ring (breaking down...) won't show in co-op");
     if (!api.bar_ended || !hook("Panel_GenericProgressBar.ProgressBarEnded", api.bar_ended, &bar_ended_detour, &g_bar_ended))
         logx::warn("lapse: a cancelled meal isn't seen as over by the others until its time is up");
     if (api.food_eaten < 0 || !api.component_go) logx::warn("lapse: the others won't see what we eat");
