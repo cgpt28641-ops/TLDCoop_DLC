@@ -299,6 +299,23 @@ int screen_size(const MethodInfo* getter) {
     return v;
 }
 
+// TLDCoop_DLC: each player's colour (net::hud::player_colour by their number), or the one coop.ini [colors] gives
+// their name.
+std::vector<std::pair<std::string, hud::Rgb>> g_colours;
+
+std::string lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+Color colour_for(uint8_t player, const std::string& name) {
+    const std::string key = lower(name);
+    for (const auto& [n, c] : g_colours)
+        if (!key.empty() && n == key) return {c.r, c.g, c.b, 1};
+    const hud::Rgb c = hud::player_colour(player);
+    return {c.r, c.g, c.b, 1};
+}
+
 // --- state ---------------------------------------------------------------------------------------------------------
 
 bool g_ready = false;
@@ -774,22 +791,6 @@ const Color kUnchartedColor{0.13f, 0.12f, 0.11f, 0.85f};  // TLD's whiteSquare u
 const Color kRimColor{0.06f, 0.055f, 0.05f, 0.95f};       // TLD's outerGlow_circle round it: a charcoal smudge
 const Color kFriendColor{0.6f, 0.2f, 0.13f, 1};
 
-// TLDCoop_DLC: each player's colour (net::hud::player_colour by their number), or the one coop.ini [colors] gives
-// their name.
-std::vector<std::pair<std::string, hud::Rgb>> g_colours;
-
-std::string lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-
-Color colour_for(uint8_t player, const std::string& name) {
-    const std::string key = lower(name);
-    for (const auto& [n, c] : g_colours)
-        if (!key.empty() && n == key) return {c.r, c.g, c.b, 1};
-    const hud::Rgb c = hud::player_colour(player);
-    return {c.r, c.g, c.b, 1};
-}
 
 struct RadarBlip {
     uintptr_t dot = 0, arrow = 0;

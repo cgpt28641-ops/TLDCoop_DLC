@@ -39,6 +39,8 @@ jobs:
           $w = Select-String -Path build.log -Pattern 'warning C\d+' | Where-Object { $_.Line -match 'content|optional_content|session\.cpp|coop_menu|core\.cpp|config\.cpp|net_runtime|bot\\main' }
           if ($w) { foreach ($x in $w) { Write-Host "::warning title=compiler::$($x.Line.Trim())" } }
           else { Write-Host "::notice title=compiler::no warnings in the fork's files" }
+          $e = Select-String -Path build.log -Pattern 'error C\d+|fatal error|error LNK|: error' | Select-Object -First 9
+          foreach ($x in $e) { Write-Host "::error title=compiler::$($x.Line.Trim())" }
 
       - name: Offline tests
         shell: pwsh
