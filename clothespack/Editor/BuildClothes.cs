@@ -380,7 +380,7 @@ public static class BuildClothes {
         if (sockColourFrom != null) {
             // A worn sock: the shape of this character's low shoes (file), 4 mm inside them, one knitted material in
             // the sock's own colour, ribs round each foot (the catalog's sock is a single flat ground model).
-            for (int i = 0; i < verts.Count; i++) verts[i] -= normals[i].normalized * 0.004f;
+            SockFromShoe(verts, normals, submeshes, $"{character}/{item}");
             var sides = new[] { -1, 1 }.ToDictionary(sd => sd, sd => {
                 var l = verts.Where(v => Mathf.Sign(v.x) == sd).ToList();
                 return l.Count > 0 ? new Vector3(l.Average(v => v.x), 0, l.Average(v => v.z)) : Vector3.zero;
@@ -1212,6 +1212,66 @@ public static class BuildClothes {
     }
 
     static readonly Dictionary<string, List<int>> BaseTris = new Dictionary<string, List<int>>();
+
+    // A shoe made a sock: welded, laces and other small loose parts left out, smoothed (Taubin, 25 rounds: no seams,
+    // laces' ridges or sole edges), the sole's thickness taken off the bottom, then 5 mm inside the shoe's surface.
+    static void SockFromShoe(List<Vector3> verts, List<Vector3> normals, List<int[]> submeshes, string what) {
+        int n = verts.Count;
+        var key = new Dictionary<Vector3Int, int>(); var weld = new int[n];
+        for (int i = 0; i < n; i++) {
+            var k = Vector3Int.RoundToInt(verts[i] * 5000f);  // 0.2 mm
+            if (!key.TryGetValue(k, out int w)) key[k] = w = i;
+            weld[i] = w;
+        }
+        var parent = Enumerable.Range(0, n).ToArray();
+        int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
+        var tris = submeshes.SelectMany(t => t).ToArray();
+        for (int t = 0; t + 2 < tris.Length; t += 3) {
+            int a = Find(weld[tris[t]]), b = Find(weld[tris[t + 1]]), c = Find(weld[tris[t + 2]]);
+            parent[b] = a; parent[Find(c)] = Find(a);
+        }
+        var size = new Dictionary<int, int>();
+        for (int i = 0; i < n; i++) { int r = Find(weld[i]); size[r] = size.TryGetValue(r, out int z) ? z + 1 : 1; }
+        int biggest = size.Values.DefaultIfEmpty(0).Max();
+        var kept = new List<int>();
+        for (int t = 0; t + 2 < tris.Length; t += 3)
+            if (size[Find(weld[tris[t]])] >= biggest * 0.25f) { kept.Add(tris[t]); kept.Add(tris[t + 1]); kept.Add(tris[t + 2]); }
+        // neighbours over the welded vertices
+        var nb = new HashSet<int>[n];
+        for (int t = 0; t + 2 < kept.Count; t += 3)
+            for (int e = 0; e < 3; e++) {
+                int a = weld[kept[t + e]], b = weld[kept[t + (e + 1) % 3]];
+                (nb[a] ??= new HashSet<int>()).Add(b); (nb[b] ??= new HashSet<int>()).Add(a);
+            }
+        var P = verts.ToArray();
+        for (int round = 0; round < 50; round++) {
+            float f = round % 2 == 0 ? 0.5f : -0.53f;
+            var next = (Vector3[])P.Clone();
+            for (int i = 0; i < n; i++) {
+                if (weld[i] != i || nb[i] == null) continue;
+                var avg = Vector3.zero; foreach (int k in nb[i]) avg += P[k]; avg /= nb[i].Count;
+                next[i] = P[i] + (avg - P[i]) * f;
+            }
+            P = next;
+        }
+        for (int i = 0; i < n; i++) P[i] = P[weld[i]];
+        float floor = kept.Count > 0 ? kept.Min(i => P[i].y) : 0;
+        for (int i = 0; i < n; i++) if (P[i].y < floor + 0.012f) P[i].y = floor + 0.012f;
+        // normals from the smoothed faces, then 5 mm in
+        var nn = new Vector3[n];
+        for (int t = 0; t + 2 < kept.Count; t += 3) {
+            var fn = Vector3.Cross(P[kept[t + 1]] - P[kept[t]], P[kept[t + 2]] - P[kept[t]]);
+            for (int e = 0; e < 3; e++) nn[weld[kept[t + e]]] += fn;
+        }
+        for (int i = 0; i < n; i++) {
+            var nv = nn[weld[i]].sqrMagnitude > 0 ? nn[weld[i]].normalized : normals[i].normalized;
+            if (Vector3.Dot(nv, normals[i]) < 0) nv = -nv;  // keep the shoe's own outward side
+            normals[i] = nv;
+            verts[i] = P[i] - nv * 0.005f;
+        }
+        submeshes.Clear(); submeshes.Add(kept.ToArray());
+        Debug.Log($"[Clothes] {what}: sock from the shoe, {kept.Count / 3} of {tris.Length / 3} triangles kept, smoothed");
+    }
 
     // Above the armpits (yoke, shoulders, collar): each vertex moved out along the ray from a point on the spine 10 cm
     // under the armpits until it is `clearance` outside the base's torso (its farthest crossing of that ray), so the
