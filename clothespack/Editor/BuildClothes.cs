@@ -285,6 +285,7 @@ public static class BuildClothes {
         }
         Skins.Clear();
         BaseSurface.Clear();
+        BaseTris.Clear();
         foreach (var b in OcclusionBodies.Values) if (b) UnityEngine.Object.DestroyImmediate(b);
         OcclusionBodies.Clear();
         // What the mod hides under which items: one TextAsset for the whole pack.
@@ -387,6 +388,7 @@ public static class BuildClothes {
         if (sliceFit && wrap > 0) {
             float armpit = JointPos(g, bin, skin, "Neck_jnt").y - 0.14f;  // about the armpits
             SliceFit(verts, character, wrap, $"{character}/{item}", float.IsNaN(armpit) ? float.MaxValue : armpit);
+            if (!float.IsNaN(armpit)) Radial(verts, character, wrap, armpit, $"{character}/{item}");
         }
         if (wrap > 0) {
             float neckY = JointPos(g, bin, skin, "Neck_jnt").y;
@@ -400,6 +402,8 @@ public static class BuildClothes {
         }
         if (isBase) {  // the surface the other pieces lie over
             if (!BaseSurface.TryGetValue(character, out var surf)) BaseSurface[character] = surf = (new List<Vector3>(), new List<Vector3>());
+            if (!BaseTris.TryGetValue(character, out var bt)) BaseTris[character] = bt = new List<int>();
+            foreach (var sm in submeshes) bt.AddRange(sm.Select(x => x + surf.p.Count));
             surf.p.AddRange(verts);
             surf.n.AddRange(normals.Select(x => x.normalized));
         }
@@ -1128,6 +1132,43 @@ public static class BuildClothes {
             }
         }
         return Skins[key] = skin;
+    }
+
+    static readonly Dictionary<string, List<int>> BaseTris = new Dictionary<string, List<int>>();
+
+    // Above the armpits (yoke, shoulders, collar): each vertex moved out along the ray from a point on the spine 10 cm
+    // under the armpits until it is `clearance` outside the base's torso (its farthest crossing of that ray), so the
+    // pieces keep their order and shape (no scatter of a push along each nearest normal); faded in over 4 cm.
+    static void Radial(List<Vector3> verts, string character, float clearance, float armpitY, string what) {
+        if (!BaseSurface.TryGetValue(character, out var surf) || !BaseTris.TryGetValue(character, out var bt)) return;
+        var B = surf.p;
+        float zc = B.Where(v => Mathf.Abs(v.x) < 0.22f).Select(v => v.z).DefaultIfEmpty(0).Average();
+        var A = new List<Vector3>(); var E1 = new List<Vector3>(); var E2 = new List<Vector3>();
+        for (int t = 0; t + 2 < bt.Count; t += 3) {
+            Vector3 a = B[bt[t]], b = B[bt[t + 1]], c = B[bt[t + 2]];
+            if (Mathf.Abs((a.x + b.x + c.x) / 3) >= 0.2f || (a.y + b.y + c.y) / 3 < armpitY - 0.15f) continue;  // the torso, not the sleeves
+            A.Add(a); E1.Add(b - a); E2.Add(c - a);
+        }
+        var o = new Vector3(0, armpitY - 0.10f, zc);
+        int moved = 0;
+        for (int i = 0; i < verts.Count; i++) {
+            var v = verts[i];
+            float w = Mathf.Clamp01((v.y - (armpitY - 0.04f)) / 0.04f);
+            if (w <= 0) continue;
+            var d = v - o; float r = d.magnitude; if (r < 1e-4f) continue; d /= r;
+            float far = -1;
+            for (int k = 0; k < A.Count; k++) {
+                var p = Vector3.Cross(d, E2[k]); float det = Vector3.Dot(E1[k], p);
+                if (Mathf.Abs(det) < 1e-12f) continue;
+                float inv = 1 / det; var sv = o - A[k];
+                float u = Vector3.Dot(sv, p) * inv; if (u < 0 || u > 1) continue;
+                var q = Vector3.Cross(sv, E1[k]); float vv = Vector3.Dot(d, q) * inv; if (vv < 0 || u + vv > 1) continue;
+                float t = Vector3.Dot(E2[k], q) * inv; if (t > far) far = t;
+            }
+            if (far <= 0 || r >= far + clearance) continue;
+            verts[i] = o + d * (r + (far + clearance - r) * w); moved++;
+        }
+        Debug.Log($"[Clothes] {what}: {moved} vertices above the armpits brought out over the base along rays from the spine");
     }
 
     static void SliceFit(List<Vector3> verts, string character, float clearance, string what, float armpitY = float.MaxValue) {
