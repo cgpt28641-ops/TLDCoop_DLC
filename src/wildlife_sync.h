@@ -27,6 +27,9 @@ float host_animal_hp(Il2CppObject* ai);     // BaseAi.m_CurrentHP
 // Client: whether this Transform belongs to one of our copies of the host's animals (its hit colliders), and which;
 // dead = the host's animal is dead.
 bool puppet_at(Il2CppObject* transform, uint32_t& id, bool& dead);
+// TLDCoop_DLC, client: the host's wolf in a fight (AiMode Struggle) within a few metres of (x, y, z): where its root is
+// and which way it faces. TLD's fight clips hold the player on the wolf's root, facing back along it.
+bool fight_spot(float x, float y, float z, float& out_x, float& out_y, float& out_z, float& out_yaw);
 // Client, for wildlife_carcass: whether we show the host's animals now; a real carcass took the place of the copy of
 // the host's animal `id` (the copy hides; our own animals' hiding leaves the carcass alone); it went again.
 bool mirroring();

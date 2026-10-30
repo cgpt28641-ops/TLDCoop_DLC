@@ -1397,6 +1397,24 @@ bool puppet_at(Il2CppObject* transform, uint32_t& id, bool& dead) {
     return false;
 }
 
+bool fight_spot(float x, float y, float z, float& out_x, float& out_y, float& out_z, float& out_yaw) {
+    constexpr float kNear = 6.0f;  // metres: their fight's wolf is by them (TLD's struggle doesn't move either far)
+    float best = kNear * kNear;
+    bool found = false;
+    for (auto& [id, p] : g_puppets) {
+        if (p.kind != 1 || p.latest.mode != kAiModeStruggle || (p.latest.flags & net::kAnimalDead)) continue;  // wolves
+        Il2CppObject* tf = target(p.transform);
+        Vector3 pos{}, euler{};
+        if (!tf || !il2::invoke_value(api.get_position, tf, pos) || !il2::invoke_value(api.get_euler, tf, euler)) continue;
+        const float dx = pos.x - x, dy = pos.y - y, dz = pos.z - z, d2 = dx * dx + dz * dz;
+        if (d2 > best || std::fabs(dy) > 3.0f) continue;
+        best = d2;
+        out_x = pos.x, out_y = pos.y, out_z = pos.z, out_yaw = euler.y;
+        found = true;
+    }
+    return found;
+}
+
 std::string describe_sounds() {
     std::lock_guard lock(g_sound_mutex);
     char line[256];

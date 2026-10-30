@@ -3,8 +3,10 @@
 #include <windows.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
+#include <tuple>
 #include <unordered_map>
 
 #include "avatar.h"
@@ -116,6 +118,9 @@ struct Api {
     const MethodInfo* get_struggle = nullptr;       // static GameManager.GetPlayerStruggleComponent()
     const MethodInfo* in_struggle = nullptr;        // PlayerStruggle.InStruggle()
     const MethodInfo* break_struggle = nullptr;     // PlayerStruggle.BreakStruggle()
+    ptrdiff_t cam_pitch_limit = -1, cam_yaw_limit = -1;          // vp_FPSCamera.RotationPitchLimit / RotationYawLimit
+    ptrdiff_t cam_default_pitch = -1, cam_default_yaw = -1;      // DefaultRotationPitchLimit / DefaultRotationYawLimit
+    ptrdiff_t cam_lock_flag = -1;                                // m_LockRotationLimit
     FieldInfo* block_input = nullptr;               // static GameManager.m_BlockNonMovementInput
     FieldInfo* lock_timer = nullptr;                // static GameManager.m_LockControlsTimer
     FieldInfo* block_move = nullptr;                // static GameManager.m_BlockMoveInputUntilReleased
@@ -261,6 +266,7 @@ std::vector<std::string> g_bodies;              // the survivors to choose from 
 size_t g_choice = 0;
 std::unordered_map<std::string, std::string> g_names;  // body (CustomSpawnedItem guid) -> whose
 double g_save_at = 0;                           // the respawned character is saved then (0: nothing to save)
+double g_controls_again_at = 0;                 // TLDCoop_DLC: and its controls looked at again then
 std::map<uint8_t, bool> g_others_dead;          // other players -> dead when we last looked
 bool g_keys_down[4] = {};
 
@@ -681,6 +687,28 @@ void controls_back(Il2CppObject* pm) {
             il2::invoke(api.cam_free_off, cam);
             note("free look");
         }
+        // TLDCoop_DLC: the struggle narrows how far the camera may turn (RotationPitch/YawLimit, around the animal) and
+        // unlocking only lets go of the lock: the limits stayed narrow and a new survivor couldn't look around. Back
+        // to the camera's defaults.
+        if (api.cam_lock_flag >= 0 && get<bool>(cam, api.cam_lock_flag)) {
+            put<bool>(cam, api.cam_lock_flag, false);
+            note("the camera's lock flag");
+        }
+        struct V2 {
+            float x, y;
+        };
+        for (auto [now_off, default_off, what] : {std::tuple{api.cam_pitch_limit, api.cam_default_pitch, "pitch"},
+                                                  std::tuple{api.cam_yaw_limit, api.cam_default_yaw, "yaw"}}) {
+            if (now_off < 0 || default_off < 0) continue;
+            const V2 cur = get<V2>(cam, now_off), def = get<V2>(cam, default_off);
+            if (def.x == def.y) continue;  // (no defaults recorded)
+            if (cur.x != def.x || cur.y != def.y) {
+                put<V2>(cam, now_off, def);
+                char buf[96];
+                snprintf(buf, sizeof(buf), "the camera's %s limit (%.0f..%.0f -> %.0f..%.0f)", what, cur.x, cur.y, def.x, def.y);
+                note(buf);
+            }
+        }
     }
     auto clear_bool = [&](FieldInfo* f, const char* what) {
         if (!f) return;
@@ -765,6 +793,7 @@ bool do_respawn(const std::string& wanted) {
     s.body = body;
     config::save(s);
     g_save_at = now_ms() + kSaveAfterMs;
+    g_controls_again_at = now_ms() + 1500;
     coop_notices::tell("A new survivor: " + coop_menu::body_name(body));
     logx::info("death: respawned as %s, %s; the start gear comes next, the game saves in %.0f s", body.c_str(),
                where.c_str(), kSaveAfterMs / 1000);
@@ -945,6 +974,10 @@ void on_frame(const std::string& scene, bool in_game) {
         g_others_dead.clear();
         return;
     }
+    if (g_controls_again_at && now_ms() >= g_controls_again_at) {  // TLDCoop_DLC
+        g_controls_again_at = 0;
+        if (Il2CppObject* pm = il2::invoke(api.player_manager, nullptr)) controls_back(pm);
+    }
     if (g_save_at && now_ms() >= g_save_at) {
         g_save_at = 0;
         if (api.force_save) il2::invoke(api.force_save, nullptr);
@@ -1066,6 +1099,11 @@ bool init() {
         api.cam_unlock = il2::find_method_quiet(cam, "UnlockRotationLimit", 0);
         api.cam_free_on = il2::find_method_quiet(cam, "IsFreeCameraLookEnabled", 0);
         api.cam_free_off = il2::find_method_quiet(cam, "DisableFreeCameraLook", 0);
+        api.cam_pitch_limit = il2::field_offset_quiet(cam, "RotationPitchLimit");
+        api.cam_yaw_limit = il2::field_offset_quiet(cam, "RotationYawLimit");
+        api.cam_default_pitch = il2::field_offset_quiet(cam, "DefaultRotationPitchLimit");
+        api.cam_default_yaw = il2::field_offset_quiet(cam, "DefaultRotationYawLimit");
+        api.cam_lock_flag = il2::field_offset_quiet(cam, "m_LockRotationLimit");
     }
     api.get_struggle = il2::find_method_quiet(game_manager, "GetPlayerStruggleComponent", 0);
     if (Il2CppClass* st = il2::find_class(kGame, "", "PlayerStruggle")) {

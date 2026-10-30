@@ -1,4 +1,5 @@
 #include "avatar.h"
+#include "wildlife_sync.h"
 
 #include <algorithm>
 #include <array>
@@ -345,6 +346,7 @@ struct Avatar {
     std::string status = "no data yet";
     std::string visibility;   // last logged reason for hiding, or "shown"
     bool shown_down = false;  // shown knocked down (in a fight)
+    bool on_wolf = false;     // TLDCoop_DLC: and moved under the host's wolf it fights
     float ground_y = 0;       // TLDCoop_DLC: their feet's height when last on their feet (a fight lifts TLD's player)
     // TLDCoop_DLC: the gesture they make (net/emotes.h), from when (our clock), and which of theirs it is
     net::Emote emote = net::Emote::None;
@@ -1987,7 +1989,18 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
             a.ground_y = s.y;
             a.has_ground = true;
         }
-        const float y = down && a.has_ground ? std::min(s.y, a.ground_y) : s.y;
+        float y = down && a.has_ground ? std::min(s.y, a.ground_y) : s.y;
+        // TLDCoop_DLC: in a fight with the host's wolf, on the wolf: its fight clips play on its root with the victim
+        // lying there, facing back along it. Where they stood the wolf leapt about beside them, at nothing.
+        float wx = 0, wy = 0, wz = 0, wyaw = 0;
+        if (down && wildlife_sync::fight_spot(x, y, z, wx, wy, wz, wyaw)) {
+            if (!a.on_wolf) say(a, "fighting the host's wolf: shown under it");
+            a.on_wolf = true;
+            x = wx, z = wz, y = std::min(y, wy);
+            yaw = wyaw + 180.0f;
+        } else {
+            a.on_wolf = false;
+        }
         set_vec(api.set_position, root_transform, {x, y + (tip_over ? 0.2f : 0.0f), z});
         set_vec(api.set_euler, root_transform, {tip_over ? -80.0f : 0.0f, yaw, 0.0f});
         a.shown_yaw = yaw;
