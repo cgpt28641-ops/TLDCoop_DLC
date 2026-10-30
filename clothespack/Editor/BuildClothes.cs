@@ -130,9 +130,9 @@ public static class BuildClothes {
         foreach (string dir in Directory.GetDirectories(OutDir).Select(Path.GetFileName))
             if (dir != "Materials" && dir != "Textures" && !keep.Contains(dir)) AssetDatabase.DeleteAsset($"{OutDir}/{dir}");
         AssetDatabase.Refresh();  // the folders, known to Unity before assets go in them
-        var opaque = Shader.Find("TLDCoop/Body");
-        var twoSided = Shader.Find("TLDCoop/Body2Sided");
-        if (!opaque || !twoSided) throw new Exception("the TLDCoop body shaders didn't compile");
+        var opaque = Shader.Find("TLDCoop/Cloth");
+        var twoSided = opaque;  // every piece of clothing: TLDCoop/Cloth (two sided, normal map, baked occlusion)
+        if (!opaque) throw new Exception("the TLDCoop cloth shader didn't compile");
 
         var hiddenShader = Shader.Find("TLDCoop/Hidden");
         if (!hiddenShader) throw new Exception("the TLDCoop hidden shader didn't compile");
@@ -173,6 +173,15 @@ public static class BuildClothes {
             imp.SaveAndReimport();
         }
 
+        int cut = 0;
+        foreach (string entry in list.body_meshes ?? new string[0]) {
+            string[] kv = entry.Split(':');
+            if (kv.Length != 2 || !keep.Contains(kv[0])) continue;
+            string src = $"bodycut/{kv[1]}.bodycut";
+            if (!File.Exists(src)) { Debug.LogWarning($"[Clothes] no {src}: {kv[0]} keeps its whole body"); continue; }
+            BodyCut(src, kv[0], kv[1]);
+            cut++;
+        }
         foreach (string character in Characters(list, chars).OrderBy(s => s)) {
             foreach (string item in list.items) {
                 string file = Path.Combine(chars, character, item + ".gltf");
@@ -206,6 +215,8 @@ public static class BuildClothes {
                 meshes++;
             }
         }
+        foreach (var b in OcclusionBodies.Values) if (b) UnityEngine.Object.DestroyImmediate(b);
+        OcclusionBodies.Clear();
         // What the mod hides under which items: one TextAsset for the whole pack.
         // One line per rule: "hide <item>,<item>... : <word>,<word>..."
         // and "cut <item>,<item>... : <region>,<region>..." (the body's regions not drawn under them).
@@ -214,15 +225,6 @@ public static class BuildClothes {
                 ? "hide " + string.Join(",", r.under ?? new string[0]) + " : " + string.Join(",", r.words) + "\n" : "") +
             (r.regions != null && r.regions.Length > 0
                 ? "cut " + string.Join(",", r.under ?? new string[0]) + " : " + string.Join(",", r.regions) + "\n" : ""))));
-        int cut = 0;
-        foreach (string entry in list.body_meshes ?? new string[0]) {
-            string[] kv = entry.Split(':');
-            if (kv.Length != 2 || !keep.Contains(kv[0])) continue;
-            string src = $"bodycut/{kv[1]}.bodycut";
-            if (!File.Exists(src)) { Debug.LogWarning($"[Clothes] no {src}: {kv[0]} keeps its whole body"); continue; }
-            BodyCut(src, kv[0], kv[1]);
-            cut++;
-        }
         AssetDatabase.ImportAsset(OutDir + "/rules.txt");
         AssetDatabase.SaveAssets();
 
@@ -328,6 +330,7 @@ public static class BuildClothes {
         mesh.bindposes = bind;
         mesh.RecalculateTangents();
         mesh.RecalculateBounds();
+        mesh.colors = BakeOcclusion(verts, normals, submeshes, character);
         AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/{item}.asset");
 
         string bones = string.Join(",", skin.joints.Select(j => g.nodes[j].name));
@@ -582,9 +585,110 @@ public static class BuildClothes {
         if (!mat) { mat = new Material(twoSided) { name = matName }; AssetDatabase.CreateAsset(mat, matPath); }
         mat.SetTexture("_MainTex", AssetDatabase.LoadAssetAtPath<Texture2D>(texPath));
         mat.SetColor("_Color", Color.white);
+        var knitNormal = NormalFromColour(texPath, $"{OutDir}/Textures/Knit_{item}_N.png", 6f);
+        if (knitNormal) mat.SetTexture("_Normal", knitNormal);
         EditorUtility.SetDirty(mat);
         matNames.Add(matName);
         Debug.Log($"[Clothes] {item}: a fitted beanie (colour {colour}) instead of the catalog's folded model");
+    }
+
+    // A tangent-space normal map from a colour texture: its brightness taken as height (dark seams and folds lie lower),
+    // softened, sloped into normals. Cached: made once per texture.
+    static Texture2D NormalFromColour(string colourPath, string normalPath, float strength = 2.5f) {
+        var made = AssetDatabase.LoadAssetAtPath<Texture2D>(normalPath);
+        if (made) return made;
+        string full = Path.GetFullPath(colourPath);
+        if (!File.Exists(full)) return null;
+        var src = new Texture2D(2, 2);
+        if (!src.LoadImage(File.ReadAllBytes(full))) { UnityEngine.Object.DestroyImmediate(src); return null; }
+        int step = Mathf.Max(1, src.width / 1024), w = src.width / step, h = src.height / step;
+        var px = src.GetPixels32();
+        var lum = new float[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                var c = px[(y * step) * src.width + x * step];
+                lum[y * w + x] = (0.3f * c.r + 0.59f * c.g + 0.11f * c.b) / 255f;
+            }
+        UnityEngine.Object.DestroyImmediate(src);
+        var blur = new float[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                float sum = 0;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                        sum += lum[((y + dy + h) % h) * w + (x + dx + w) % w];
+                blur[y * w + x] = sum / 9f;
+            }
+        var outPx = new Color32[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                float l = blur[y * w + (x + w - 1) % w], r = blur[y * w + (x + 1) % w];
+                float d = blur[((y + h - 1) % h) * w + x], u = blur[((y + 1) % h) * w + x];
+                var n = new Vector3((l - r) * strength, (d - u) * strength, 1).normalized;
+                outPx[y * w + x] = new Color32((byte)((n.x * 0.5f + 0.5f) * 255), (byte)((n.y * 0.5f + 0.5f) * 255),
+                                               (byte)((n.z * 0.5f + 0.5f) * 255), 255);
+            }
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        tex.SetPixels32(outPx);
+        File.WriteAllBytes(normalPath, tex.EncodeToPNG());
+        UnityEngine.Object.DestroyImmediate(tex);
+        AssetDatabase.ImportAsset(normalPath);
+        if (AssetImporter.GetAtPath(normalPath) is TextureImporter imp) {
+            imp.textureType = TextureImporterType.NormalMap;
+            imp.maxTextureSize = 1024;
+            imp.SaveAndReimport();
+        }
+        return AssetDatabase.LoadAssetAtPath<Texture2D>(normalPath);
+    }
+
+    // Ambient occlusion per vertex, into the vertex colour: rays over the half of the sky its normal faces, blocked by
+    // the piece itself and by the character's body (its cut mesh, at rest). 1 open, darker where folds and the body close in.
+    static readonly Dictionary<string, GameObject> OcclusionBodies = new Dictionary<string, GameObject>();
+    static Vector3[] occlusionRays;
+    static Color[] BakeOcclusion(List<Vector3> verts, List<Vector3> normals, List<int[]> submeshes, string character) {
+        if (occlusionRays == null) {  // 32 directions round +z, cosine weighted (a golden-angle spiral)
+            const int count = 32;
+            occlusionRays = new Vector3[count];
+            for (int i = 0; i < count; i++) {
+                float r = Mathf.Sqrt((i + 0.5f) / count), a = i * 2.39996323f;
+                occlusionRays[i] = new Vector3(r * Mathf.Cos(a), r * Mathf.Sin(a), Mathf.Sqrt(1 - r * r));
+            }
+        }
+        if (!OcclusionBodies.ContainsKey(character)) {
+            var bodyMesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/BodyCut.asset");
+            GameObject b = null;
+            if (bodyMesh) {
+                b = new GameObject("TLDCoop_OcclusionBody_" + character);
+                var still = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32, vertices = bodyMesh.vertices };
+                still.SetTriangles(Enumerable.Range(0, bodyMesh.subMeshCount).SelectMany(i => bodyMesh.GetTriangles(i)).ToArray(), 0);
+                b.AddComponent<MeshCollider>().sharedMesh = still;
+            }
+            OcclusionBodies[character] = b;
+        }
+        var go = new GameObject("TLDCoop_OcclusionPiece");
+        var piece = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+        piece.SetVertices(verts);
+        piece.SetTriangles(submeshes.SelectMany(t => t).ToArray(), 0);
+        go.AddComponent<MeshCollider>().sharedMesh = piece;
+        Physics.SyncTransforms();
+        bool backfaces = Physics.queriesHitBackfaces;
+        Physics.queriesHitBackfaces = true;
+        const float reach = 0.25f;
+        var colours = new Color[verts.Count];
+        for (int i = 0; i < verts.Count; i++) {
+            Vector3 n = normals[i].sqrMagnitude > 0 ? normals[i].normalized : Vector3.up;
+            Vector3 t = Vector3.Cross(n, Mathf.Abs(n.y) < 0.9f ? Vector3.up : Vector3.right).normalized, b = Vector3.Cross(n, t);
+            Vector3 from = verts[i] + n * 0.003f;
+            float blocked = 0;
+            foreach (var d in occlusionRays)
+                if (Physics.Raycast(from, t * d.x + b * d.y + n * d.z, out var hit, reach)) blocked += 1 - hit.distance / reach;
+            float open = Mathf.Clamp(1 - 1.4f * blocked / occlusionRays.Length, 0.3f, 1);
+            colours[i] = new Color(open, open, open, 1);
+        }
+        Physics.queriesHitBackfaces = backfaces;
+        UnityEngine.Object.DestroyImmediate(go);
+        UnityEngine.Object.DestroyImmediate(piece);
+        return colours;
     }
 
     static Matrix4x4 Mirror(Matrix4x4 m) {
@@ -608,6 +712,8 @@ public static class BuildClothes {
         if (texName.Length > 0) {
             var tex = AssetDatabase.LoadAssetAtPath<Texture2D>($"{OutDir}/Textures/{texName}.png");
             if (tex) mat.SetTexture("_MainTex", tex);
+            var normal = NormalFromColour($"{OutDir}/Textures/{texName}.png", $"{OutDir}/Textures/{texName}_N.png");
+            if (normal) { mat.SetTexture("_Normal", normal); mat.SetFloat("_NormalMapStrength", 0.8f); }
         }
         if (pbr != null && pbr.baseColorFactor != null && pbr.baseColorFactor.Length == 4)
             mat.SetColor("_Color", new Color(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2], 1));
@@ -682,7 +788,7 @@ public static class BuildClothes {
         var bodies = AssetBundle.LoadFromFile(bodiesPath);
         if (bodies == null) throw new Exception("couldn't load " + bodiesPath);
         Directory.CreateDirectory("previews");
-        const int cellW = 320, cellH = 480;  // one picture per outfit and side, put together in a sheet per character
+        const int cellW = 400, cellH = 600;  // one picture per outfit and side, put together in a sheet per character
         var rt = new RenderTexture(cellW, cellH, 24);
         var camGo = new GameObject("PreviewCamera");
         var cam = camGo.AddComponent<Camera>();
@@ -690,12 +796,35 @@ public static class BuildClothes {
         cam.clearFlags = CameraClearFlags.SolidColor;
         cam.backgroundColor = new Color(0.12f, 0.14f, 0.18f);
         cam.fieldOfView = 26;
+        // Lit like an overcast day outside: a soft warm key from above at the front, a cool fill, a rim from behind, a
+        // sky above and snow below for the ambient, and real shadows (folds, under the hat brim, the arms on the body).
         var lightGo = new GameObject("PreviewLight");
-        var light = lightGo.AddComponent<Light>();
-        light.type = LightType.Directional;
-        light.intensity = 1.2f;
-        lightGo.transform.rotation = Quaternion.Euler(35, -30, 0);
-        RenderSettings.ambientLight = new Color(0.45f, 0.45f, 0.5f);
+        Light AddLight(string name, Color colour, float intensity, Vector3 euler, bool shadows) {
+            var go = name == "Key" ? lightGo : new GameObject("Preview" + name);
+            if (go != lightGo) go.transform.SetParent(lightGo.transform, false);
+            var l = go.AddComponent<Light>();
+            l.type = LightType.Directional;
+            l.color = colour;
+            l.intensity = intensity;
+            l.shadows = shadows ? LightShadows.Soft : LightShadows.None;
+            l.shadowStrength = 0.75f;
+            l.shadowBias = 0.02f;
+            l.shadowNormalBias = 0.2f;
+            go.transform.rotation = Quaternion.Euler(euler);
+            return l;
+        }
+        AddLight("Key", new Color(1f, 0.96f, 0.9f), 1.25f, new Vector3(40, 150, 0), true);
+        AddLight("Fill", new Color(0.75f, 0.85f, 1f), 0.35f, new Vector3(15, -130, 0), false);
+        AddLight("Rim", new Color(0.9f, 0.95f, 1f), 0.6f, new Vector3(25, 20, 0), false);
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.42f, 0.46f, 0.55f);
+        RenderSettings.ambientEquatorColor = new Color(0.3f, 0.31f, 0.34f);
+        RenderSettings.ambientGroundColor = new Color(0.36f, 0.37f, 0.4f);
+        QualitySettings.shadows = ShadowQuality.All;
+        QualitySettings.shadowResolution = ShadowResolution.VeryHigh;
+        QualitySettings.shadowDistance = 20;
+        QualitySettings.antiAliasing = 4;
+        rt.antiAliasing = 4;
         int shots = 0;
         foreach (string name in bodies.GetAllAssetNames().Where(n => n.EndsWith(".prefab"))) {  // every body's parts
             var p = bodies.LoadAsset<GameObject>(name);
