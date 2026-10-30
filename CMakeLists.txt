@@ -38,6 +38,7 @@ add_library(tldcoop SHARED
   src/ambient_lights.cpp
   src/coop_features.cpp
   src/dynamic_trees.cpp
+  src/custom_pictures.cpp
   src/avatar.cpp
   src/config.cpp
   src/coop_death.cpp

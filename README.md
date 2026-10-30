@@ -75,6 +75,9 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   pogodzie; sosny i cedry zmieniają się od zielonych do białych. To mod DynamicTrees (Fuar, The Illusion, Jods),
   wbudowany za zgodą autorów, **bez MelonLoadera** (tekstury w paczce: `TLDCoop\tldcoop_trees.bundle`). Włącza go
   **host** (MODS → DYNAMIC TREES), a drzewa znajomych mają śnieg hosta; w solo `coop.ini` `[trees] enabled=`.
+- **Własne obrazy:** w ramkach na obrazy w grze mogą wisieć nasze obrazy (`assets/pictures`, wbudowane w DLL).
+  Na razie jeden: obrazek nr 6 z atlasu `OBJ_PictureFrame_GM_A` (ten ze wspinaczem). Plik TLD zostaje bez zmian:
+  mod kopiuje atlas w grze i wkleja nasz obrazek. Ikona przedmiotu w ekwipunku zostaje stara.
 - **Kolory graczy:** każdy gracz ma swój kolor na radarze, mapie i nad głową. Kolor znajomego można zmienić w
   `coop.ini`, sekcja `[colors]` (np. `Shatsca=blue`).
 - Nad głową widać nazwę gracza, a na krawędzi ekranu strzałkę. Jest też mały radar, a gracze są widoczni na mapie

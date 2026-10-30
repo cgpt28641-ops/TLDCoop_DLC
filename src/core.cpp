@@ -10,6 +10,7 @@
 
 #include "ambient_lights.h"
 #include "coop_features.h"
+#include "custom_pictures.h"
 #include "dynamic_trees.h"
 #include "avatar.h"
 #include "config.h"
@@ -507,6 +508,7 @@ void on_frame() {
     coop_features::on_frame();
     ambient_lights::on_frame(scene, in_game);
     dynamic_trees::on_frame(scene, in_game);
+    custom_pictures::on_frame(scene, in_game);
     coop_backup::on_frame(game::active_scene(), g_net_enabled);
     world_join::on_frame(scene, in_game);
     coop_death::on_frame(scene, in_game);
@@ -634,6 +636,7 @@ void on_runtime_ready() {
     world_spray::init();
     ambient_lights::init();
     dynamic_trees::init();
+    custom_pictures::init();
     world_join::init();
     coop_death::init();
     coop_lapse::init();
