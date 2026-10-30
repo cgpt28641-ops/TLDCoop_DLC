@@ -96,6 +96,13 @@ void report_steam_once() {
                steam ? "loaded" : "NOT loaded",
                steam && GetProcAddress(steam, "SteamAPI_SteamNetworkingMessages_SteamAPI_v002") ? "yes" : "no",
                steam && GetProcAddress(steam, "SteamAPI_SteamMatchmaking_v009") ? "yes" : "no");
+    // TLDCoop_DLC: Steam's DLLs stay loaded until the process ends. When the game quits it shuts Steam down and lets
+    // them go while our network thread may still be in a call: that ran into freed code (a crash on quitting).
+    for (const wchar_t* dll : {L"steam_api64.dll", L"steamclient64.dll"}) {
+        HMODULE pinned = nullptr;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, dll, &pinned))
+            logx::info("%ls stays loaded until the game ends", dll);
+    }
 }
 
 // --- milestone 2: telemetry ------------------------------------------------------------------------------------

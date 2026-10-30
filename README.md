@@ -58,6 +58,10 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
 - Znajomi wyglądają jak jedna z **23 postaci z fabuły** (Mackenzie, Astrid, Molly, Jane…).
 - Widać, co trzymają w rękach. Latarnia, pochodnia czy raca naprawdę oświetlają otoczenie.
 - Postacie jedzą, śpią w łóżku, kucają i podają przedmioty.
+- **Gesty:** machanie (F5), wskazywanie (F6), „chodź tu” (F7), „stój” (F8), kiwanie głową na tak (F3) i na nie (F4).
+  Klawisze można zmienić w `coop.ini`, sekcja `[emotes]`.
+- **Kolory graczy:** każdy gracz ma swój kolor na radarze, mapie i nad głową. Kolor znajomego można zmienić w
+  `coop.ini`, sekcja `[colors]` (np. `Shatsca=blue`).
 - Nad głową widać nazwę gracza, a na krawędzi ekranu strzałkę. Jest też mały radar, a gracze są widoczni na mapie
   gry.
 
@@ -97,7 +101,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.58** (188966 S) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v31**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v32**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
@@ -166,6 +170,8 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `ask_to_join=1` | Każdy znajomy prosi o wejście, a host go wpuszcza. `0` wpuszcza od razu każdego z kodem. |
 | `body=` | Twoja postać (ustawia ją ekran co-opa). |
 | `voice=male` / `female` | Głos Twojej postaci. |
+| `[colors] Nick=kolor` | **Nowe.** Kolor znajomego na radarze, mapie i nad głową: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `white`, `grey` albo `#RRGGBB`. |
+| `[emotes] wave=F5 ...` | **Nowe.** Klawisze gestów: `wave`, `point`, `come`, `stop`, `yes`, `no` (F1..F12, A..Z, 0..9, NUM0..NUM9, `off`). |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
 | `transport=local` | Gra w sieci lokalnej po IP zamiast przez kody Steam (z `bind_ip`, `host_ip`, `port`). |
@@ -232,8 +238,7 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
 - **Pociąg z Iron Road** (`TLD.SteamTrain.*`) nie jest jeszcze synchronizowany między graczami.
 - **Unikalne przedmioty z Iron Road** (np. woskowe cylindry) nie są jeszcze na liście unikalnych. Może się zdarzyć,
   że tylko jeden gracz podniesie dany przedmiot.
-- **Przedmioty w rękach znajomego** (pochodnia, karabin…) w 2.58 są tworzone inaczej niż wcześniej. To miejsce
-  trzeba sprawdzić w testach.
+- **Gesty** są na razie liczone w kodzie (ruch ręki i głowy). Ładne, gotowe animacje wymagają zbudowania ich w Unity.
 
 ## Budowanie samemu
 
