@@ -500,7 +500,7 @@
         "GEAR_CottonScarf",
         "GEAR_WoolWrap"
       ],
-      "min": 0.01,
+      "min": 0.028,
       "max": 0
     }
   ],

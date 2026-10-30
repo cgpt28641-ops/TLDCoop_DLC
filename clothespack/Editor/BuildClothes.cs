@@ -733,13 +733,37 @@ public static class BuildClothes {
         {
             var c = head + new Vector3(0, 0.085f, -0.012f) * sc;
             float rx = 0.088f * sc, ry = 0.115f * sc, rz = 0.1f * sc;
-            const int around = 40, up = 12;
+            // Fitted to this head (its hair and scalp included, they go under the mask): centred at eye height, the
+            // front of the shell at the eyes, back, sides and crown just outside the head's own extent.
+            var eyeP = new List<Vector3>(); var headP = new List<Vector3>();
+            for (int p = 0; p < parts.Length && p < body.subMeshCount; p++) {
+                var pr = parts[p].Split(':');
+                int sub = int.Parse(pr[0]);
+                string mat = sub < bodyMats.Length ? bodyMats[sub] : "";
+                if (pr[1] == "eyes") foreach (int v in body.GetTriangles(p)) eyeP.Add(bv[v]);
+                else if (pr[1] == "head" && !System.Text.RegularExpressions.Regex.IsMatch(mat, "Lash|Eye|Teeth|Tear|Glass|Lens",
+                             System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    foreach (int v in body.GetTriangles(p)) headP.Add(bv[v]);
+            }
+            if (eyeP.Count > 20 && headP.Count > 200) {
+                float eyeY = eyeP.Average(q => q.y), eyeZ = eyeP.Max(q => q.z);
+                var above = headP.Where(q => q.y > eyeY - 0.01f).ToList();
+                float Pct(IEnumerable<float> xs, float f) { var l = xs.OrderBy(x => x).ToList(); return l[Mathf.Clamp((int)(f * l.Count), 0, l.Count - 1)]; }
+                float x0 = Pct(above.Select(q => q.x), 0.01f), x1 = Pct(above.Select(q => q.x), 0.99f);
+                float z0 = Pct(above.Select(q => q.z), 0.02f), y1 = Pct(above.Select(q => q.y), 0.995f);
+                c = new Vector3((x0 + x1) / 2, eyeY, (z0 + eyeZ) / 2);
+                rx = (x1 - x0) / 2 + 0.006f; rz = (eyeZ - z0) / 2 + 0.006f; ry = y1 - eyeY + 0.008f;
+                Debug.Log($"[Clothes] {character}/{item}: shell fitted to the head, centre {c}, radii {rx:F3} {ry:F3} {rz:F3}");
+            }
+            const int around = 40, up = 14;
             int first = -1, prev = -1;
             for (int j = 0; j <= up; j++) {
-                float e = Mathf.Lerp(-0.55f, Mathf.PI / 2, j / (float)up);  // from below the ears to the crown
+                float e = Mathf.Lerp(-1.0f, Mathf.PI / 2, j / (float)up);  // from the jaw line at the back to the crown
                 var ring = new List<Vector3>(); var rn = new List<Vector3>();
                 for (int i = 0; i <= around; i++) {
-                    float th = Mathf.PI * 0.35f + i * Mathf.PI * 1.3f / around;  // round the back, ear to ear past them
+                    // round the back, ear to ear; above the brow it closes over the forehead too
+                    float open = Mathf.PI * 0.3f * (1 - Mathf.Clamp01((e - 0.3f) / 0.35f));
+                    float th = open + i * (2 * Mathf.PI - 2 * open) / around;
                     var dir = new Vector3(Mathf.Cos(e) * Mathf.Sin(th), Mathf.Sin(e), Mathf.Cos(e) * Mathf.Cos(th));
                     var pnt = c + new Vector3(dir.x * rx, dir.y * ry, dir.z * rz);
                     ring.Add(pnt); rn.Add(new Vector3((pnt.x - c.x) / (rx * rx), (pnt.y - c.y) / (ry * ry), (pnt.z - c.z) / (rz * rz)).normalized);
@@ -757,7 +781,7 @@ public static class BuildClothes {
             var axis = new Vector3(neck.x, 0, neck.z + 0.005f * sc);
             for (int j = 0; j <= down; j++) {
                 float t = j / (float)down;
-                float y = neck.y + (0.04f - 0.12f * t) * sc;
+                float y = neck.y + (0.06f - 0.14f * t) * sc;
                 float r = (0.062f + 0.035f * t * t) * sc;  // flaring onto the shoulders
                 var ring = new List<Vector3>(); var rn = new List<Vector3>();
                 for (int i = 0; i <= around; i++) {
@@ -797,20 +821,23 @@ public static class BuildClothes {
         }
         // the turns: a tube along a ring (rx, rz) round the neck, its centre line dipping at the front
         const int along = 48, round = 10;
-        float tube = 0.026f * s;
+        float tall = 0.024f * s, thick = 0.011f * s;  // a flat knitted band, not a round sausage
         for (int turn = 0; turn < 2; turn++) {
             int start = verts.Count;
             for (int i = 0; i <= along; i++) {
                 float th = i * 2 * Mathf.PI / along;
                 float front = Mathf.Max(0, Mathf.Cos(th));
-                float rx = (0.074f + 0.02f * turn) * s, rz = (0.08f + 0.02f * turn) * s;  // snug round the neck
-                var centre = new Vector3(neck.x + Mathf.Sin(th) * rx, neck.y - (0.0f + 0.03f * turn + 0.02f * front) * s,
+                float rx = (0.078f + 0.012f * turn) * s, rz = (0.084f + 0.012f * turn) * s;  // round the neck, over the collar
+                var centre = new Vector3(neck.x + Mathf.Sin(th) * rx, neck.y + (0.012f - 0.042f * turn - 0.012f * front) * s,
                                          neck.z + 0.01f * s + Mathf.Cos(th) * rz);
                 var radial = new Vector3(Mathf.Sin(th), 0, Mathf.Cos(th));
                 for (int j = 0; j <= round; j++) {
                     float ph = j * 2 * Mathf.PI / round;
-                    var n = radial * Mathf.Cos(ph) + Vector3.up * Mathf.Sin(ph);
-                    verts.Add(centre + new Vector3(n.x * tube * 1.15f, n.y * tube * 0.85f, n.z * tube * 1.15f));
+                    float cr = Mathf.Cos(ph), sr = Mathf.Sin(ph);
+                    // rounded-rectangle section: flat faces in and out, soft top and bottom edges
+                    float fr = Mathf.Sign(cr) * Mathf.Pow(Mathf.Abs(cr), 0.45f), fu = Mathf.Sign(sr) * Mathf.Pow(Mathf.Abs(sr), 0.45f);
+                    var n = (radial * cr * tall + Vector3.up * sr * thick).normalized;
+                    verts.Add(centre + radial * fr * thick + Vector3.up * fu * tall);
                     normals.Add(n);
                     uvs.Add(new Vector2(j / (float)round * 2f, i / (float)along * 10f));
                     weights.Add(new BoneWeight { boneIndex0 = ni, weight0 = 0.7f, boneIndex1 = si, weight1 = 0.3f });
@@ -828,7 +855,7 @@ public static class BuildClothes {
             int start = verts.Count;
             const int down = 10;
             float width = 0.07f * s, length = 0.32f * s, thick = 0.008f * s;
-            var top = new Vector3(neck.x + 0.03f * s, neck.y - 0.06f * s, neck.z + 0.105f * s);
+            var top = new Vector3(neck.x + 0.03f * s, neck.y - 0.05f * s, neck.z + 0.11f * s);
             for (int i = 0; i <= down; i++) {
                 float t = i / (float)down;
                 var p = top + new Vector3(0.01f * t * s, -length * t, 0.025f * t * s);
