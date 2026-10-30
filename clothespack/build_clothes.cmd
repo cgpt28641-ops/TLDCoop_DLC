@@ -36,6 +36,7 @@ findstr /c:"[Clothes]" "%HERE%build.log"
 copy /y "%PROJECT%\Build\tldcoop_clothes" "%HERE%tldcoop_clothes.bundle" >nul || (pause & exit /b 1)
 
 echo Rendering previews...
+if exist "%PROJECT%\previews" rmdir /s /q "%PROJECT%\previews"
 "%UNITY%" -batchmode -quit -projectPath "%PROJECT%" -executeMethod TLDCoop.BuildClothes.Preview -logFile "%HERE%preview.log"
 if errorlevel 1 (echo Preview failed, see preview.log & pause & exit /b 1)
 findstr /c:"[Clothes]" "%HERE%preview.log"

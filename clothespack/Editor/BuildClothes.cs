@@ -36,6 +36,11 @@ namespace TLDCoop {
     public string[] shorten_items; public float[] shorten_to;
     // Under these items (coats) a body's own submeshes whose material name has one of hide_words are not drawn.
     public string[] hide_under; public string[] hide_words;
+    // Only these character folders go in the pack (empty: all of them).
+    public string[] characters;
+    // Collars that rose up the face: the top brought down to this many metres from Head_jnt (the jaw's height), the
+    // front a little lower, and kept off the neck.
+    public string[] collar_items; public float[] collar_metres;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -87,6 +92,10 @@ public static class BuildClothes {
     [MenuItem("TLDCoop/Build clothes")] static void BuildMenu() => Run();
     [MenuItem("TLDCoop/Preview clothes")] static void PreviewMenu() => RunPreview();
 
+    static IEnumerable<string> Characters(ClothesList list, string chars) =>
+        Directory.GetDirectories(chars).Select(Path.GetFileName)
+            .Where(c => list.characters == null || list.characters.Length == 0 || list.characters.Contains(c));
+
     static string Catalog() => File.ReadAllText("catalog.txt").Trim();
 
     static void Run() {
@@ -97,8 +106,11 @@ public static class BuildClothes {
         Directory.CreateDirectory(OutDir);
         Directory.CreateDirectory(OutDir + "/Materials");
         Directory.CreateDirectory(OutDir + "/Textures");
-        foreach (string character in Directory.GetDirectories(chars).Select(Path.GetFileName))
+        foreach (string character in Characters(list, chars))
             Directory.CreateDirectory($"{OutDir}/{character}");
+        var keep = new HashSet<string>(Characters(list, chars));  // characters left out: out of the pack too
+        foreach (string dir in Directory.GetDirectories(OutDir).Select(Path.GetFileName))
+            if (dir != "Materials" && dir != "Textures" && !keep.Contains(dir)) AssetDatabase.DeleteAsset($"{OutDir}/{dir}");
         AssetDatabase.Refresh();  // the folders, known to Unity before assets go in them
         var opaque = Shader.Find("TLDCoop/Body");
         var twoSided = Shader.Find("TLDCoop/Body2Sided");
@@ -115,7 +127,7 @@ public static class BuildClothes {
         var pendingTextures = new List<string>();
         try {
             // Textures first (copied in, imported once), then materials and meshes.
-            foreach (string character in Directory.GetDirectories(chars).Select(Path.GetFileName).OrderBy(s => s))
+            foreach (string character in Characters(list, chars).OrderBy(s => s))
                 foreach (string item in list.items) {
                     string file = Path.Combine(chars, character, item + ".gltf");
                     if (!File.Exists(file)) continue;
@@ -143,7 +155,7 @@ public static class BuildClothes {
             imp.SaveAndReimport();
         }
 
-        foreach (string character in Directory.GetDirectories(chars).Select(Path.GetFileName).OrderBy(s => s)) {
+        foreach (string character in Characters(list, chars).OrderBy(s => s)) {
             foreach (string item in list.items) {
                 string file = Path.Combine(chars, character, item + ".gltf");
                 if (!File.Exists(file)) { skipped++; continue; }
@@ -158,7 +170,11 @@ public static class BuildClothes {
                 if (list.shorten_items != null)
                     for (int i = 0; i < list.shorten_items.Length && i < list.shorten_to.Length; i++)
                         if (list.shorten_items[i] == item) shorten = list.shorten_to[i];
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten);
+                float collar = float.NaN;
+                if (list.collar_items != null)
+                    for (int i = 0; i < list.collar_items.Length && i < list.collar_metres.Length; i++)
+                        if (list.collar_items[i] == item) collar = list.collar_metres[i];
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar);
                 triangles += result;
                 meshes++;
             }
@@ -188,7 +204,7 @@ public static class BuildClothes {
     // --- one glTF -> Mesh + TextAsset -----------------------------------------------------------------------------
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
-                        Shader opaque, Shader twoSided, float lift, float inflate, float shorten) {
+                        Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -236,6 +252,7 @@ public static class BuildClothes {
         }
 
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
+        if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 
         var mesh = new Mesh { name = $"{character}_{item}" };
         if (verts.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
@@ -289,6 +306,42 @@ public static class BuildClothes {
             if (v.y < hips) verts[i] = new Vector3(v.x, hips - (hips - v.y) * k, v.z);
         }
         Debug.Log($"[Clothes] {what}: hem from {bottom:F2} m up to {target:F2} m (hips {hips:F2}, knees {knees:F2})");
+    }
+
+    // A joint's rest position in Unity space (x mirrored), from the skin's inverse bind matrices; NaN if not in it.
+    static Vector3 JointPos(Gltf g, byte[] bin, GSkin skin, string name) {
+        float[] ibm = ReadFloats(g, bin, skin.inverseBindMatrices);
+        int j = Array.FindIndex(skin.joints, k => g.nodes[k].name == name);
+        if (j < 0) return new Vector3(float.NaN, float.NaN, float.NaN);
+        var m = new Matrix4x4();
+        for (int c = 0; c < 4; c++)
+            for (int r = 0; r < 4; r++) m[r, c] = ibm[j * 16 + c * 4 + r];
+        Vector3 p = m.inverse.GetColumn(3);
+        return new Vector3(-p.x, p.y, p.z);
+    }
+
+    // The collar down from the face: everything above the base of the neck squeezed so the top is at Head_jnt + `top`
+    // at the back and 4 cm lower at the front (the chin), and no closer than 7.5 cm to the neck's axis.
+    static void Collar(Gltf g, byte[] bin, GSkin skin, List<Vector3> verts, float top, string what) {
+        Vector3 neck = JointPos(g, bin, skin, "Neck_jnt"), head = JointPos(g, bin, skin, "Head_jnt");
+        if (float.IsNaN(neck.y) || float.IsNaN(head.y) || head.y <= neck.y) return;
+        float from = neck.y - 0.03f, highest = verts.Max(v => v.y), back = head.y + top;
+        if (highest <= back) return;
+        const float frontDrop = 0.04f, minRadius = 0.075f;
+        int moved = 0;
+        for (int i = 0; i < verts.Count; i++) {
+            var v = verts[i];
+            if (v.y <= from) continue;
+            var d = new Vector2(v.x - neck.x, v.z - neck.z);
+            float r = d.magnitude;
+            float front = r > 1e-4f ? Mathf.Clamp01(d.y / r) : 0;  // +z is the front
+            float to = back - frontDrop * front;
+            float y = from + (v.y - from) / (highest - from) * (to - from);
+            if (r < minRadius) d = r > 1e-4f ? d / r * minRadius : new Vector2(0, -minRadius);
+            verts[i] = new Vector3(neck.x + d.x, y, neck.z + d.y);
+            moved++;
+        }
+        Debug.Log($"[Clothes] {what}: collar from {highest:F2} m down to {back:F2} m (neck {neck.y:F2}, head {head.y:F2}), {moved} vertices");
     }
 
     static Matrix4x4 Mirror(Matrix4x4 m) {
@@ -386,7 +439,8 @@ public static class BuildClothes {
         var bodies = AssetBundle.LoadFromFile(bodiesPath);
         if (bodies == null) throw new Exception("couldn't load " + bodiesPath);
         Directory.CreateDirectory("previews");
-        var rt = new RenderTexture(640, 960, 24);
+        const int cellW = 320, cellH = 480;  // one picture per outfit and side, put together in a sheet per character
+        var rt = new RenderTexture(cellW, cellH, 24);
         var camGo = new GameObject("PreviewCamera");
         var cam = camGo.AddComponent<Camera>();
         cam.targetTexture = rt;
@@ -410,6 +464,8 @@ public static class BuildClothes {
             foreach (string character in list.preview_characters) {
                 var prefab = bodies.LoadAsset<GameObject>("Body_" + character);
                 if (prefab == null) { Debug.LogWarning("[Clothes] no body " + character); continue; }
+                float[] yaws = { 0f, 90f, 180f };  // the body faces +z: front, side, back
+                var sheet = new Texture2D(cellW * outfits.Count, cellH * yaws.Length, TextureFormat.RGB24, false);
                 for (int o = 0; o < outfits.Count; o++) {
                     var body = (GameObject)UnityEngine.Object.Instantiate(prefab);
                     var anim = body.GetComponentInChildren<Animation>();
@@ -425,7 +481,8 @@ public static class BuildClothes {
                     var dressed = new List<string>();
                     foreach (string item in outfits[o])
                         if (Dress(body, character, item)) dressed.Add(item);
-                    foreach (float yaw in new[] { 0f, 90f, 180f }) {  // the body faces +z: front, side, back
+                    for (int y = 0; y < yaws.Length; y++) {
+                        float yaw = yaws[y];
                         cam.transform.position = Quaternion.Euler(0, yaw, 0) * new Vector3(0, 0, 5.2f) + new Vector3(0, 1.0f, 0);
                         cam.transform.LookAt(new Vector3(0, 1.0f, 0));
                         cam.Render();
@@ -433,13 +490,16 @@ public static class BuildClothes {
                         var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
                         tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
                         tex.Apply();
-                        File.WriteAllBytes($"previews/{character}_{o + 1}_{(int)yaw}.png", tex.EncodeToPNG());
+                        sheet.SetPixels(o * cellW, (yaws.Length - 1 - y) * cellH, cellW, cellH, tex.GetPixels());
                         UnityEngine.Object.DestroyImmediate(tex);
                         shots++;
                     }
                     Debug.Log($"[Clothes] preview {character} outfit {o + 1}: {string.Join(", ", dressed)}");
                     UnityEngine.Object.DestroyImmediate(body);
                 }
+                sheet.Apply();
+                File.WriteAllBytes($"previews/sheet_{character}.jpg", sheet.EncodeToJPG(88));
+                UnityEngine.Object.DestroyImmediate(sheet);
             }
         } finally {
             RenderTexture.active = null;
@@ -447,7 +507,7 @@ public static class BuildClothes {
             UnityEngine.Object.DestroyImmediate(lightGo);
             bodies.Unload(true);
         }
-        Debug.Log($"[Clothes] {shots} preview pictures in previews/");
+        Debug.Log($"[Clothes] {shots} preview pictures in previews/sheet_<character>.jpg (columns: the outfits; rows: front, side, back)");
     }
 
     // As the mod does it: a SkinnedMeshRenderer with the item's mesh under the body, its bones the body's transforms

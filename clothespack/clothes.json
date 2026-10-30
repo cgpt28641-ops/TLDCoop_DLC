@@ -19,11 +19,26 @@
   "hide_under": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
                  "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_PremiumWinterCoat",
                  "GEAR_QualityWinterCoat", "GEAR_SkiJacket"],
+  "characters": ["mackenzie", "mackenzie_indoor", "astrid", "astrid_outdoor", "molly"],
+  "collar_items": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka", "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak", "GEAR_PremiumWinterCoat", "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape", "GEAR_DownVest", "GEAR_InsulatedVest"],
+  "collar_metres": [-0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01],
   "hide_words": ["Jacket", "Sweater", "Coat", "Parka", "Hoodie", "Shirt", "Vest", "Top"],
-  "preview_characters": ["mackenzie", "astrid", "heller", "molly", "jeremiah", "jane"],
+  "preview_characters": ["mackenzie", "mackenzie_indoor", "astrid", "astrid_outdoor", "molly"],
   "preview_outfits": [
     ["GEAR_BasicWoolHat", "GEAR_BasicWinterCoat"],
-    ["GEAR_RabbitskinHat", "GEAR_BearSkinCoat"],
-    ["GEAR_BaseballCap", "GEAR_DownParka"]
+    ["GEAR_BaseballCap", "GEAR_BearSkinCoat"],
+    ["GEAR_Toque", "GEAR_DownParka"],
+    ["GEAR_RabbitskinHat", "GEAR_DownSkiJacket"],
+    ["GEAR_ImprovisedHat", "GEAR_HeavyParka"],
+    ["GEAR_EarMuffs", "GEAR_LightParka"],
+    ["GEAR_Balaclava", "GEAR_MackinawJacket"],
+    ["GEAR_BasicWoolHat", "GEAR_MilitaryParka"],
+    ["GEAR_BaseballCap", "GEAR_MooseHideCloak"],
+    ["GEAR_Toque", "GEAR_PremiumWinterCoat"],
+    ["GEAR_RabbitskinHat", "GEAR_QualityWinterCoat"],
+    ["GEAR_ImprovisedHat", "GEAR_SkiJacket"],
+    ["GEAR_EarMuffs", "GEAR_WolfSkinCape"],
+    ["GEAR_Balaclava", "GEAR_DownVest"],
+    ["GEAR_BasicWoolHat", "GEAR_InsulatedVest"]
   ]
 }
