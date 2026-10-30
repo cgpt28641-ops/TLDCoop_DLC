@@ -80,7 +80,7 @@ constexpr const char* kDefaultIni =
     "[ambient]\n"
     "; Ambient Lights (built in, after the mod by Xpazeman / Thekillergreece, MIT): daylight through each interior's\n"
     "; windows that follows the time of day and the weather. In co-op the HOST decides for everyone (the CO-OP setup\n"
-    "; screen's AMBIENT LIGHTS row); playing alone, enabled= below. The levels are your own (1 = as the mod made them).\n"
+    "; screen's MODS button); playing alone, enabled= below. The levels are your own (1 = as the mod made them).\n"
     "enabled=1\n"
     "intensity=1.1\n"
     "range=1\n"

@@ -69,7 +69,7 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
 - **Ambient Lights (wbudowane):** w budynkach światło z okien zmienia się z porą dnia i pogodą (ciepłe rano od
   wschodu, chłodne i słabsze w zamieć, bez promieni słońca we mgle), a własne oświetlenie wnętrz gry jest do tego
   dopasowane. To przeniesiony do TLDCoop mod AmbientLights (Xpazeman, Thekillergreece): **bez MelonLoadera i bez
-  dodatkowych plików**. Włącza go lub wyłącza **host** na ekranie co-opa (wiersz AMBIENT LIGHTS) i obowiązuje to
+  dodatkowych plików**. Włącza go lub wyłącza **host** na ekranie co-opa (przycisk **MODS** → AMBIENT LIGHTS) i obowiązuje to
   wszystkich graczy; w solo decyduje `coop.ini` `[ambient] enabled=`. Jasność itp. każdy ustawia u siebie w `[ambient]`.
 - **Kolory graczy:** każdy gracz ma swój kolor na radarze, mapie i nad głową. Kolor znajomego można zmienić w
   `coop.ini`, sekcja `[colors]` (np. `Shatsca=blue`).
@@ -183,7 +183,7 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `voice=male` / `female` | Głos Twojej postaci. |
 | `[colors] Nick=kolor` | **Nowe.** Kolor znajomego na radarze, mapie i nad głową: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `white`, `grey` albo `#RRGGBB`. |
 | `[emotes] wave=F5 ...` | **Nowe.** Klawisze gestów: `wave`, `point`, `come`, `stop`, `yes`, `no` (F1..F12, A..Z, 0..9, NUM0..NUM9, `off`). |
-| `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host na ekranie co-opa). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze). |
+| `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host: ekran co-opa → MODS). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze). |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
 | `transport=local` | Gra w sieci lokalnej po IP zamiast przez kody Steam (z `bind_ip`, `host_ip`, `port`). |

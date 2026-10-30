@@ -84,11 +84,31 @@ constexpr int kHighlightWidth = 440, kHighlightHeight = 110;
 
 // The CO-OP setup screen.
 // The last three are the HUD's switches (milestone 12), on the setup only: the lobby uses the rows up to the code.
-// TLDCoop_DLC: TLD's menu has 8 rows and all are taken, so on the setup the NAME row (only ever the Steam name; the
-// lobby still lists everyone's) is AMBIENT LIGHTS: the host's choice for everyone (ambient_lights.h).
+// TLDCoop_DLC: the MODS page. TLD's menu has 8 rows and the setup uses them all, so the host's built-in mods (their
+// ON / OFF for everyone) have their own page: the MODS button in the bottom bar swaps the rows for one per mod
+// (kModRows: rows that have arrows), BACK or CONFIRM swap them back. Add a mod: kMods below, its value in
+// load_choices / close_menu.
 enum Row { kMode, kCharacter, kVoice, kName, kCode, kNames, kRadar, kChart, kRowCount };
 constexpr int kLobbyRows = kCode + 1;
 constexpr int kSwitchRows[] = {kNames, kRadar, kChart};
+struct ModSwitch {
+    const char* name;  // its row: "NAME: ON"
+    const char* help;
+};
+constexpr ModSwitch kMods[] = {
+    {"AMBIENT LIGHTS",
+     "Ambient Lights: daylight through every building's windows that follows the time of day and the weather, and "
+     "TLD's indoor lighting toned to match. You decide for everyone in your game. (Built in, after the mod by Xpazeman "
+     "and Thekillergreece; how bright: coop.ini [ambient].)"},
+};
+constexpr int kModCount = static_cast<int>(sizeof(kMods) / sizeof(kMods[0]));
+constexpr int kModRows[] = {kMode, kCharacter, kNames, kRadar, kChart};  // rows with arrows (VOICE may be hidden)
+static_assert(kModCount <= static_cast<int>(sizeof(kModRows) / sizeof(kModRows[0])), "more mods than MODS rows");
+constexpr int mod_of_row(int row) {  // which mod a row shows on the MODS page, -1 none
+    for (int m = 0; m < kModCount; ++m)
+        if (kModRows[m] == row) return m;
+    return -1;
+}
 enum Mode { kHost, kJoin };
 constexpr const char* kModes[] = {"host", "join"};
 constexpr const char* kModeNames[] = {"HOST", "JOIN"};
@@ -281,7 +301,9 @@ struct Menu {
     int mode = kHost;
     int voice = 0;  // VoicePersona: 0 male, 1 female
     bool hud[3] = {true, true, true};  // NAMES, RADAR, AUTO MAP (kSwitchRows' order)
-    bool ambient = true;    // TLDCoop_DLC: AMBIENT LIGHTS (hosting; a friend follows the host's)
+    bool mods = false;           // TLDCoop_DLC: the MODS page is up
+    bool mod_on[kModCount] = {};  // each mod's ON / OFF (hosting; a friend follows the host's)
+    uintptr_t mods_button = 0, mods_root = 0;
     std::string join_code;  // being typed
     std::string notice;     // one-off message shown instead of the row help ("Copied!")
     std::vector<std::string> bodies;
@@ -1083,12 +1105,7 @@ std::string row_help(int row) {
             return "Your survivor's voice (and first-person hands), the Male / Female choice TLD normally asks for. "
                    "Your look is the CHARACTER above.";
         case kName:
-            if (g.mode == kJoin)
-                return "Ambient Lights: daylight through every building's windows that follows the time of day and "
-                       "the weather. The host decides for everyone; you'll have whatever they chose.";
-            return "Ambient Lights: daylight through every building's windows that follows the time of day and the "
-                   "weather, TLD's indoor lighting toned to match. You decide for everyone in your game. (Built in, "
-                   "after the mod by Xpazeman and Thekillergreece; levels in coop.ini [ambient].)";
+            return "What your friends see you as: your Steam name.";
         case kNames:
             return "A small dot over each friend's head; their name and how far away they are when you look at them or "
                    "they're close. Out of sight, an arrow at the edge of the screen points the way.";
@@ -1173,16 +1190,41 @@ void color_rows() {
         set_color(component(target(a.go), api.sprite_type), a.row == g.selected ? g.selected_color : g.normal_color);
 }
 
+void show_setup_parts(bool setup);
+
+// TLDCoop_DLC: the MODS page: one row per mod, the rest hidden.
+void refresh_mods() {
+    Il2CppObject* root = target(g.root);
+    for (int i = 0; i < kRowCount; ++i) set_active(target(g.rows[i]), mod_of_row(i) >= 0);
+    for (const Arrow& a : g.arrows) set_active(target(a.go), mod_of_row(a.row) >= 0);
+    for (int m = 0; m < kModCount; ++m)
+        set_text(target(g.row_labels[kModRows[m]]), std::string(kMods[m].name) + (g.mod_on[m] ? ": ON" : ": OFF"));
+    il2::invoke(api.grid_reposition, component(part(root, g.menu_path, kGrid), api.grid_type));
+    set_text(label_of(part(root, g.menu_path, kTitleSmall)), "SET UP");
+    set_text(label_of(part(root, g.menu_path, kTitleBig)), "MODS");
+    set_active(target(g.mods_root), false);
+    const int m = mod_of_row(g.selected);
+    set_text(target(g.description), m >= 0 ? kMods[m].help : "");
+    for (int i = 0; i < kModCount; ++i) place_arrows(kModRows[i]);
+    move_highlight(g.highlight, g.rows[g.selected]);
+    fit_highlight(g.highlight, g.row_labels[g.selected]);
+    color_rows();
+    if (Il2CppObject* preview = target(g.preview)) set_active(go_of(preview), false);
+}
+
 void refresh() {
     if (g.lobby) {
         refresh_lobby(true);
         return;
     }
+    if (g.mods) {
+        refresh_mods();
+        return;
+    }
     set_text(target(g.row_labels[kMode]), std::string("MODE: ") + kModeNames[g.mode]);
     set_text(target(g.row_labels[kCharacter]), "CHARACTER: " + upper(display_name(g.bodies[g.body])));
     set_text(target(g.row_labels[kVoice]), std::string("VOICE: ") + kVoiceNames[g.voice]);
-    set_text(target(g.row_labels[kName]), std::string("AMBIENT LIGHTS: ") +
-                                              (g.mode == kJoin ? "HOST'S" : g.ambient ? "ON" : "OFF"));
+    set_text(target(g.row_labels[kName]), "NAME: " + g.settings.name);
     set_text(target(g.row_labels[kCode]),
              g.mode == kHost ? "YOUR CODE: " + g.settings.code
                              : "JOIN CODE: " + g.join_code + std::string(kCodeLength - g.join_code.size(), '_'));
@@ -1194,10 +1236,8 @@ void refresh() {
     place_arrows(kMode);
     place_arrows(kCharacter);
     place_arrows(kVoice);
-    place_arrows(kName);
-    for (const Arrow& a : g.arrows)  // a friend can't change AMBIENT LIGHTS: the host's
-        if (a.row == kName) set_active(target(a.go), g.mode == kHost);
     for (int row : kSwitchRows) place_arrows(row);
+    set_active(target(g.mods_root), g.mode == kHost);  // the host's built-in mods; a friend has the host's
     move_highlight(g.highlight, g.rows[g.selected]);
     fit_highlight(g.highlight, g.row_labels[g.selected]);
     color_rows();
@@ -1213,12 +1253,20 @@ void select(int row) {
 }
 
 void change(int row, int step) {
+    if (g.mods) {  // TLDCoop_DLC: a mod's ON / OFF
+        const int m = mod_of_row(row);
+        if (m < 0) return;
+        play(api.sound_change ? api.sound_change : api.sound_click);
+        g.mod_on[m] = !g.mod_on[m];
+        refresh();
+        return;
+    }
     play(api.sound_change ? api.sound_change : api.sound_click);
     g.notice.clear();
     if (row == kMode) g.mode = 1 - g.mode;
     if (row == kCharacter) g.body = (g.body + g.bodies.size() + step) % g.bodies.size();
     if (row == kVoice) g.voice = (g.voice + 2 + step) % 2;
-    if (row == kName && g.mode == kHost) g.ambient = !g.ambient;
+
     for (int i = 0; i < 3; ++i)
         if (row == kSwitchRows[i]) g.hud[i] = !g.hud[i];
     refresh();
@@ -1280,7 +1328,8 @@ void load_choices() {
     g.hud[0] = g.settings.hud_names;
     g.hud[1] = g.settings.hud_radar;
     g.hud[2] = g.settings.hud_chart;
-    g.ambient = g.settings.ambient_lights;
+    g.mods = false;
+    g.mod_on[0] = g.settings.ambient_lights;
     // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
     std::string ids = avatar::choosable_body_ids();
@@ -1310,6 +1359,9 @@ void release() {
     drop(g.description);
     drop(g.confirm);
     drop(g.confirm_label);
+    drop(g.mods_button);
+    drop(g.mods_root);
+    g.mods = false;
     for (int i = 0; i < 2; ++i) {
         drop(g.actions[i]);
         drop(g.action_roots[i]);
@@ -1397,7 +1449,7 @@ bool open_menu(Il2CppObject* screen_panel) {
                g.normal_color.b);
     if (!g.with_voice) set_active(target(g.rows[kVoice]), false);
     Il2CppObject* arrow_template = part(clone, m, kArrowTemplate);
-    for (int row : {kMode, kCharacter, kVoice, kName, kNames, kRadar, kChart}) {
+    for (int row : {kMode, kCharacter, kVoice, kNames, kRadar, kChart}) {
         add_arrow(arrow_template, row, -1);
         add_arrow(arrow_template, row, +1);
     }
@@ -1431,6 +1483,11 @@ bool open_menu(Il2CppObject* screen_panel) {
         g.action_labels[i] = hold(label);
         set_active(root, false);  // the lobby shows them for a selected friend
     }
+    {  // TLDCoop_DLC: MODS, where LET IN sits in the lobby
+        Il2CppObject* root = nullptr;
+        g.mods_button = hold(make_button(clone, m, "MODS", kConfirmX - kActionGap, kConfirmY, &root));
+        g.mods_root = hold(root);
+    }
 
     show_clone(clone, panel_go, part(clone, m, kGrid));
     g.open = true;
@@ -1463,7 +1520,7 @@ void close_menu(bool confirmed) {
         g.settings.hud_names = g.hud[0];
         g.settings.hud_radar = g.hud[1];
         g.settings.hud_chart = g.hud[2];
-        if (g.mode == kHost) g.settings.ambient_lights = g.ambient;
+        if (g.mode == kHost) g.settings.ambient_lights = g.mod_on[0];
         if (by_code) g.settings.transport = "steam";  // codes run through Steam
         if (g.mode == kJoin) g.settings.join_code = g.join_code;
         config::save(g.settings);
@@ -1494,8 +1551,31 @@ void close_menu(bool confirmed) {
 
 bool lobby_click(Il2CppObject* go);
 
+void open_mods() {
+    g.mods = true;
+    g.selected = kModRows[0];
+    g.notice.clear();
+    play(api.sound_click);
+    refresh();
+    logx::info("menu: the MODS page");
+}
+
+void close_mods() {
+    g.mods = false;
+    for (int i = 0; i < kRowCount; ++i) set_active(target(g.rows[i]), true);
+    show_setup_parts(true);  // VOICE hidden again for a save, the switches, the arrows, the grid, the titles
+    g.selected = kMode;
+    g.preview_body.clear();  // shown again
+    play(api.sound_back);
+    refresh();
+}
+
 bool setup_click(Il2CppObject* go) {
     if (g.lobby) return lobby_click(go);
+    if (go && go == target(g.mods_button)) {
+        if (!g.mods && g.mode == kHost) open_mods();
+        return true;
+    }
     int row = -1;
     for (int i = 0; i < kRowCount; ++i)
         if (go == target(g.rows[i])) row = i;
@@ -1504,13 +1584,23 @@ bool setup_click(Il2CppObject* go) {
         if (go == target(a.go)) arrow = &a;
     const bool is_confirm = go == target(g.confirm), is_back = go == target(g.back);
     if (row < 0 && !arrow && !is_confirm && !is_back) return false;
+    if (g.mods) {  // TLDCoop_DLC: CONFIRM and BACK take the MODS page away; a row or arrow switches its mod
+        if (is_confirm || is_back) {
+            close_mods();
+            return true;
+        }
+        const int r = arrow ? arrow->row : row;
+        select(r);
+        change(r, +1);
+        return true;
+    }
     if (arrow) {
         const Arrow a = *arrow;
         select(a.row);
         change(a.row, a.step);
     } else if (row >= 0) {
         select(row);
-        if (row == kMode || row == kCharacter || row == kVoice || row == kName || row >= kNames) change(row, +1);
+        if (row == kMode || row == kCharacter || row == kVoice || row >= kNames) change(row, +1);
         if (row == kCode) copy_code();
     } else {
         close_menu(is_confirm);
@@ -1535,6 +1625,19 @@ void setup_frame() {
     if (Il2CppObject* hovered = il2::invoke(api.hovered, nullptr))
         for (int i = 0; i < kRowCount; ++i)
             if (hovered == target(g.rows[i])) select(i);
+
+    if (g.mods) {  // TLDCoop_DLC: the MODS page
+        const auto mkey = poll_keys();
+        auto next_mod = [](int row, int step) {
+            const int m = (std::max(mod_of_row(row), 0) + kModCount + step) % kModCount;
+            return kModRows[m];
+        };
+        if (mkey[VK_UP]) select(next_mod(g.selected, -1));
+        if (mkey[VK_DOWN]) select(next_mod(g.selected, +1));
+        if (mkey[VK_LEFT] || mkey[VK_RIGHT]) change(g.selected, mkey[VK_LEFT] ? -1 : +1);
+        if (mkey[VK_RETURN] || mkey[VK_ESCAPE]) close_mods();
+        return;
+    }
 
     // Keep the lobby line current while it's on screen.
     const ULONGLONG now = GetTickCount64();
@@ -1778,6 +1881,7 @@ void show_setup_parts(bool setup) {
     for (const Arrow& a : g.arrows) set_active(target(a.go), setup);
     for (uintptr_t label : g.row_labels) set_int(api.widget_set_width, target(label), setup ? kRowWidth : kLobbyRowWidth);
     for (uintptr_t root : g.action_roots) set_active(target(root), false);
+    set_active(target(g.mods_root), setup && g.mode == kHost && !g.mods);
     Il2CppObject* root = target(g.root);
     // The lobby uses every row up to the code (VOICE too), not the HUD's switches: the grid lays them out again.
     if (!g.with_voice) set_active(target(g.rows[kVoice]), !setup);

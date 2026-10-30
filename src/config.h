@@ -33,7 +33,7 @@ struct Settings {
     std::vector<std::pair<std::string, std::string>> emote_keys;
     // TLDCoop_DLC: [ambient] Ambient Lights (built in, after the MelonLoader mod by Xpazeman / Thekillergreece):
     // light through each interior's windows that follows the time of day and the weather. In co-op the host's
-    // `enabled` counts for everyone (the CO-OP setup screen's AMBIENT LIGHTS row); the levels are each player's own.
+    // `enabled` counts for everyone (the CO-OP setup screen's MODS page); the levels are each player's own.
     bool ambient_lights = true;
     float ambient_intensity = 1.1f;    // the window lights' brightness (0 = off, 1 = the mod's own)
     float ambient_range = 1.0f;        // how far they reach
