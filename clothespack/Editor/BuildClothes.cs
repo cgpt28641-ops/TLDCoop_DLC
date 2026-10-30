@@ -379,7 +379,10 @@ public static class BuildClothes {
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
         if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 
-        if (sliceFit && wrap > 0) SliceFit(verts, character, wrap, $"{character}/{item}");
+        if (sliceFit && wrap > 0) {
+            float armpit = JointPos(g, bin, skin, "Neck_jnt").y - 0.14f;  // about the armpits
+            SliceFit(verts, character, wrap, $"{character}/{item}", float.IsNaN(armpit) ? float.MaxValue : armpit);
+        }
         if (wrap > 0) {
             float neckY = JointPos(g, bin, skin, "Neck_jnt").y;
             // twice: the smoothing of the first pass leaves a few vertices short of their layer, the second places them
@@ -1039,7 +1042,7 @@ public static class BuildClothes {
         return Skins[key] = skin;
     }
 
-    static void SliceFit(List<Vector3> verts, string character, float clearance, string what) {
+    static void SliceFit(List<Vector3> verts, string character, float clearance, string what, float armpitY = float.MaxValue) {
         if (!BaseSurface.TryGetValue(character, out var surf)) return;
         const float bin = 0.02f, torso = 0.22f;
         float zc = surf.p.Where(v => Mathf.Abs(v.x) < torso).Select(v => v.z).DefaultIfEmpty(0).Average();
@@ -1064,7 +1067,10 @@ public static class BuildClothes {
             if (!bse.TryGetValue(e.Key, out var b)) continue;
             factor[e.Key] = new float[3];
             for (int a = 0; a < 3; a++)
-                factor[e.Key][a] = e.Value[a] > 0.01f && b[a] > 0 ? Mathf.Clamp((b[a] + clearance) / e.Value[a], 1, 1.6f) : 1;
+                // only the body of the piece, below the armpits (the straps and armholes above keep their shape), and at
+                // most a quarter wider
+                factor[e.Key][a] = e.Key * bin < armpitY && e.Value[a] > 0.01f && b[a] > 0
+                    ? Mathf.Clamp((b[a] + clearance) / e.Value[a], 1, 1.25f) : 1;
         }
         // smooth over the neighbouring slices
         var smooth = new Dictionary<int, float[]>();
