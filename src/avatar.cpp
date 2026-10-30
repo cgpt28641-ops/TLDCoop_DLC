@@ -33,7 +33,8 @@ constexpr const char* kAssetBundles = "UnityEngine.AssetBundleModule.dll";
 
 constexpr double kInterpolationDelayMs = 100;  // two 20 Hz updates: always have a pair to blend between
 constexpr double kAliveCheckMs = 500;
-constexpr double kStaleMs = 1000;  // disconnected or stalled peer: hide instead of freezing in place
+constexpr double kStaleMs = 6000;  // disconnected or stalled peer: hide instead of freezing in place (TLDCoop_DLC: was 1 s;
+                                   // the host's game stalls 1-2 s now and then, and everyone vanished for it)
 
 // Gait selection from the peer's ground speed (m/s).
 constexpr float kIdleBelow = 0.25f;
@@ -186,6 +187,7 @@ struct Api {
     const MethodInfo* get_forward = nullptr;         // Transform.get_forward()
     const MethodInfo* find_child = nullptr;          // Transform.Find(string)
     const MethodInfo* renderer_bounds = nullptr;     // Renderer.get_bounds()
+    const MethodInfo* tf_parent = nullptr;           // Transform.get_parent()
     const MethodInfo* renderer_enabled = nullptr;    // Renderer.get_enabled()
     const MethodInfo* renderer_set_enabled = nullptr;  // Renderer.set_enabled(bool)
     const MethodInfo* set_enabled = nullptr;         // Behaviour.set_enabled(bool)
@@ -226,6 +228,7 @@ struct Parts {
     Il2CppObject* particles_type = nullptr;       // ParticleSystem
     const MethodInfo* ps_emit = nullptr;          // ParticleSystem.Emit(int)
     const MethodInfo* ps_play = nullptr;          // ParticleSystem.Play()
+    const MethodInfo* ps_stop = nullptr;          // ParticleSystem.Stop() (TLDCoop_DLC: unlit, its FX may stay shown)
     // TLDCoop_DLC: a light of our own for what lights up without one in its model (a match)
     const MethodInfo* light_range = nullptr;      // Light.set_range(float)
     Il2CppObject* light_tracking_type = nullptr;  // LightTracking (TLD's lighting knows the light)
@@ -1148,6 +1151,9 @@ void light_up(HeldCopy& h, int level, bool indoors) {
     const std::vector<uintptr_t>* on = !lit ? nullptr : high && !hi->empty() ? hi : low;
     for (const auto* list : {&h.lights_in, &h.lights_out, &h.lights_in_high, &h.lights_out_high})
         for (uintptr_t l : *list) set_light(l, on && std::find(on->begin(), on->end(), l) != on->end());
+    if (!lit && parts.ps_stop)  // TLDCoop_DLC: none while unlit (its FX object may stay shown: it holds the model)
+        for (HeldCopy::Emitter& e : h.emitters)
+            if (Il2CppObject* ps = target(e.ps); is_alive(ps)) il2::invoke(parts.ps_stop, ps);
     if (lit && parts.ps_play)  // TLDCoop_DLC: the flame's particles live (we emit them)
         for (HeldCopy::Emitter& e : h.emitters)
             if (Il2CppObject* ps = target(e.ps); is_alive(ps)) il2::invoke(parts.ps_play, ps);
@@ -1362,6 +1368,45 @@ bool make_held(Avatar& a, const std::string& gear, net::HeldKind kind) {
     set_vec(api.set_local_position, tf, {0, 0, 0});
     set_rotation(tf, Quat{});
     measure_held(h);
+    // TLDCoop_DLC: its main model always shows. A flare's stick sits under the object TLD shows only while it burns
+    // (m_FXGameObject): unlit, only the 5 cm cap was left, in the fist, and the friend's flare couldn't be seen.
+    // Everything shown for a moment to find its biggest model; what holds that model is no longer hidden when unlit.
+    if (api.tf_parent && api.renderer_bounds && !h.fx_low.empty()) {
+        show_objects(h.fx_low, true);
+        show_objects(h.fx_high, true);
+        show_objects(h.hide_lit, true);
+        Il2CppObject* renderers = components_in_children(copy, api.renderer_type);
+        Il2CppObject* main = nullptr;
+        float biggest = -1;
+        for (size_t i = 0, n = il2::array_length(renderers); i < n; ++i) {
+            Il2CppObject* r = il2::array_object_at(renderers, i);
+            const std::string cls = il2::class_name_of(r);
+            if (cls != "UnityEngine.MeshRenderer" && cls != "UnityEngine.SkinnedMeshRenderer") continue;
+            Bounds b{};
+            if (!il2::invoke_value(api.renderer_bounds, r, b)) continue;
+            const float size = b.extents.x * b.extents.x + b.extents.y * b.extents.y + b.extents.z * b.extents.z;
+            if (size > biggest) biggest = size, main = r;
+        }
+        std::string freed;
+        for (Il2CppObject* t = main ? transform_of(il2::invoke(pv.component_go, main)) : nullptr; t && t != tf;
+             t = il2::invoke(api.tf_parent, t)) {
+            Il2CppObject* go = il2::invoke(pv.component_go, t);
+            bool was_listed = false;
+            for (auto* list : {&h.fx_low, &h.fx_high}) {
+                const size_t before = list->size();
+                list->erase(std::remove_if(list->begin(), list->end(), [&](uintptr_t x) { return target(x) == go; }),
+                            list->end());
+                was_listed |= list->size() != before;
+            }
+            if (was_listed) freed += (freed.empty() ? "" : ", ") + name_of(go);
+        }
+        light_up(h, 0, false);
+        if (!freed.empty()) {
+            say(a, "%s: its model (%s) was under %s, shown only while lit: shown always now", gear.c_str(),
+                name_of(main).c_str(), freed.c_str());
+            measure_held(h);
+        }
+    }
     say(a, "holds a copy of %s: %zu lit part(s); lights indoors %s, outdoors %s%s; %d script/physics part(s) "
            "removed; %.2f m long along (%.0f, %.0f, %.0f)%s",
         gear.c_str(), h.fx_low.size() + h.fx_high.size(), lights_text(h.lights_in).c_str(),
@@ -1911,7 +1956,7 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
     if (!sampled)
         hidden = "no data from the other player";
     else if (!a.fresh)
-        hidden = "no updates from the other player for over a second";
+        hidden = "no updates from the other player for over 6 seconds";
     else if (!local_in_game)
         hidden = "we are not in game";
     else if (!s.valid)
@@ -2310,6 +2355,7 @@ bool init() {
     api.set_enabled = il2::find_method(behaviour, "set_enabled", 1);
     api.active_and_enabled = il2::find_method(behaviour, "get_isActiveAndEnabled", 0);
     api.in_hierarchy = il2::find_method(game_object, "get_activeInHierarchy", 0);
+    api.tf_parent = il2::find_method_quiet(transform, "get_parent", 0);
     api.light_intensity = il2::find_method(light, "get_intensity", 0);
     api.light_range = il2::find_method(light, "get_range", 0);
     api.light_color = il2::find_method(light, "get_color", 0);
@@ -2376,6 +2422,7 @@ bool init() {
             parts.particles_type = il2::type_object(ps);
             parts.ps_emit = il2::find_method_params(ps, "Emit", {"System.Int32"});
             parts.ps_play = il2::find_method(ps, "Play", 0);
+            parts.ps_stop = il2::find_method_quiet(ps, "Stop", 0);
         }
         if (Il2CppClass* tracking = il2::find_class(kGame, "", "LightTracking"))
             parts.light_tracking_type = il2::type_object(tracking);
