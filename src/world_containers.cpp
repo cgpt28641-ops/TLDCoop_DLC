@@ -774,7 +774,12 @@ void lock_tick() {
     }
 }
 
+// TLDCoop_DLC: other things held through the same locks (world_containers.h: hold / let_go), and when we last told
+// the host we still have each.
+std::unordered_map<std::string, double> g_held_things;
+
 void lock_reset() {
+    g_held_things.clear();
     drop_wait();
     g_mine.reset();
     g_locks.clear();
@@ -983,6 +988,42 @@ bool put(const std::string& name) {
     logx::info("dev: put: %s into %s (%s); now: %s", what.c_str(), name_of(c).c_str(), short_id(id_of(c)).c_str(),
                contents_of(c).c_str());
     return true;
+}
+
+bool busy_with_other(const std::string& id, std::string* who) {
+    if (!locking() || id.empty()) return false;
+    const uint8_t owner = g_locks.owner(net::lock_key(g_scene, id));
+    if (owner == net::kNoOwner || owner == self_player()) return false;
+    if (who) *who = player_name(owner);
+    return true;
+}
+
+void hold(const std::string& id) {
+    if (!locking() || id.empty()) return;
+    const double now = now_ms();
+    const std::string key = net::lock_key(g_scene, id);
+    auto [it, fresh] = g_held_things.try_emplace(key, -1e18);
+    if (hosting()) {
+        const uint8_t before = g_locks.owner(key);
+        g_locks.take(key, self_player(), now);
+        if (before != g_locks.owner(key)) tell_owner(key);
+    } else if (now - it->second >= net::kLockRefreshMs) {
+        send_lock(g_scene, id, net::LockOp::Take, 0);
+    }
+    if (fresh || now - it->second >= net::kLockRefreshMs) it->second = now;
+    if (fresh) logx::info("containers: holding %s (%s) while we move it", short_id(id).c_str(), g_scene.c_str());
+}
+
+void let_go(const std::string& id) {
+    const std::string key = net::lock_key(g_scene, id);
+    if (!g_held_things.erase(key)) return;
+    if (hosting()) {
+        if (g_locks.release(key, self_player())) tell_owner(key);
+    } else {
+        g_locks.set(key, net::kNoOwner, 0);
+        if (netrt::status().connected) send_lock(g_scene, id, net::LockOp::Release, 0);
+    }
+    logx::info("containers: done moving %s; free for the others", short_id(id).c_str());
 }
 
 bool init() {

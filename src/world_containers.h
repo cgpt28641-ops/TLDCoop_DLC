@@ -40,4 +40,12 @@ bool put(const std::string& name);        // pack -> container, as the panel doe
 void save_kept(std::vector<world_keep::Record>& out);
 bool load_kept(const world_keep::Record& r);
 
+// TLDCoop_DLC: one player at a time on anything else of this scene by an id of its own (a decoration being moved in
+// customization mode), through the containers' locks (ContainerLock, the host deciding). busy_with_other: someone
+// else has it (their name in `who`); hold: we have it now (again every frame while we do; asked of the host at most
+// once a second); let_go: done with it.
+bool busy_with_other(const std::string& id, std::string* who);
+void hold(const std::string& id);
+void let_go(const std::string& id);
+
 }  // namespace world_containers

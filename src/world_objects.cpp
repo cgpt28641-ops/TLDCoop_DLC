@@ -21,6 +21,8 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
+#include "world_containers.h"
+#include "coop_notices.h"
 
 namespace world_objects {
 namespace {
@@ -86,6 +88,12 @@ struct Api {
     FieldInfo* json_settings = nullptr;           // static SerializationUtils.m_SerializerSettings (TLD's converters)
     Il2CppObject* placements_type = nullptr;      // typeof(List<PlaceableInfoSaveData>)
     ptrdiff_t placement_state = -1;               // PlaceableInfoSaveData.m_State (PlacementState)
+    ptrdiff_t placement_guid = -1;                // PlaceableInfoSaveData.m_Guid (TLDCoop_DLC)
+    const MethodInfo* placements_carried = nullptr;  // static PlaceableManager.SerializeInventory() (TLDCoop_DLC)
+    // TLDCoop_DLC: one player at a time moves a decoration (customization mode)
+    const MethodInfo* deco_interact = nullptr;    // DecorationItem.PerformInteraction()
+    const MethodInfo* get_pm = nullptr;           // static GameManager.GetPlayerManagerComponent()
+    ptrdiff_t pm_placing_deco = -1;               // PlayerManager.m_ObjectToPlaceDecorationItem
     Il2CppObject* placeable_type = nullptr;       // typeof(TLD.Placement.Placeable)
     Il2CppObject* container_type = nullptr;       // typeof(Container)
     ptrdiff_t container_rolled = -1;              // Container.m_RolledSpawnChance
@@ -632,6 +640,8 @@ void send_placements() {
     g_marked.clear();
 }
 
+std::unordered_set<std::string> carried_by_us();  // (below)
+
 // The other player's record of a placeable, loaded as loading a save does. One they carry is gone here. False when TLD
 // couldn't read it.
 bool apply_placement(const net::ObjectState& s) {
@@ -645,6 +655,11 @@ bool apply_placement(const net::ObjectState& s) {
     Il2CppObject* e = list && get<int32_t>(list, kListSize) == 1 ? il2::array_object_at(get<Il2CppObject*>(list, kListItems), 0)
                                                                  : nullptr;
     if (!e) return false;
+    if (api.placement_guid >= 0 && carried_by_us().count(text(get<Il2CppString*>(e, api.placement_guid)))) {
+        logx::info("objects: the other player's word on %s, which we carry, isn't loaded", s.id.c_str());
+        g_marked.erase(s.id);
+        return true;  // TLDCoop_DLC: ours, in our pack
+    }
     if (get<int32_t>(e, api.placement_state) == kOnPlayer) put<int32_t>(e, api.placement_state, kRemoved);
     g_applying = true;
     void* load_args[] = {list};
@@ -794,6 +809,28 @@ int keep_host_rolls() {
     return kept;
 }
 
+// TLDCoop_DLC: the placeables we carry (a decoration taken into our pack): PlaceableManager's inventory list, and any
+// of this scene's it says are on us. The other games' word on them (gone, from where they see it) isn't loaded: it
+// made TLD forget ours was in our pack, and we couldn't put it down again.
+std::unordered_set<std::string> carried_by_us() {
+    std::unordered_set<std::string> out;
+    if (api.placement_guid < 0) return out;
+    auto collect = [&](Il2CppObject* list, bool all) {
+        if (!list) return;
+        Il2CppObject* items = get<Il2CppObject*>(list, kListItems);
+        const int32_t size = get<int32_t>(list, kListSize);
+        for (int32_t i = 0; i < size && static_cast<size_t>(i) < il2::array_length(items); ++i) {
+            Il2CppObject* e = il2::array_object_at(items, static_cast<size_t>(i));
+            if (e && (all || get<int32_t>(e, api.placement_state) == kOnPlayer))
+                out.insert(text(get<Il2CppString*>(e, api.placement_guid)));
+        }
+    };
+    if (api.placements_carried) collect(il2::invoke(api.placements_carried, nullptr), true);
+    if (api.placements_save) collect(il2::invoke(api.placements_save, nullptr), false);
+    out.erase(std::string());
+    return out;
+}
+
 // TLD's placements in our scene as the host's game has them, the way loading a save does: what the host's world has
 // elsewhere or not at all is moved or destroyed here too. What the host carries (OnPlayer) isn't in the world here
 // either (TLD would put it in our pack).
@@ -810,14 +847,22 @@ void load_placements(const net::ObjectListMsg& m) {
     }
     Il2CppObject* items = get<Il2CppObject*>(list, kListItems);
     const int32_t size = get<int32_t>(list, kListSize);
-    int carried = 0;
+    int carried = 0, ours = 0;
+    const std::unordered_set<std::string> mine = carried_by_us();
     for (int32_t i = 0; i < size && static_cast<size_t>(i) < il2::array_length(items); ++i) {
         Il2CppObject* e = il2::array_object_at(items, static_cast<size_t>(i));
-        if (e && get<int32_t>(e, api.placement_state) == kOnPlayer) {
+        if (!e) continue;
+        if (!mine.empty() && api.placement_guid >= 0 && mine.count(text(get<Il2CppString*>(e, api.placement_guid)))) {
+            put<int32_t>(e, api.placement_state, kOnPlayer);  // TLDCoop_DLC: ours, in our pack: it stays so
+            ++ours;
+            continue;
+        }
+        if (get<int32_t>(e, api.placement_state) == kOnPlayer) {
             put<int32_t>(e, api.placement_state, kRemoved);
             ++carried;
         }
     }
+    if (ours) logx::info("objects: %d placeable(s) we carry stay in our pack", ours);
     g_applying = true;
     void* load_args[] = {list};
     il2::invoke(api.placements_load, nullptr, load_args);
@@ -999,6 +1044,31 @@ using IntoContainerFn = void (*)(Il2CppObject* self, Il2CppObject* decoration, c
 PlacedFn g_placed_fn = nullptr;
 ToPlayerFn g_to_player = nullptr;
 IntoContainerFn g_into_container = nullptr;
+
+// TLDCoop_DLC: a decoration someone else is moving isn't picked up here (two players moving one broke TLD's
+// customization mode); the one we move is ours while we do (world_containers::hold, every frame: on_frame).
+using DecoInteractFn = bool (*)(Il2CppObject* self, const MethodInfo* method);
+DecoInteractFn g_deco_interact = nullptr;
+std::string g_moving_deco;  // the placeable id of the decoration we move ("" none)
+
+bool deco_interact_detour(Il2CppObject* self, const MethodInfo* method) {
+    std::string who;
+    if (tracking() && world_containers::busy_with_other(placeable_guid(placeable_on(self)), &who)) {
+        coop_notices::tell(who + " is moving this right now");
+        logx::info("objects: %s is %s's to move right now; left alone", name_of(self).c_str(), who.c_str());
+        return false;
+    }
+    return g_deco_interact(self, method);
+}
+
+void track_moving_decoration() {
+    Il2CppObject* pm = api.get_pm && api.pm_placing_deco >= 0 ? il2::invoke(api.get_pm, nullptr) : nullptr;
+    Il2CppObject* deco = pm ? get<Il2CppObject*>(pm, api.pm_placing_deco) : nullptr;
+    const std::string id = alive(deco) ? placeable_guid(placeable_on(deco)) : std::string();
+    if (id != g_moving_deco && !g_moving_deco.empty()) world_containers::let_go(g_moving_deco);
+    g_moving_deco = id;
+    if (!id.empty()) world_containers::hold(id);
+}
 
 void placed_detour(Il2CppObject* self, bool success, bool is_parent, const MethodInfo* method) {
     g_placed_fn(self, success, is_parent, method);
@@ -1446,6 +1516,8 @@ bool init() {
         if (api.placements_type) il2::il2cpp_gchandle_new(api.placements_type, false);
     }
     api.placement_state = il2::field_offset(il2::find_class(kGame, "TLD.Placement", "PlaceableInfoSaveData"), "m_State");
+    api.placement_guid = il2::field_offset(il2::find_class(kGame, "TLD.Placement", "PlaceableInfoSaveData"), "m_Guid");
+    api.placements_carried = il2::find_method_quiet(placements, "SerializeInventory", 0);
     auto type_of = [](Il2CppClass* k) {
         Il2CppObject* t = k ? il2::type_object(k) : nullptr;
         if (t) il2::il2cpp_gchandle_new(t, false);
@@ -1485,6 +1557,9 @@ bool init() {
                                               {"System.String"});
     api.decoration_type = type_of(decoration);
     api.pick_up = il2::find_method(decoration, "OnPickup", 0);
+    api.deco_interact = il2::find_method(decoration, "PerformInteraction", 0);
+    api.get_pm = il2::find_method(il2::find_class(kGame, "", "GameManager"), "GetPlayerManagerComponent", 0);
+    api.pm_placing_deco = il2::field_offset(il2::find_class(kGame, "", "PlayerManager"), "m_ObjectToPlaceDecorationItem");
     api.set_position = il2::find_method(transform, "set_position", 1);
     api.transform_type = type_of(transform);
     api.component_type = type_of(component);
@@ -1510,6 +1585,8 @@ bool init() {
         api.into_container && hook("DecorationItem.FinalizePlacementRecursive", api.placed, &placed_detour, &g_placed_fn) &&
         hook("PlaceableManager.MoveToPlayer", api.to_player, &to_player_detour, &g_to_player) &&
         hook("Container.AddDecorationItem", api.into_container, &into_container_detour, &g_into_container);
+    if (g_ready && api.deco_interact)  // TLDCoop_DLC
+        hook("DecorationItem.PerformInteraction", api.deco_interact, &deco_interact_detour, &g_deco_interact);
     logx::info("world objects: %s%s%s%s%s%s", g_ready ? "ready (what's broken down or harvested is shared)" : "UNAVAILABLE (hooks failed)",
                g_ready && !api.radial_type ? "; spawned limbs can't be told apart" : "",
                g_ready && !(api.spawns_save && api.spawns_load) ? "; TLD's random spawns aren't shared" : "",
@@ -1566,6 +1643,7 @@ void on_frame(bool in_game) {
         keep_gone();
     }
     send_placements();
+    track_moving_decoration();  // TLDCoop_DLC
     if (!hosting()) return;
     for (uint8_t id : g_together.arrived(g_scene)) send_list(id);  // (see world_items)
 }
