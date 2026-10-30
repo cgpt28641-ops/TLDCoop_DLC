@@ -40,6 +40,9 @@ constexpr ptrdiff_t kListItems = 0x10, kListSize = 0x18;  // List<T>
 // AnimatorControllerParameterType
 constexpr int32_t kParamFloat = 1, kParamInt = 3, kParamBool = 4;
 constexpr int32_t kCullAlwaysAnimate = 0;
+// TLDCoop_DLC: host: an animal this close to a friend is run by the host's game as if near the host (TLD runs far
+// AIs seldom and stops animating them off its camera: by a friend they stood still).
+constexpr float kFriendNearMetres = 250;
 constexpr const char* kKinds[] = {"none", "wolf", "bear", "stag", "rabbit", "moose", "cougar"};
 constexpr uint64_t kNoWwiseObject = ~0ull;  // AK_INVALID_GAME_OBJECT
 
@@ -455,12 +458,41 @@ std::string read_params(Il2CppObject* animator) {
     return out;
 }
 
+// TLDCoop_DLC: friends' positions in our scene (host), as capture last saw them; read by can_update_detour.
+std::vector<Vector3> g_friend_spots;
+std::unordered_set<uintptr_t> g_always_animated;  // host animals whose Animator always animates now
+using CanUpdateFn = bool (*)(Il2CppObject* ai, const MethodInfo* method);
+CanUpdateFn g_can_update = nullptr;
+int g_updates_granted = 0;
+
+bool near_a_friend(Il2CppObject* ai) {
+    if (g_friend_spots.empty() || !ai) return false;
+    Il2CppObject* tf = transform_of(ai);
+    Vector3 p{};
+    if (!tf || !il2::invoke_value(api.get_position, tf, p)) return false;
+    for (const Vector3& f : g_friend_spots) {
+        const float dx = p.x - f.x, dy = p.y - f.y, dz = p.z - f.z;
+        if (dx * dx + dy * dy + dz * dz <= kFriendNearMetres * kFriendNearMetres) return true;
+    }
+    return false;
+}
+
+// BaseAiManager.CanUpdateAI: TLD skips far animals' updates; near a friend they run every frame, as near us.
+bool can_update_detour(Il2CppObject* ai, const MethodInfo* method) {
+    if (g_can_update(ai, method)) return true;
+    if (!near_a_friend(ai)) return false;
+    if (g_updates_granted++ == 0) logx::info("wildlife: animals near a friend are run as if near us (BaseAiManager.CanUpdateAI)");
+    return true;
+}
+
 void capture(const std::string& scene, double now) {
     const game::PlayerState me = game::read_player();
     std::vector<net::StateMsg> friends_here = netrt::remote_states();
     friends_here.erase(std::remove_if(friends_here.begin(), friends_here.end(),
                                       [&](const net::StateMsg& s) { return !s.valid || s.scene != scene; }),
                        friends_here.end());
+    g_friend_spots.clear();
+    for (const net::StateMsg& s : friends_here) g_friend_spots.push_back({s.x, s.y, s.z});
     auto in_range = [&](const Vector3& p) {
         auto within = [&](float x, float y, float z) {
             const float dx = p.x - x, dy = p.y - y, dz = p.z - z;
@@ -504,6 +536,13 @@ void capture(const std::string& scene, double now) {
         a.pitch = signed_degrees(euler.x);
         a.roll = signed_degrees(euler.z);
         if (Il2CppObject* animator = il2::read_field<Il2CppObject*>(ai, api.ai_animator)) {
+            // TLDCoop_DLC: animated whether or not our camera sees it (a friend does), once it's near a friend.
+            if (api.set_culling && !g_always_animated.count(key) && near_a_friend(ai)) {
+                int32_t culling = kCullAlwaysAnimate;
+                void* cull_args[] = {&culling};
+                il2::invoke(api.set_culling, animator, cull_args);
+                g_always_animated.insert(key);
+            }
             int32_t layers = 0;
             il2::invoke_value(api.layer_count, animator, layers);
             for (int32_t l = 0; l < layers && l < static_cast<int32_t>(net::kMaxAnimalLayers); ++l) {
@@ -529,6 +568,8 @@ void capture(const std::string& scene, double now) {
     }
     for (auto it = g_ai_emitters.begin(); it != g_ai_emitters.end();)
         it = seen.count(it->first) ? std::next(it) : g_ai_emitters.erase(it);
+    for (auto it = g_always_animated.begin(); it != g_always_animated.end();)  // TLDCoop_DLC: gone or out of range
+        it = seen.count(*it) ? std::next(it) : g_always_animated.erase(it);
     g_ids.swap(seen);  // forget animals that are gone
     if (g_schemas.size() > 256) g_schemas.clear();
 
@@ -1501,6 +1542,9 @@ bool init() {
         if (const MethodInfo* spawn = il2::find_method(spawn_region, "Spawn", 1))
             hooks::install_method("SpawnRegion.Spawn", spawn, reinterpret_cast<void*>(&spawn_detour),
                                   reinterpret_cast<void**>(&g_spawn));
+        if (const MethodInfo* can_update = il2::find_method(ai_manager, "CanUpdateAI", 1))  // TLDCoop_DLC
+            hooks::install_method("BaseAiManager.CanUpdateAI", can_update, reinterpret_cast<void*>(&can_update_detour),
+                                  reinterpret_cast<void**>(&g_can_update));
         g_picker_scale = config::load().picker_scale;
         if (const MethodInfo* picker = il2::find_method_params(il2::find_class(kGame, "", "Panel_WeaponPicker"), "Enable",
                                                                {"System.Boolean",
