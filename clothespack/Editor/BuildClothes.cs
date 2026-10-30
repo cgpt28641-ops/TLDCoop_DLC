@@ -696,6 +696,32 @@ public static class BuildClothes {
             float above = Vector3.Dot(verts[i] - skin.p[best], skin.n[best]);
             if (above < clearance) { push[i] = skin.n[best] * (clearance - above); moved++; }
         }
+        // Layers move together: a coat's lining lies a few millimetres inside its shell, and pushing only the lining would
+        // send it through the shell. Each vertex takes the biggest push within 2.5 cm (pointing its way).
+        {
+            const float reach = 0.025f;
+            var grid = new Dictionary<Vector3Int, List<int>>();
+            Vector3Int G(Vector3 v) => new Vector3Int(Mathf.FloorToInt(v.x / reach), Mathf.FloorToInt(v.y / reach), Mathf.FloorToInt(v.z / reach));
+            for (int i = 0; i < verts.Count; i++)
+                if (push[i] != Vector3.zero) {
+                    var c = G(verts[i]);
+                    if (!grid.TryGetValue(c, out var l)) grid[c] = l = new List<int>();
+                    l.Add(i);
+                }
+            var widened = new Vector3[push.Length];
+            for (int i = 0; i < verts.Count; i++) {
+                var best = push[i];
+                var c = G(verts[i]);
+                for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
+                    if (grid.TryGetValue(new Vector3Int(c.x + dx, c.y + dy, c.z + dz), out var l))
+                        foreach (int k in l)
+                            if (push[k].sqrMagnitude > best.sqrMagnitude && (verts[k] - verts[i]).sqrMagnitude < reach * reach &&
+                                (best == Vector3.zero || Vector3.Dot(push[k].normalized, best.normalized) > 0.5f))
+                                best = push[k];
+                widened[i] = best;
+            }
+            push = widened;
+        }
         // smooth the pushes twice over the piece's edges (a vertex keeps at least its own push)
         var neighbours = new List<int>[verts.Count];
         foreach (var tris in submeshes)
