@@ -32,6 +32,9 @@ constexpr double kSettleMs = 1000;     // an item has to stop moving this long b
 // TLDCoop_DLC: a burning flare or torch on the ground (one just thrown, mostly) is told as soon as a scan finds it
 // still: it lights the way and keeps wolves off, so the friend should see it at once, not a second and a half later.
 constexpr double kSettleLitMs = 0;
+// TLDCoop_DLC: the host tells its friends where a pot that is cooking (food, snow, water) is this often, so it is
+// ready at the same moment in every game (each game's own cooking skill and fire made it differ by minutes).
+constexpr double kPotSyncMs = 5000;
 constexpr float kStillMetres = 0.02f;  // moving less than this between scans: still
 constexpr float kMovedMetres = 0.3f;   // closer than this to where the other player has it: the same place
 constexpr double kListGraceMs = 5000;  // client: our own changes this recent aren't undone by the host's list
@@ -121,6 +124,13 @@ struct Api {
     ptrdiff_t pot_water = -1, pot_snow = -1;       // CookingPotItem.m_LitersWaterBeingBoiled, m_LitersSnowBeingMelted
     const MethodInfo* pot_load = nullptr;          // CookingPotItem.Deserialize(string)
     const MethodInfo* pot_drop_food = nullptr;     // CookingPotItem.DestroyGearItemBeingCooked()
+    // TLDCoop_DLC
+    ptrdiff_t pot_inspected = -1;                  // CookingPotItem.m_IsBeingInspected
+    ptrdiff_t pot_force_particles = -1;            // CookingPotItem.m_ForceParticleUpdate
+    const MethodInfo* pot_visuals = nullptr;       // CookingPotItem.UpdateVisuals()
+    const MethodInfo* pot_water_mesh = nullptr;    // CookingPotItem.SetUpWaterMesh()
+    ptrdiff_t food = -1, food_opened = -1;         // GearItem.m_FoodItem, FoodItem.m_Opened
+    ptrdiff_t smash = -1, smashed = -1;            // GearItem.m_SmashableItem, SmashableItem.m_HasBeenSmashed
 } api;
 
 bool g_ready = false;
@@ -376,8 +386,18 @@ struct Known {
     bool shared = false;     // the other player has it: it was here when we came in, they told us, or we told them
     bool unique = false;     // one of a kind (is_unique): never shared
     int snare = -1;          // a snare's state (snare_state), -1 for other items
+    bool opened = false;     // TLDCoop_DLC: a can opened or smashed open (opened_of)
 };
 std::unordered_map<std::string, Known> g_known;  // our pdid -> item
+// TLDCoop_DLC: what a pot holds, to see changes the hooks don't (melting snow in 2.58, water once it's in, food ready
+// or ruined). kind: 0 nothing, 1 food, 2 snow, 3 water.
+struct PotSig {
+    int kind = -1;  // -1: not seen yet
+    int state = 0;  // CookingPotItem.m_CookingState
+    std::string food;
+    bool operator==(const PotSig& o) const { return kind == o.kind && state == o.state && food == o.food; }
+};
+std::unordered_map<Il2CppObject*, PotSig> g_pot_sig;
 std::string g_scene;                             // the scene g_known is about ("" = none)
 bool g_baseline = false;                         // g_known holds at least one full scan of g_scene
 double g_last_scan = 0;
@@ -440,6 +460,7 @@ bool hosting() {
 void reset(const char* why) {
     if (!g_known.empty()) logx::info("items: forgetting shared item state (%s)", why);
     g_known.clear();
+    g_pot_sig.clear();
     g_scene.clear();
     g_baseline = false;
     g_newest.clear();
@@ -554,6 +575,34 @@ void roll_detour(Il2CppObject* self, const MethodInfo* method) {
 
 std::unordered_set<Il2CppObject*> g_pots_changed;  // CookingPotItems a player put something in or took it out of
 
+
+// TLDCoop_DLC: a can (food) opened, or smashed open. The other games load it (load_opened), or a friend picking up
+// the food cooked in it had to smash it open again.
+bool opened_of(Il2CppObject* gi) {
+    Il2CppObject* food = api.food >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.food) : nullptr;
+    Il2CppObject* smash = api.smash >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.smash) : nullptr;
+    return (alive(food) && get<bool>(food, api.food_opened)) || (alive(smash) && get<bool>(smash, api.smashed));
+}
+
+void load_opened(Il2CppObject* gi, const std::string& gear, Known& k) {
+    if (!alive(gi)) return;
+    bool changed = false;
+    Il2CppObject* food = api.food >= 0 ? get<Il2CppObject*>(gi, api.food) : nullptr;
+    if (alive(food) && api.food_opened >= 0 && !get<bool>(food, api.food_opened) &&
+        json_string(gear, "m_FoodItemSerialized").find("\"m_Opened\":true") != std::string::npos) {
+        put<bool>(food, api.food_opened, true);
+        changed = true;
+    }
+    Il2CppObject* smash = api.smash >= 0 ? get<Il2CppObject*>(gi, api.smash) : nullptr;
+    if (alive(smash) && api.smashed >= 0 && !get<bool>(smash, api.smashed) &&
+        json_string(gear, "m_SmashableItemSerialized").find("\"m_HasBeenSmashed\":true") != std::string::npos) {
+        put<bool>(smash, api.smashed, true);
+        changed = true;
+    }
+    k.opened = opened_of(gi);
+    if (changed) logx::info("items: the other player opened %s; open here too", name_of(gi).c_str());
+}
+
 Il2CppObject* pot_of(Il2CppObject* gi) {
     Il2CppObject* pot = api.pot >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.pot) : nullptr;
     return alive(pot) ? pot : nullptr;
@@ -562,6 +611,19 @@ Il2CppObject* pot_of(Il2CppObject* gi) {
 Il2CppObject* food_in(Il2CppObject* pot) {
     Il2CppObject* food = pot ? get<Il2CppObject*>(pot, api.pot_food) : nullptr;
     return alive(food) ? food : nullptr;
+}
+
+PotSig pot_sig(Il2CppObject* pot) {
+    PotSig sig;
+    Il2CppObject* food = food_in(pot);
+    sig.state = api.pot_state >= 0 ? get<int32_t>(pot, api.pot_state) : 0;
+    if (food) {
+        sig.kind = 1;
+        sig.food = pdid_of(food);
+    } else {
+        sig.kind = get<int64_t>(pot, api.pot_snow) > 0 ? 2 : get<int64_t>(pot, api.pot_water) > 0 ? 3 : 0;
+    }
+    return sig;
 }
 
 std::string describe_pot(Il2CppObject* pot) {
@@ -586,6 +648,10 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
     const std::string food_ours = food_wire.empty() ? std::string() : our_id(food_wire);
     if (food_ours != food_wire) replace_all(text, food_wire, food_ours);
     const std::string before = describe_pot(pot);
+    // TLDCoop_DLC: the host's regular word on a pot we're looking into right now (same contents, its progress) waits.
+    const PotSig had = pot_sig(pot);
+    const bool same_contents = food_ours.empty() ? had.kind != 1 : had.food == food_ours;
+    if (same_contents && api.pot_inspected >= 0 && get<bool>(pot, api.pot_inspected)) return;
     if (Il2CppObject* food = food_in(pot); food && pdid_of(food) != food_ours) {
         const std::string id = pdid_of(food);
         g_known.erase(id);  // taken out there (the other game tells us): not gone here by our doing
@@ -594,6 +660,18 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
     void* args[] = {il2::il2cpp_string_new(text.c_str())};
     il2::invoke(api.pot_load, pot, args);
     g_pots_changed.erase(pot);
+    // TLDCoop_DLC: what's in it shows (the snow or water in a can looked empty), and what we just loaded isn't
+    // told back as our own change.
+    if (api.pot_water_mesh && (get<int64_t>(pot, api.pot_snow) > 0 || get<int64_t>(pot, api.pot_water) > 0))
+        il2::invoke(api.pot_water_mesh, pot);
+    if (api.pot_visuals) il2::invoke(api.pot_visuals, pot);
+    put<bool>(pot, api.pot_force_particles, true);
+    PotSig sig = pot_sig(pot);
+    if (!food_ours.empty()) {  // the food goes in on the pot's next frame
+        sig.kind = 1;
+        sig.food = food_ours;
+    }
+    g_pot_sig[pot] = sig;
     std::string after = describe_pot(pot);  // the food goes in on the pot's next frame (FindGearItemBeingCooked)
     if (!food_ours.empty()) {
         Il2CppObject* food = gear_on(object_by_pdid(food_ours));
@@ -676,9 +754,11 @@ void send_put(Il2CppObject* gi, const std::string& pdid, Known& k, double now, u
     k.told = pos;
     k.shared = true;
     k.changed_ms = now;
-    if (change)
-        logx::info("items: %s (%s) %s; told the other player (%zu chars)", m.prefab.c_str(), short_id(m.pdid).c_str(),
-                   change, m.gear.size());
+    if (change) {
+        if (*change)  // ("" : a regular word, not logged)
+            logx::info("items: %s (%s) %s; told the other player (%zu chars)", m.prefab.c_str(),
+                       short_id(m.pdid).c_str(), change, m.gear.size());
+    }
     else if (!(flags & net::kItemAnswer))
         logx::info("items: %s %s (%s) at (%.1f, %.1f, %.1f); told the other player (%zu chars)", m.prefab.c_str(),
                    was_shared ? "moved to" : "is new here,", short_id(m.pdid).c_str(), pos.x, pos.y, pos.z, m.gear.size());
@@ -927,6 +1007,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
             logx::info("items: the other player's %s (%s) moved to (%.1f, %.1f, %.1f)", m.prefab.c_str(),
                        short_id(m.pdid).c_str(), pos.x, pos.y, pos.z);
         load_snare(gi, m.gear, m.pdid, k);
+        load_opened(gi, m.gear, k);
         load_pot(gi, m.gear, m.pdid);
         return;
     }
@@ -1184,6 +1265,7 @@ void scan(double now) {
             k.moved_ms = now;
             k.snare = snare_state(l.gi);
             k.unique = is_unique(l.gi);
+            k.opened = opened_of(l.gi);
             if (k.unique) {
                 logx::info("items: %s (%s) at (%.1f, %.1f, %.1f) is one of a kind: %s", k.prefab.c_str(),
                            short_id(l.pdid).c_str(), l.pos.x, l.pos.y, l.pos.z,
@@ -1211,21 +1293,43 @@ void scan(double now) {
                 continue;
             }
         }
-        if (Il2CppObject* pot = pot_of(l.gi); pot && g_pots_changed.erase(pot) && k.shared) {  // put in or taken out
-            if (Il2CppObject* food = food_in(pot)) {  // the food first: the pot finds it by id
-                const std::string id = pdid_of(food);
-                const auto f = g_known.find(id);
-                if (f == g_known.end() || !f->second.shared) {
+        if (const bool opened = opened_of(l.gi); opened != k.opened) {  // TLDCoop_DLC: a can opened here
+            k.opened = opened;
+            if (k.shared && opened) {
+                send_put(l.gi, l.pdid, k, now, 0, 0, "was opened");
+                continue;
+            }
+        }
+        if (Il2CppObject* pot = pot_of(l.gi)) {
+            // Put in or taken out (the hooks), or (TLDCoop_DLC) what's in it changed another way: snow put in, or
+            // (the host: its game decides how cooking goes) snow melted, food ready or ruined. The host also says
+            // how a pot that is cooking is getting on, every kPotSyncMs.
+            const PotSig sig = pot_sig(pot);
+            PotSig& last = g_pot_sig[pot];
+            bool tell = g_pots_changed.erase(pot) > 0;
+            if (last.kind >= 0 && !(sig == last)) {
+                if (hosting())
+                    tell = true;
+                else if (sig.kind != last.kind && !(last.kind == 2 && sig.kind == 3))  // (snow melts by itself)
+                    tell = true;
+            }
+            last = sig;
+            const bool regular = !tell && hosting() && sig.kind > 0 && sig.state == 0 && now - k.changed_ms >= kPotSyncMs;
+            if ((tell || regular) && k.shared) {
+                if (Il2CppObject* food = food_in(pot); food && tell) {  // the food first: the pot finds it by id
+                    const std::string id = pdid_of(food);
                     Known& fk = g_known[id];
                     fk.prefab = name_of(food);
                     pose_of(food, fk.pos, fk.rot);
                     fk.units = units_of(food);
+                    fk.opened = opened_of(food);
                     fk.moved_ms = now;
+                    // (always: its record changed, opened for one, even if the other player had it lying before)
                     send_put(food, id, fk, now, 0, 0, "went into a pot");
                 }
+                send_put(l.gi, l.pdid, k, now, 0, 0, tell ? describe_pot(pot).c_str() : "");
+                continue;
             }
-            send_put(l.gi, l.pdid, k, now, 0, 0, describe_pot(pot).c_str());
-            continue;
         }
         const double settle = burning_light(l.gi) ? kSettleLitMs : kSettleMs;
         if (now - k.moved_ms >= settle && (!k.shared || distance(k.pos, k.told) > kMovedMetres))
@@ -1678,7 +1782,16 @@ bool init() {
         api.pot_snow = il2::field_offset(pot, "m_LitersSnowBeingMelted");
         api.pot_load = il2::find_method_params(pot, "Deserialize", {"System.String"});
         api.pot_drop_food = il2::find_method(pot, "DestroyGearItemBeingCooked", 0);
+        api.pot_inspected = il2::field_offset(pot, "m_IsBeingInspected");
+        api.pot_force_particles = il2::field_offset(pot, "m_ForceParticleUpdate");
+        api.pot_visuals = il2::find_method(pot, "UpdateVisuals", 0);
+        api.pot_water_mesh = il2::find_method(pot, "SetUpWaterMesh", 0);
     }
+    api.food = il2::field_offset(gear, "m_FoodItem");
+    if (Il2CppClass* food = il2::find_class(kGame, "", "FoodItem")) api.food_opened = il2::field_offset(food, "m_Opened");
+    api.smash = il2::field_offset(gear, "m_SmashableItem");
+    if (Il2CppClass* smash = il2::find_class(kGame, "", "SmashableItem"))
+        api.smashed = il2::field_offset(smash, "m_HasBeenSmashed");
     g_ready = api.component_go && api.go_active && api.go_component && api.get_position && api.get_parent && api.set_pose &&
               api.gear_type && api.in_inventory >= 0 && api.no_save >= 0 && api.object_guid >= 0 &&
               (api.guid >= 0 || api.cached_pdid >= 0) && api.guid_of_go && api.attach_guid &&
@@ -1723,6 +1836,7 @@ void on_frame(bool in_game) {
     if (settled != g_scene) {
         if (!g_scene.empty()) logx::info("items: left %s", g_scene.c_str());
         g_known.clear();
+        g_pot_sig.clear();
         g_alias_in.clear();
         g_alias_out.clear();
         g_scene = settled;
