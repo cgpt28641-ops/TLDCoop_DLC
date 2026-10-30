@@ -52,6 +52,10 @@ constexpr const char* kBodies[] = {
     "jeremiah", "methuselah", "heller", "jace", "mathis", "terry", "atwood",
     "convict_c", "convict_e", "convict_f", "convict_g", "millworker", "patron1", "patron3", "patron4", "patron5",
 };
+// TLDCoop_DLC: the characters a player can pick (the co-op setup and the death screen): the ones whose own jacket
+// and sweater are separate parts, so the worn clothes (clothespack) fit them cleanly. The rest stay accepted from the
+// network, for older builds.
+constexpr const char* kChoosableBodies[] = {"mackenzie", "mackenzie_indoor", "astrid", "astrid_outdoor", "molly"};
 constexpr const char* kBodyPackFile = "tldcoop_bodies.bundle";
 constexpr const char* kFemaleBodies[] = {"astrid", "astrid_outdoor", "molly", "jane", "jane_outdoor"};
 
@@ -2663,6 +2667,18 @@ std::string tune_pose(const std::string& args) {
         }
     }
     return out;
+}
+
+std::string choosable_body_ids() {
+    std::string ids;
+    for (const char* b : kChoosableBodies) ids += std::string(ids.empty() ? "" : ", ") + b;
+    return ids;
+}
+
+bool is_choosable_body(const std::string& id) {
+    for (const char* b : kChoosableBodies)
+        if (id == b) return true;
+    return false;
 }
 
 std::string body_ids() {

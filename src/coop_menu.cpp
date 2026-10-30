@@ -1267,9 +1267,9 @@ void load_choices() {
     g.hud[0] = g.settings.hud_names;
     g.hud[1] = g.settings.hud_radar;
     g.hud[2] = g.settings.hud_chart;
-    // Characters first, the capsule last.
+    // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
-    std::string ids = avatar::body_ids();
+    std::string ids = avatar::choosable_body_ids();
     for (size_t pos = 0; pos <= ids.size();) {
         size_t comma = ids.find(", ", pos);
         std::string id = ids.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
@@ -1277,7 +1277,6 @@ void load_choices() {
         if (comma == std::string::npos) break;
         pos = comma + 2;
     }
-    g.bodies.push_back("capsule");
     g.body = 0;
     for (size_t i = 0; i < g.bodies.size(); ++i)
         if (g.bodies[i] == g.settings.body) g.body = i;

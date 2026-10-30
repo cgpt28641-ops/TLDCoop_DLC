@@ -76,6 +76,9 @@ std::vector<Seen> seen();
 
 bool is_known_body(const std::string& id);
 std::string body_ids();  // "capsule, wolf, greywolf, ..." for messages and the ini
+// TLDCoop_DLC: the characters a player may pick ("mackenzie, mackenzie_indoor, astrid, astrid_outdoor, molly")
+std::string choosable_body_ids();
+bool is_choosable_body(const std::string& id);
 bool female_body(const std::string& id);  // the body pack's female rig (the clips come per rig)
 bool female(uint8_t player);              // their avatar's body is
 

@@ -184,10 +184,10 @@ void apply_net_settings(const config::Settings& s, bool startup) {
     c.port = s.port;
     c.name = s.name;
     c.body = s.body;
-    if (!avatar::is_known_body(c.body)) {
-        logx::warn("net: unknown body '%s' in coop.ini (choose from: %s); using capsule", c.body.c_str(),
-                   avatar::body_ids().c_str());
-        c.body = "capsule";
+    if (!avatar::is_choosable_body(c.body)) {
+        logx::warn("net: body '%s' in coop.ini can't be chosen (choose from: %s); using mackenzie", c.body.c_str(),
+                   avatar::choosable_body_ids().c_str());
+        c.body = "mackenzie";
     }
     c.game_version = paths::game_version();
     c.content = optional_content::installed();

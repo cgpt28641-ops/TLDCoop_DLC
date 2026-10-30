@@ -474,7 +474,7 @@ void leave_body() {
 
 void load_bodies() {
     g_bodies.clear();
-    const std::string ids = avatar::body_ids();
+    const std::string ids = avatar::choosable_body_ids();
     for (size_t pos = 0; pos <= ids.size();) {
         const size_t comma = ids.find(", ", pos);
         std::string id = ids.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
@@ -482,7 +482,6 @@ void load_bodies() {
         if (comma == std::string::npos) break;
         pos = comma + 2;
     }
-    g_bodies.push_back("capsule");
     const std::string current = config::load().body;
     g_choice = 0;
     for (size_t i = 0; i < g_bodies.size(); ++i)

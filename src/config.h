@@ -16,7 +16,7 @@ struct Settings {
     std::string host_ip = "127.0.0.1"; // UDP join: the host's address
     uint16_t port = 27015;
     std::string name = "Player";
-    std::string body = "capsule";      // how the other player sees you (see the list in coop.ini)
+    std::string body = "mackenzie";      // how the other player sees you (see the list in coop.ini)
     std::string voice = "male";        // male | female: your survivor's voice (TLD's own Male/Female choice)
     bool ask_to_join = true;           // hosting from the menu: each friend asks to join (LET IN / TURN AWAY)
     int backups = 5;                   // TLDCoop_DLC: copies of the saves kept (coop_backup), 0 none
