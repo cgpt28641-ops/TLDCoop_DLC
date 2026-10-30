@@ -28,6 +28,10 @@ namespace TLDCoop {
     public string[] items;
     public string[] preview_characters;
     public string[] preview_outfits_flat;  // (unused: JsonUtility can't read nested arrays; see ReadOutfits)
+    // Fit fixes: an item moved up (+) or down (-) this many metres (hats), or pushed out along its normals (coats
+    // over the body's own clothes).
+    public string[] lift_items; public float[] lift_metres;
+    public string[] inflate_items; public float[] inflate_metres;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -135,7 +139,14 @@ public static class BuildClothes {
             foreach (string item in list.items) {
                 string file = Path.Combine(chars, character, item + ".gltf");
                 if (!File.Exists(file)) { skipped++; continue; }
-                var result = Convert(file, character, item, materials, opaque, twoSided);
+                float lift = 0, inflate = 0;
+                if (list.lift_items != null)
+                    for (int i = 0; i < list.lift_items.Length && i < list.lift_metres.Length; i++)
+                        if (list.lift_items[i] == item) lift = list.lift_metres[i];
+                if (list.inflate_items != null)
+                    for (int i = 0; i < list.inflate_items.Length && i < list.inflate_metres.Length; i++)
+                        if (list.inflate_items[i] == item) inflate = list.inflate_metres[i];
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate);
                 triangles += result;
                 meshes++;
             }
@@ -160,7 +171,7 @@ public static class BuildClothes {
     // --- one glTF -> Mesh + TextAsset -----------------------------------------------------------------------------
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
-                        Shader opaque, Shader twoSided) {
+                        Shader opaque, Shader twoSided, float lift, float inflate) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -184,7 +195,8 @@ public static class BuildClothes {
             float[] J = ReadFloats(g, bin, p.attributes.JOINTS_0);
             float[] W = ReadFloats(g, bin, p.attributes.WEIGHTS_0);
             for (int i = 0; i < P.Length; i++) {
-                verts.Add(new Vector3(-P[i].x, P[i].y, P[i].z));
+                Vector3 nrm = N != null ? new Vector3(-N[i].x, N[i].y, N[i].z) : Vector3.zero;
+                verts.Add(new Vector3(-P[i].x, P[i].y + lift, P[i].z) + nrm.normalized * inflate);
                 normals.Add(N != null ? new Vector3(-N[i].x, N[i].y, N[i].z) : Vector3.up);
                 uvs.Add(T != null ? new Vector2(T[i * 2], 1f - T[i * 2 + 1]) : Vector2.zero);
                 var bw = new BoneWeight {
@@ -353,6 +365,14 @@ public static class BuildClothes {
                     var body = (GameObject)UnityEngine.Object.Instantiate(prefab);
                     var anim = body.GetComponentInChildren<Animation>();
                     if (anim) anim.enabled = false;  // the rig's own pose, as the clothes were fitted
+                    if (o == 0)  // what the body is made of (can its own clothes be hidden under ours?)
+                        foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
+                            var m = r.sharedMesh;
+                            Debug.Log($"[Clothes] body {character}: renderer {r.name}, mesh {(m ? m.name : "none")}, " +
+                                      $"readable {(m ? m.isReadable : false)}, {(m ? m.subMeshCount : 0)} submeshes, " +
+                                      $"{(m ? m.vertexCount : 0)} vertices, materials " +
+                                      string.Join("/", r.sharedMaterials.Select(x => x ? x.name : "-")));
+                        }
                     var dressed = new List<string>();
                     foreach (string item in outfits[o])
                         if (Dress(body, character, item)) dressed.Add(item);

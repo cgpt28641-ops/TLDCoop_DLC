@@ -7,6 +7,13 @@
     "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak", "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape", "GEAR_DownVest", "GEAR_InsulatedVest"
   ],
+  "lift_items": ["GEAR_BasicWoolHat", "GEAR_Toque", "GEAR_BaseballCap", "GEAR_RabbitskinHat"],
+  "lift_metres": [-0.08, -0.08, -0.04, 0.05],
+  "inflate_items": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
+                    "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak",
+                    "GEAR_PremiumWinterCoat", "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape",
+                    "GEAR_DownVest", "GEAR_InsulatedVest"],
+  "inflate_metres": [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
   "preview_characters": ["mackenzie", "astrid", "heller", "molly"],
   "preview_outfits": [
     ["GEAR_BasicWoolHat", "GEAR_BasicWinterCoat"],
