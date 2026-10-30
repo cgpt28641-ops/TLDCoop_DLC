@@ -813,11 +813,11 @@ public static class BuildClothes {
             go.transform.rotation = Quaternion.Euler(euler);
             return l;
         }
-        AddLight("Key", new Color(1f, 0.96f, 0.9f), 1.25f, new Vector3(40, 150, 0), true);
-        AddLight("Fill", new Color(0.75f, 0.85f, 1f), 0.35f, new Vector3(15, -130, 0), false);
-        AddLight("Rim", new Color(0.9f, 0.95f, 1f), 0.6f, new Vector3(25, 20, 0), false);
+        AddLight("Key", new Color(1f, 0.96f, 0.9f), 0.95f, new Vector3(40, 150, 0), true);
+        AddLight("Fill", new Color(0.75f, 0.85f, 1f), 0.28f, new Vector3(15, -130, 0), false);
+        AddLight("Rim", new Color(0.9f, 0.95f, 1f), 0.35f, new Vector3(25, 20, 0), false);
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = new Color(0.42f, 0.46f, 0.55f);
+        RenderSettings.ambientSkyColor = new Color(0.36f, 0.39f, 0.46f);
         RenderSettings.ambientEquatorColor = new Color(0.3f, 0.31f, 0.34f);
         RenderSettings.ambientGroundColor = new Color(0.36f, 0.37f, 0.4f);
         QualitySettings.shadows = ShadowQuality.All;
@@ -838,6 +838,7 @@ public static class BuildClothes {
                 if (prefab == null) { Debug.LogWarning("[Clothes] no body " + character); continue; }
                 float[] yaws = { 0f, 90f, 180f };  // the body faces +z: front, side, back
                 var sheet = new Texture2D(cellW * outfits.Count, cellH * yaws.Length, TextureFormat.RGB24, false);
+                var close = new Texture2D(cellW * outfits.Count, cellH * yaws.Length, TextureFormat.RGB24, false);  // head and shoulders
                 for (int o = 0; o < outfits.Count; o++) {
                     var body = (GameObject)UnityEngine.Object.Instantiate(prefab);
                     var anim = body.GetComponentInChildren<Animation>();
@@ -853,24 +854,32 @@ public static class BuildClothes {
                     var dressed = new List<string>();
                     foreach (string item in outfits[o])
                         if (Dress(body, character, item)) dressed.Add(item);
-                    for (int y = 0; y < yaws.Length; y++) {
-                        float yaw = yaws[y];
-                        cam.transform.position = Quaternion.Euler(0, yaw, 0) * new Vector3(0, 0, 5.2f) + new Vector3(0, 1.0f, 0);
-                        cam.transform.LookAt(new Vector3(0, 1.0f, 0));
-                        cam.Render();
-                        RenderTexture.active = rt;
-                        var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
-                        tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
-                        tex.Apply();
-                        sheet.SetPixels(o * cellW, (yaws.Length - 1 - y) * cellH, cellW, cellH, tex.GetPixels());
-                        UnityEngine.Object.DestroyImmediate(tex);
-                        shots++;
-                    }
+                    var headPos = body.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == "Head_jnt");
+                    float headY = headPos ? headPos.position.y + 0.08f : 1.65f;
+                    for (int pass = 0; pass < 2; pass++)
+                        for (int y = 0; y < yaws.Length; y++) {
+                            float yaw = yaws[y];
+                            var aim = pass == 0 ? new Vector3(0, 1.0f, 0) : new Vector3(0, headY - 0.12f, 0);
+                            float dist = pass == 0 ? 5.2f : 1.9f;  // the whole body, or head and shoulders
+                            cam.transform.position = Quaternion.Euler(0, yaw, 0) * new Vector3(0, 0, dist) + aim;
+                            cam.transform.LookAt(aim);
+                            cam.Render();
+                            RenderTexture.active = rt;
+                            var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+                            tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+                            tex.Apply();
+                            (pass == 0 ? sheet : close).SetPixels(o * cellW, (yaws.Length - 1 - y) * cellH, cellW, cellH, tex.GetPixels());
+                            UnityEngine.Object.DestroyImmediate(tex);
+                            shots++;
+                        }
                     Debug.Log($"[Clothes] preview {character} outfit {o + 1}: {string.Join(", ", dressed)}");
                     UnityEngine.Object.DestroyImmediate(body);
                 }
                 sheet.Apply();
                 File.WriteAllBytes($"previews/sheet_{character}.jpg", sheet.EncodeToJPG(88));
+                close.Apply();
+                File.WriteAllBytes($"previews/close_{character}.jpg", close.EncodeToJPG(88));
+                UnityEngine.Object.DestroyImmediate(close);
                 UnityEngine.Object.DestroyImmediate(sheet);
             }
         } finally {

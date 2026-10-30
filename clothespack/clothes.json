@@ -19,8 +19,7 @@
     "GEAR_MooseHideCloak",
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
-    "GEAR_SkiJacket",
-    "GEAR_WolfSkinCape"
+    "GEAR_SkiJacket"
   ],
   "lift_items": [
     "GEAR_BaseballCap",
@@ -43,7 +42,6 @@
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
-    "GEAR_WolfSkinCape",
     "GEAR_BaseballCap",
     "GEAR_RabbitskinHat"
   ],
@@ -60,7 +58,6 @@
     0.005,
     0.005,
     0.005,
-    0.02,
     0.02,
     0.012
   ],
@@ -87,11 +84,9 @@
     "GEAR_MooseHideCloak",
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
-    "GEAR_SkiJacket",
-    "GEAR_WolfSkinCape"
+    "GEAR_SkiJacket"
   ],
   "collar_metres": [
-    -0.01,
     -0.01,
     -0.01,
     -0.01,
@@ -158,10 +153,6 @@
     [
       "GEAR_EarMuffs",
       "GEAR_SkiJacket"
-    ],
-    [
-      "GEAR_Balaclava",
-      "GEAR_WolfSkinCape"
     ]
   ],
   "hide_rules": [
@@ -234,7 +225,7 @@
       "scale": 0.95,
       "centre": [
         0,
-        0.075,
+        0.035,
         0.02
       ],
       "weights": "headneck"
