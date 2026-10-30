@@ -151,6 +151,8 @@ struct Api {
     const MethodInfo* camera_anim_idle = nullptr;    // PlayerCameraAnim.PlayingIdle()
     ptrdiff_t camera_anim_animator = -1, camera_idle_main = -1, camera_idle_hip = -1;  // m_Animator, idle state hashes
     const MethodInfo* animator_play = nullptr;       // Animator.Play(int stateNameHash, int layer, float normalizedTime)
+    const MethodInfo* animator_rebind = nullptr;     // Animator.Rebind(): every state and parameter back to its start
+    ptrdiff_t player_anim_animator = -1;             // PlayerAnimation.m_Animator (the first-person arms)
     const MethodInfo* player_anim = nullptr;         // static GameManager.GetPlayerAnimationComponent()
     const MethodInfo* struggle_end_anim = nullptr;   // PlayerAnimation.Trigger_Struggle_End()
     const MethodInfo* struggle_reset_anim = nullptr; // PlayerAnimation.ResetStruggleStartEnd()
@@ -304,6 +306,7 @@ std::vector<std::string> g_bodies;              // the survivors to choose from 
 size_t g_choice = 0;
 std::unordered_map<std::string, std::string> g_names;  // body (CustomSpawnedItem guid) -> whose
 double g_save_at = 0;                           // the respawned character is saved then (0: nothing to save)
+bool g_rebind_rigs = false;                    // TLDCoop_DLC: the next controls_back rebinds the arms' and camera's rigs
 double g_controls_again_at = 0;                 // TLDCoop_DLC: and its controls looked at again then
 std::map<uint8_t, bool> g_others_dead;          // other players -> dead when we last looked
 bool g_keys_down[4] = {};
@@ -849,9 +852,24 @@ void controls_back(Il2CppObject* pm) {
             note(b);
         }
     }
-    // The arms' rig: the struggle's end and their usual hold (TLD does these when a struggle ends in play).
+    // The arms' rig (first person): whatever the death left it in (a struggle's, the fall's) — the arms hung in the air
+    // apart from the camera once the camera was idle again. Both rigs from their start (Animator.Rebind), once a respawn,
+    // then the usual hold.
     if (Il2CppObject* pa = api.player_anim ? il2::invoke(api.player_anim, nullptr) : nullptr) {
-        if (api.struggle_end_anim) il2::invoke(api.struggle_end_anim, pa);
+        if (g_rebind_rigs && api.animator_rebind) {
+            g_rebind_rigs = false;
+            int rebound = 0;
+            for (Il2CppObject* animator :
+                 {api.player_anim_animator >= 0 ? get<Il2CppObject*>(pa, api.player_anim_animator) : nullptr,
+                  api.camera_anim && api.camera_anim_animator >= 0
+                      ? get<Il2CppObject*>(il2::invoke(api.camera_anim, nullptr), api.camera_anim_animator)
+                      : nullptr}) {
+                if (!alive(animator)) continue;
+                il2::invoke(api.animator_rebind, animator);
+                ++rebound;
+            }
+            if (rebound) note(rebound == 2 ? "the arms' and camera's animations from their start" : "an animation rig from its start");
+        }
         if (api.struggle_reset_anim) il2::invoke(api.struggle_reset_anim, pa);
         if (api.aiming_reset) il2::invoke(api.aiming_reset, pa);
         if (api.hands_restore) il2::invoke(api.hands_restore, pa);
@@ -974,6 +992,7 @@ bool do_respawn(const std::string& wanted) {
     int32_t normal = kNormal;
     void* mode_args[] = {&normal};
     il2::invoke(api.set_mode, pm, mode_args);
+    g_rebind_rigs = true;  // TLDCoop_DLC
     controls_back(pm);
     g_dead = false;  // (before moving: our state says alive again)
     const std::string where = go_somewhere();
@@ -1339,10 +1358,12 @@ bool init() {
         api.camera_idle_hip = il2::field_offset_quiet(ca, "m_HipLayer_AnimState_Idle");
     }
     if (Il2CppClass* animator = il2::find_class("UnityEngine.AnimationModule.dll", "UnityEngine", "Animator"))
-        api.animator_play = il2::find_method_params_quiet(animator, "Play", {"System.Int32", "System.Int32", "System.Single"});
+        api.animator_play = il2::find_method_params_quiet(animator, "Play", {"System.Int32", "System.Int32", "System.Single"}),
+        api.animator_rebind = il2::find_method_params_quiet(animator, "Rebind", {});
     api.player_anim = il2::find_method_quiet(game_manager, "GetPlayerAnimationComponent", 0);
     if (Il2CppClass* pa = il2::find_class(kGame, "", "PlayerAnimation")) {
         api.struggle_end_anim = il2::find_method_quiet(pa, "Trigger_Struggle_End", 0);
+        api.player_anim_animator = il2::field_offset_quiet(pa, "m_Animator");
         api.struggle_reset_anim = il2::find_method_quiet(pa, "ResetStruggleStartEnd", 0);
         api.aiming_reset = il2::find_method_quiet(pa, "FullResetAimingModes", 0);
         api.hands_restore = il2::find_method_quiet(pa, "RestoreCameraBasedHandPositioning", 0);
