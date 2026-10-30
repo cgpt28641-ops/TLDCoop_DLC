@@ -101,9 +101,6 @@
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
     "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest",
-    "GEAR_BallisticVest",
     "GEAR_CottonHoodie",
     "GEAR_CottonShirt",
     "GEAR_CowichanSweater",
@@ -324,10 +321,12 @@
         "GEAR_ImprovisedHat"
       ],
       "words": [
-        "Hair",
         "Toque",
         "Beanie",
         "Hat"
+      ],
+      "regions": [
+        "hairtop"
       ]
     },
     {

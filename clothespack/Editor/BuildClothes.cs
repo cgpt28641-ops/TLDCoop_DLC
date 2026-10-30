@@ -598,6 +598,32 @@ public static class BuildClothes {
         }
         var mats = new List<string>();
         for (int m = 0; m < matCount; m++) mats.Add(System.Text.Encoding.UTF8.GetString(br.ReadBytes(br.ReadInt32())));
+        // The hair split at a knitted hat's rim: "hairtop" (inside the hat, hidden under it) and the rest (fringe,
+        // nape, ponytail, still drawn: hiding all the hair shows the holes of the scalp under it). The rim: 2.5 cm above
+        // the eyes at the front, 0.5 cm under them at the back.
+        {
+            var eyeIdx = parts.Select((p, i) => (p, i)).Where(x => x.p.EndsWith(":eyes")).SelectMany(x => tris[x.i]).ToList();
+            if (eyeIdx.Count > 0) {
+                float eyeY = eyeIdx.Average(i => v[i].y), eyeZ = eyeIdx.Max(i => v[i].z);
+                float RimY(float z) => eyeY + Mathf.Lerp(0.025f, -0.005f, Mathf.Clamp01((eyeZ - 0.03f - z) / 0.15f));
+                int count0 = parts.Count;
+                for (int k = 0; k < count0; k++) {
+                    var pr = parts[k].Split(':');
+                    int sub = int.Parse(pr[0]);
+                    if (pr[1] != "head" || sub >= mats.Count || mats[sub].IndexOf("hair", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    var top = new List<int>(); var rest = new List<int>();
+                    var t = tris[k];
+                    for (int q = 0; q + 2 < t.Length; q += 3) {
+                        var cen = (v[t[q]] + v[t[q + 1]] + v[t[q + 2]]) / 3;
+                        (cen.y > RimY(cen.z) ? top : rest).AddRange(new[] { t[q], t[q + 1], t[q + 2] });
+                    }
+                    if (top.Count == 0) continue;
+                    tris[k] = rest.ToArray();
+                    parts.Add($"{sub}:hairtop"); tris.Add(top.ToArray());
+                    Debug.Log($"[Clothes] {character}: hair split at a hat's rim, {top.Count / 3} triangles inside, {rest.Count / 3} below");
+                }
+            }
+        }
         var mesh = new Mesh { name = "BodyCut_" + character, indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
         mesh.vertices = v; mesh.normals = nr; mesh.tangents = tg; mesh.uv = uv; mesh.boneWeights = bw; mesh.bindposes = bind;
         mesh.subMeshCount = tris.Count;
