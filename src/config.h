@@ -43,6 +43,9 @@ struct Settings {
     float ambient_fill_color = 0.5f;   // how coloured TLD's coloured fill lights stay (1 = TLD's)
     float ambient_aurora_intensity = 0.8f;
     float ambient_aurora_saturation = 1.4f;
+    // TLDCoop_DLC: [trees] Dynamic Trees (built in, with its authors' permission): snow on the trees that builds up
+    // in snowy, windy weather and goes in clear, windy weather. In co-op the host's choice and the host's snow.
+    bool dynamic_trees = true;
     // [test] section, for automated runs only (no menu clicks):
     std::string test_resume;           // load this save slot (e.g. sandbox5) as soon as the main menu is up
     bool test_nosave = false;          // never save: a second copy of the game playing the same save

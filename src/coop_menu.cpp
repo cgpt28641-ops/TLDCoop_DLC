@@ -100,6 +100,10 @@ constexpr ModSwitch kMods[] = {
      "Ambient Lights: daylight through every building's windows that follows the time of day and the weather, and "
      "TLD's indoor lighting toned to match. You decide for everyone in your game. (Built in, after the mod by Xpazeman "
      "and Thekillergreece; how bright: coop.ini [ambient].)"},
+    {"DYNAMIC TREES",
+     "Dynamic Trees: snow on the trees builds up in snowy, windy weather and goes in clear, windy weather; the pines "
+     "and cedars go from green to white. You decide for everyone, and everyone's trees carry your snow. (Built in, "
+     "by Fuar, The Illusion and Jods, with their permission.)"},
 };
 constexpr int kModCount = static_cast<int>(sizeof(kMods) / sizeof(kMods[0]));
 constexpr int kModRows[] = {kMode, kCharacter, kNames, kRadar, kChart};  // rows with arrows (VOICE may be hidden)
@@ -1330,6 +1334,7 @@ void load_choices() {
     g.hud[2] = g.settings.hud_chart;
     g.mods = false;
     g.mod_on[0] = g.settings.ambient_lights;
+    g.mod_on[1] = g.settings.dynamic_trees;
     // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
     std::string ids = avatar::choosable_body_ids();
@@ -1520,7 +1525,10 @@ void close_menu(bool confirmed) {
         g.settings.hud_names = g.hud[0];
         g.settings.hud_radar = g.hud[1];
         g.settings.hud_chart = g.hud[2];
-        if (g.mode == kHost) g.settings.ambient_lights = g.mod_on[0];
+        if (g.mode == kHost) {
+            g.settings.ambient_lights = g.mod_on[0];
+            g.settings.dynamic_trees = g.mod_on[1];
+        }
         if (by_code) g.settings.transport = "steam";  // codes run through Steam
         if (g.mode == kJoin) g.settings.join_code = g.join_code;
         config::save(g.settings);

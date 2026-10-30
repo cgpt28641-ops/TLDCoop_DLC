@@ -89,8 +89,9 @@
 //   BloodMark either       scene[48], u8 kind, f32 x y z, f32 a b, i32 count: blood a bleeding player left in the
 //                          sender's world (TLD's BloodTrail: kind 0 a drop at x y z, 1 a stain (a b: its scale's range),
 //                          2 a cluster of `count` drops); the others' games leave the same (TLDCoop_DLC)
-//   Features host->client  u32 bits (kFeature*): what the host's game has on that every game follows (Ambient
-//                          Lights), on connect and when it changes (TLDCoop_DLC)
+//   Features host->client  u32 bits (kFeature*), f32 tree snow (0-100): what the host's game has on that every game
+//                          follows (Ambient Lights, Dynamic Trees) and how much snow its trees carry, on connect,
+//                          when it changes and every few seconds (TLDCoop_DLC)
 //   SprayMark either       scene[48], decal id (u16 n + n), u8 gone, then (not gone) decal name (u16 n + n), f32 pos
 //                          xyz, normal xyz, scale xyz, yaw, colour rgba, i32 projectile, u8 indoors: a spray paint
 //                          marking put on or taken off a wall in the sender's world (it's on TLD's map too); the
@@ -120,7 +121,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 35;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 36;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -162,6 +163,7 @@ constexpr uint16_t kProtocolVersion = 35;  // v4: World. v5: Animals. v6: sounds
                                            // condition and afflictions
                                            // v35 (TLDCoop_DLC): the host's game features (Features: Ambient
                                            // Lights on or off)
+                                           // v36 (TLDCoop_DLC): Features: Dynamic Trees, the host's snow on trees
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -1167,10 +1169,15 @@ inline bool read_spray_mark(Reader& r, SprayMarkMsg& m) {
 
 // The host's game features (TLDCoop_DLC): what every game in the session follows the host on.
 constexpr uint32_t kFeatureAmbientLights = 1;  // Ambient Lights (built-in port of the MelonLoader mod)
-inline void write_features(Writer& w, uint32_t bits) { w.put<uint32_t>(bits); }
-inline bool read_features(Reader& r, uint32_t& bits) {
+constexpr uint32_t kFeatureDynamicTrees = 2;   // Dynamic Trees (built in, with its authors' permission)
+inline void write_features(Writer& w, uint32_t bits, float tree_snow) {
+    w.put<uint32_t>(bits);
+    w.put<float>(tree_snow);
+}
+inline bool read_features(Reader& r, uint32_t& bits, float& tree_snow) {
     bits = r.get<uint32_t>();
-    return r.ok();
+    tree_snow = r.get<float>();
+    return r.ok() && std::isfinite(tree_snow);
 }
 
 // Water sources (TLDCoop_DLC): toilets, tanks... TLD's WaterSource, named by its persistent id (or its position when it

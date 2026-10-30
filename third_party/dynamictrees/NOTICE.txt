@@ -1,0 +1,7 @@
+tldcoop_trees.bundle is the texture asset bundle ("dynamictrees") of DynamicTrees
+(https://github.com/Fuar11/DynamicTrees), by Fuar, The Illusion and Jods-Its (textures by Jods-Its),
+Copyright (c) 2023-2024. It has no published licence; it is included in TLDCoop_DLC, and the mod's logic
+ported to C++ (src/dynamic_trees.cpp, src/trees_math.h), with the authors' permission (obtained by
+cgpt28641-ops, 30.10.2026). Source commit: see `git log` of the upstream repository at the time of copying.
+Do not redistribute this file separately from TLDCoop_DLC without the authors' permission.
+2ff105757a345264e8a553ab046b0f5376681841

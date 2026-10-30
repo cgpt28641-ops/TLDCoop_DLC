@@ -3,7 +3,7 @@ TLDCoop_DLC - co-op do The Long Dark (przerobka TLDCoop v0.13.1 pod gre 2.58 i D
 
 Wymagania
 - The Long Dark 2.59 189140 S na Steam (Windows), Steam wlaczony.
-- Kazdy gracz instaluje TEN SAM zip (protokol v35; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
+- Kazdy gracz instaluje TEN SAM zip (protokol v36; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
 - Gracz dolaczajacy musi miec zainstalowane wszystkie DLC, ktore ma host
   (np. Tales from the Far Territory, Iron Road). Wiecej DLC niz host - w porzadku.
 
@@ -32,7 +32,12 @@ Ambient Lights (wbudowane, bez MelonLoadera)
   -> AMBIENT LIGHTS, dla wszystkich graczy. W solo: TLDCoop\coop.ini, [ambient] enabled=1 albo 0.
 - Jasnosc itp. kazdy u siebie: [ambient] intensity, range, night, ambience, fill, fill_color.
 - Jesli masz mod AmbientLights w MelonLoaderze (Mods\AmbientLights.dll), usun go: dopoki jest, TLDCoop mu ustepuje.
-- Wszyscy gracze musza miec te sama wersje TLDCoop (protokol v35).
+- Wszyscy gracze musza miec te sama wersje TLDCoop (protokol v36).
+
+Dynamic Trees (wbudowane, bez MelonLoadera)
+- Snieg na drzewach przybywa przy opadach i wietrze, znika przy suchej wietrznej pogodzie. Wlacza/wylacza HOST:
+  ekran co-opa -> MODS -> DYNAMIC TREES; drzewa znajomych maja snieg hosta. W solo: coop.ini, [trees] enabled=.
+- Tekstury sa w TLDCoop\tldcoop_trees.bundle (w tym zipie). Mod DynamicTrees z MelonLoadera usun z Mods.
 
 Kopia zapasowa zapisow
 - Przed kazda gra w co-op mod kopiuje zapisy do TLDCoop\backups\<data_godzina> (5 ostatnich, coop.ini [net] backups=).

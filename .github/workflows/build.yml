@@ -71,6 +71,7 @@ jobs:
           Expand-Archive upstream\TLDCoop-v0.13.1.zip upstream\zip
           Copy-Item -Recurse upstream\zip\TLDCoop pack\TLDCoop
           Copy-Item build\winhttp.dll pack\
+          Copy-Item third_party\dynamictrees\tldcoop_trees.bundle pack\TLDCoop\
           Copy-Item INSTALL_DLC.txt pack\INSTALL.txt
           foreach ($f in Get-ChildItem -Recurse -File pack) {
             $h = (Get-FileHash $f.FullName).Hash

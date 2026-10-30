@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "ambient_math.h"
+#include "coop_features.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
@@ -33,7 +34,6 @@ constexpr ptrdiff_t kCachedPtr = 0x10;                     // UnityEngine.Object
 constexpr size_t kLightDefSize = 40;                        // DarkLightingManager.LightDef: Light, float, Color, Vector3
 constexpr double kSettleMs = 4000;   // no InteriorLightingManager by then (dark interiors): set up anyway
 constexpr double kLookMs = 100;      // how often to look for the scene's InteriorLightingManager until it's there
-constexpr double kHostCheckMs = 2000;
 constexpr int kPointLight = 2, kSpotLight = 0;              // UnityEngine.LightType
 
 struct Vector3 {
@@ -86,12 +86,6 @@ struct Api {
 // --- state ---------------------------------------------------------------------------------------------------------
 
 ambient::Levels g_levels;
-bool g_own_on = true;           // coop.ini / the setup screen: ours (alone, or hosting)
-bool g_host_known = false;      // a client: the host's Features came
-bool g_host_on = false;
-uint32_t g_sent_bits = 0xffffffff;
-double g_last_check = 0;
-std::array<uint32_t, net::kMaxPlayers> g_told{};
 
 std::string g_scene;
 double g_scene_since = 0;
@@ -209,11 +203,7 @@ bool paused() {
     return p;
 }
 
-bool active() {
-    const auto role = netrt::role();
-    if (role && *role == net::Role::Client) return g_host_known && g_host_on;
-    return g_own_on;
-}
+bool active() { return coop_features::on(net::kFeatureAmbientLights); }
 
 bool acting() { return g_ready && active() && !paused(); }
 
@@ -558,56 +548,6 @@ void dark_coloured_detour(Il2CppObject* self, const MethodInfo* m) {
     dark_scale(self, api.dark_coloured, true);
 }
 
-// --- the host's choice -----------------------------------------------------------------------------------------------
-
-void host_frame() {
-    const net::Status st = netrt::status();
-    if (!st.connected) {
-        g_told.fill(0);
-        g_sent_bits = 0xffffffff;
-        return;
-    }
-    const uint32_t bits = g_own_on ? net::kFeatureAmbientLights : 0;
-    std::vector<uint8_t> fresh;
-    for (const net::PlayerInfo& p : st.players)
-        if (p.linked && p.id < net::kMaxPlayers && g_told[p.id] != p.link) fresh.push_back(p.id);
-    const double now = now_ms();
-    if (fresh.empty() && bits == g_sent_bits && now - g_last_check < kHostCheckMs) return;
-    g_last_check = now;
-    net::Writer w(net::Msg::Features, 64);
-    net::write_features(w, bits);
-    if (bits != g_sent_bits) {
-        netrt::send_packet(w, true);
-        g_sent_bits = bits;
-        for (const net::PlayerInfo& p : st.players)
-            if (p.linked && p.id < net::kMaxPlayers) g_told[p.id] = p.link;
-        logx::info("ambient: told everyone Ambient Lights is %s", bits ? "on" : "off");
-        return;
-    }
-    for (uint8_t id : fresh) {
-        netrt::send_packet_to(id, w, true);
-        for (const net::PlayerInfo& p : st.players)
-            if (p.id == id) g_told[id] = p.link;
-        logx::info("ambient: told player %u Ambient Lights is %s", id, bits ? "on" : "off");
-    }
-}
-
-void client_frame() {
-    static std::vector<net::Packet> in;
-    in.clear();
-    netrt::drain_packets(net::Msg::Features, in);
-    for (const net::Packet& p : in) {
-        net::Reader r = net::packet_body(p);
-        uint32_t bits = 0;
-        if (!net::read_features(r, bits)) continue;
-        const bool on = (bits & net::kFeatureAmbientLights) != 0;
-        if (!g_host_known || on != g_host_on)
-            logx::info("ambient: the host has Ambient Lights %s; so do we", on ? "on" : "off");
-        g_host_known = true;
-        g_host_on = on;
-    }
-}
-
 bool resolve() {
     Il2CppClass* object = il2::find_class(kCore, "UnityEngine", "Object");
     Il2CppClass* go = il2::find_class(kCore, "UnityEngine", "GameObject");
@@ -753,7 +693,7 @@ void init() {
 }
 
 void set_settings(const config::Settings& s) {
-    g_own_on = s.ambient_lights;
+    coop_features::set_own(net::kFeatureAmbientLights, s.ambient_lights);
     g_levels.intensity = s.ambient_intensity;
     g_levels.range = s.ambient_range;
     g_levels.night = s.ambient_night;
@@ -763,16 +703,12 @@ void set_settings(const config::Settings& s) {
     g_levels.aurora_intensity = s.ambient_aurora_intensity;
     g_levels.aurora_saturation = s.ambient_aurora_saturation;
     logx::info("ambient: %s (intensity %.2f range %.2f night %d ambience %.2f fill %.2f/%.2f)",
-               g_own_on ? "on" : "off", g_levels.intensity, g_levels.range, g_levels.night, g_levels.ambience,
+               s.ambient_lights ? "on" : "off", g_levels.intensity, g_levels.range, g_levels.night, g_levels.ambience,
                g_levels.fill, g_levels.fill_color);
 }
 
 void on_frame(const std::string& scene, bool in_game) {
     if (!api.ok) return;
-    const auto role = netrt::role();
-    if (role && *role == net::Role::Host) host_frame();
-    if (role && *role == net::Role::Client) client_frame();
-    else g_host_known = false;
 
     const double now = now_ms();
     if (scene != g_scene) {

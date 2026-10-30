@@ -104,13 +104,16 @@ int main() {
 
     // the Features message
     net::Writer w(net::Msg::Features, 64);
-    net::write_features(w, net::kFeatureAmbientLights);
+    net::write_features(w, net::kFeatureAmbientLights | net::kFeatureDynamicTrees, 42.5f);
     net::Packet p;
     p.type = net::Msg::Features;
     p.data.assign(w.data(), w.data() + w.size());
     net::Reader r = net::packet_body(p);
     uint32_t bits = 0;
-    expect(w.ok() && net::read_features(r, bits) && bits == net::kFeatureAmbientLights, "Features reads back");
+    float snow = 0;
+    expect(w.ok() && net::read_features(r, bits, snow) &&
+               bits == (net::kFeatureAmbientLights | net::kFeatureDynamicTrees) && snow == 42.5f,
+           "Features reads back");
 
     printf("%s\n", failures ? "SOME FAILED" : "all passed");
     return failures ? 1 : 0;

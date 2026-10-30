@@ -36,6 +36,8 @@ target_link_libraries(tldnet PUBLIC ws2_32)
 add_library(tldcoop SHARED
   src/dllmain.cpp
   src/ambient_lights.cpp
+  src/coop_features.cpp
+  src/dynamic_trees.cpp
   src/avatar.cpp
   src/config.cpp
   src/coop_death.cpp
@@ -122,3 +124,5 @@ add_executable(afflictions_test tests/afflictions_test.cpp)
 target_link_libraries(afflictions_test PRIVATE tldnet)
 add_executable(ambient_test tests/ambient_test.cpp)
 target_link_libraries(ambient_test PRIVATE tldnet)
+add_executable(trees_test tests/trees_test.cpp)
+target_link_libraries(trees_test PRIVATE tldnet)

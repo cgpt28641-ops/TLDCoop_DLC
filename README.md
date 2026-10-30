@@ -71,6 +71,10 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   dopasowane. To przeniesiony do TLDCoop mod AmbientLights (Xpazeman, Thekillergreece): **bez MelonLoadera i bez
   dodatkowych plików**. Włącza go lub wyłącza **host** na ekranie co-opa (przycisk **MODS** → AMBIENT LIGHTS) i obowiązuje to
   wszystkich graczy; w solo decyduje `coop.ini` `[ambient] enabled=`. Jasność itp. każdy ustawia u siebie w `[ambient]`.
+- **Dynamic Trees (wbudowane):** śnieg na drzewach przybywa przy opadach i wietrze, a znika przy suchej, wietrznej
+  pogodzie; sosny i cedry zmieniają się od zielonych do białych. To mod DynamicTrees (Fuar, The Illusion, Jods),
+  wbudowany za zgodą autorów, **bez MelonLoadera** (tekstury w paczce: `TLDCoop\tldcoop_trees.bundle`). Włącza go
+  **host** (MODS → DYNAMIC TREES), a drzewa znajomych mają śnieg hosta; w solo `coop.ini` `[trees] enabled=`.
 - **Kolory graczy:** każdy gracz ma swój kolor na radarze, mapie i nad głową. Kolor znajomego można zmienić w
   `coop.ini`, sekcja `[colors]` (np. `Shatsca=blue`).
 - Nad głową widać nazwę gracza, a na krawędzi ekranu strzałkę. Jest też mały radar, a gracze są widoczni na mapie
@@ -112,7 +116,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v35**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v36**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
@@ -184,6 +188,7 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[colors] Nick=kolor` | **Nowe.** Kolor znajomego na radarze, mapie i nad głową: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `white`, `grey` albo `#RRGGBB`. |
 | `[emotes] wave=F5 ...` | **Nowe.** Klawisze gestów: `wave`, `point`, `come`, `stop`, `yes`, `no` (F1..F12, A..Z, 0..9, NUM0..NUM9, `off`). |
 | `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host: ekran co-opa → MODS). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze). |
+| `[trees] enabled=1` | **Nowe.** Dynamic Trees w solo (w co-opie decyduje host: MODS). Ilość śniegu na drzewach jest zapisywana osobno dla każdego zapisu gry w `TLDCoop\dynamic_trees.ini`. |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
 | `transport=local` | Gra w sieci lokalnej po IP zamiast przez kody Steam (z `bind_ip`, `host_ip`, `port`). |
@@ -205,6 +210,8 @@ nazwę **MelonLoader.Bootstrap** (ok. 10 MB), a plik TLDCoop nie ma nazwy produk
 **AmbientLights:** jest już wbudowany w TLDCoop. Jeśli masz go też w `Mods` MelonLoadera, usuń go stamtąd
 (`AmbientLights.dll` i folder `ambient-lights`). Dopóki tam jest, TLDCoop ustępuje mu miejsca, a przełącznik hosta
 nie działa.
+
+**DynamicTrees:** też jest już wbudowany. Usuń go z `Mods` MelonLoadera, żeby oba nie zmieniały tych samych tekstur.
 
 **Pamiętaj:** wszyscy w grupie powinni mieć te same mody zmieniające rozgrywkę, np. dodające przedmioty albo
 zmieniające loot. Mody graficzne i od interfejsu mogą się różnić.
@@ -294,5 +301,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
 - Ambient Lights: mod [AmbientLights](https://github.com/Thekillergreece/tld-ambient-lights) autorstwa **Xpazemana**,
   utrzymywany przez **Thekillergreece** (licencja MIT, `third_party/ambient-lights/LICENSE`); jego dane świateł są
   wbudowane w TLDCoop, a logika przeniesiona do C++.
+- Dynamic Trees: mod [DynamicTrees](https://github.com/Fuar11/DynamicTrees) autorstwa **Fuara**, **The Illusion** i
+  **Jods** (tekstury); wbudowany za zgodą autorów (`third_party/dynamictrees/NOTICE.txt`).
 - **The Long Dark** i jego postacie należą do **Hinterland Studio**. To nieoficjalny mod fanowski, niewykonany ani
   niepopierany przez Hinterland. Do gry potrzebna jest własna kopia gry.

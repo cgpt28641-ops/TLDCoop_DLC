@@ -93,6 +93,11 @@ constexpr const char* kDefaultIni =
     "aurora_intensity=0.8\n"
     "aurora_saturation=1.4\n"
     "\n"
+    "[trees]\n"
+    "; Dynamic Trees (built in, by Fuar, The Illusion and Jods, with their permission): snow on the trees builds up\n"
+    "; in snowy, windy weather and goes in clear, windy weather. In co-op the HOST decides for everyone (MODS).\n"
+    "enabled=1\n"
+    "\n"
     "[emotes]\n"
     "; Gestures the others see you make (a line on your HUD says which). Keys: F1..F12, A..Z, 0..9, NUM0..NUM9, off\n"
     "wave=F5\n"
@@ -157,6 +162,7 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"radar", s.hud_radar ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
+    WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
     logx::info("settings saved: mode=%s transport=%s code=%s join_code=%s name=%s body=%s", s.mode.c_str(),
                s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.name.c_str(), s.body.c_str());
 }
@@ -191,6 +197,7 @@ Settings load() {
     s.hud_chart = GetPrivateProfileIntW(L"hud", L"chart", 1, ini.c_str()) != 0;
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
+    s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
         if (!t.empty()) v = static_cast<float>(atof(t.c_str()));
