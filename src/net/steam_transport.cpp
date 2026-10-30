@@ -144,6 +144,8 @@ struct Api {
     uint64_t (*get_id)(const Identity*) = nullptr;
     const char* (*friend_name)(void*, uint64_t) = nullptr;
     void (*init_relay)(void*) = nullptr;
+    // TLDCoop_DLC (optional): ISteamNetworkingUtils::SetGlobalConfigValueInt32(ESteamNetworkingConfigValue, int32)
+    bool (*set_config_int)(void*, int, int32_t) = nullptr;
     // Optional: manual-dispatch reply collection (TLD's mode) and failure diagnostics.
     int32_t (*get_pipe)() = nullptr;
     bool (*manual_call_result)(int32_t, uint64_t, void*, int, int, bool*) = nullptr;
@@ -195,6 +197,8 @@ struct Api {
         manual_call_result =
             reinterpret_cast<decltype(manual_call_result)>(GetProcAddress(dll, "SteamAPI_ManualDispatch_GetAPICallResult"));
         failure_reason = reinterpret_cast<decltype(failure_reason)>(GetProcAddress(dll, "SteamAPI_ISteamUtils_GetAPICallFailureReason"));
+        set_config_int = reinterpret_cast<decltype(set_config_int)>(
+            GetProcAddress(dll, "SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32"));
         return ok;
     }
 };
@@ -452,6 +456,17 @@ private:
     void begin() {
         steam_calls::install_dispatch_hook();  // before our first request, so no reply can be lost
         api_.init_relay(api_.net_utils());     // warm up Steam's relay network early
+        // TLDCoop_DLC: Steam paces what we send at a rate it starts low (128 KB/s by default) and raises slowly; a big
+        // message (a scene's list of objects for someone walking in, a body and its contents, a container) queued up
+        // in front of everything after it, and for a second or two nobody's movement got through: friends stood still
+        // or vanished for everyone at once. Room to send more from the start, and a bigger queue.
+        if (api_.set_config_int) {
+            constexpr int kSendBufferSize = 9, kSendRateMin = 10, kSendRateMax = 11;  // ESteamNetworkingConfigValue
+            const bool ok = api_.set_config_int(api_.net_utils(), kSendRateMin, 512 * 1024) &&
+                            api_.set_config_int(api_.net_utils(), kSendRateMax, 4 * 1024 * 1024) &&
+                            api_.set_config_int(api_.net_utils(), kSendBufferSize, 4 * 1024 * 1024);
+            log_(ok ? "steam: send rate 512 KB/s - 4 MB/s, send buffer 4 MB" : "steam: couldn't raise the send rate");
+        }
         self_ = api_.steam_id(user_);
         if (host_role_) {
             issue(api_.create_lobby(mm_, kLobbyTypePublic, static_cast<int>(kMaxPlayers)), kLobbyCreatedId, sizeof(LobbyCreated));

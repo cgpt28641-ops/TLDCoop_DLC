@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <vector>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -461,6 +463,49 @@ void keep_world_changes(const std::string& scene, bool in_game) {
         netrt::keep_offline(true);
 }
 
+// TLDCoop_DLC: what each part of co-op costs a frame, and frames that take long (a host's stall: everyone's friends
+// stood still or vanished). A frame over kSlowFrameMs since the last is logged with our parts that took the most.
+constexpr double kSlowFrameMs = 400;
+struct FrameCost {
+    const char* what;
+    double ms;
+};
+std::vector<FrameCost> g_costs;
+double g_cost_t0 = 0;
+#define TIMED(what, call)                                                    \
+    do {                                                                     \
+        const double t0_ = net::now_ms();                                    \
+        call;                                                                \
+        const double dt_ = net::now_ms() - t0_;                              \
+        if (dt_ > 5) g_costs.push_back({what, dt_});                         \
+    } while (0)
+
+void report_frame_costs() {
+    static double last_frame = 0, last_logged = 0;
+    static int slow = 0;
+    const double now = net::now_ms();
+    double ours = 0;
+    for (const FrameCost& c : g_costs) ours += c.ms;
+    const double gap = last_frame > 0 ? now - last_frame : 0;
+    if (gap > kSlowFrameMs || ours > 100) {
+        ++slow;
+        if (now - last_logged > 2000 || ours > 100) {
+            last_logged = now;
+            std::sort(g_costs.begin(), g_costs.end(), [](const FrameCost& a, const FrameCost& b) { return a.ms > b.ms; });
+            std::string top;
+            for (size_t i = 0; i < g_costs.size() && i < 4; ++i) {
+                char b[80];
+                snprintf(b, sizeof(b), "%s%s %.0f ms", top.empty() ? "" : ", ", g_costs[i].what, g_costs[i].ms);
+                top += b;
+            }
+            logx::info("frame: %.0f ms since the last frame (the game itself %.0f ms, co-op %.0f ms%s%s) [slow frames so far: %d]",
+                       gap, gap - ours, ours, top.empty() ? "" : ": ", top.c_str(), slow);
+        }
+    }
+    last_frame = now;
+    g_costs.clear();
+}
+
 void on_frame() {
     static bool first = true;
     static ULONGLONG last_scene_check = 0, last_telemetry = 0;
@@ -487,46 +532,48 @@ void on_frame() {
         }
     }
     const bool in_game = game::is_gameplay_scene(scene);
-    ui_inspect::on_frame();
-    steam_dispatch::on_frame();
-    if (g_net_enabled) notice_reload(scene);
-    if (g_net_enabled) push_local_state(scene);
-    if (g_net_enabled) world_sync::on_frame(scene, in_game);
-    wildlife_sync::on_frame(scene, in_game);  // also tidies up when co-op stops
-    wildlife_targets::on_frame();
-    wildlife_hits::on_frame();
-    wildlife_carcass::on_frame(in_game);
-    world_keep::on_frame(scene, in_game);  // first: what the host kept with its save is in before a scene is looked at
-    keep_world_changes(scene, in_game);
-    world_mode::on_frame(scene, in_game);  // before world_join: a first join loads the host's scene at its mode
-    world_items::on_frame(in_game);
+    TIMED("ui_inspect::on_frame", ui_inspect::on_frame());
+    TIMED("steam_dispatch::on_frame", steam_dispatch::on_frame());
+    if (g_net_enabled) TIMED("notice_reload", notice_reload(scene));
+    if (g_net_enabled) TIMED("push_local_state", push_local_state(scene));
+    if (g_net_enabled) TIMED("world_sync::on_frame", world_sync::on_frame(scene, in_game));
+    TIMED("wildlife_sync::on_frame", wildlife_sync::on_frame(scene, in_game));  // also tidies up when co-op stops
+    TIMED("wildlife_targets::on_frame", wildlife_targets::on_frame());
+    TIMED("wildlife_hits::on_frame", wildlife_hits::on_frame());
+    TIMED("wildlife_carcass::on_frame", wildlife_carcass::on_frame(in_game));
+    TIMED("world_keep::on_frame", world_keep::on_frame(scene, in_game));  // first: what the host kept with its save is in before a scene is looked at
+    TIMED("keep_world_changes", keep_world_changes(scene, in_game));
+    TIMED("world_mode::on_frame", world_mode::on_frame(scene, in_game));  // before world_join: a first join loads the host's scene at its mode
+    TIMED("world_items::on_frame", world_items::on_frame(in_game));
     // Objects before containers: a body or a moved container another player left in a scene is made before what was
     // changed in it is put in (the host walking in).
-    world_objects::on_frame(in_game);
-    world_containers::on_frame(in_game);
-    world_fires::on_frame(in_game);
-    world_water::on_frame(in_game);
-    world_blood::on_frame(in_game);
-    world_spray::on_frame(in_game);
-    coop_features::on_frame();
-    ambient_lights::on_frame(scene, in_game);
-    dynamic_trees::on_frame(scene, in_game);
-    custom_pictures::on_frame(scene, in_game);
-    adaptive_arsenal::on_frame(scene, in_game);
-    coop_backup::on_frame(game::active_scene(), g_net_enabled);
-    world_join::on_frame(scene, in_game);
-    coop_death::on_frame(scene, in_game);
-    coop_lapse::on_frame(scene, in_game);
-    coop_sleep::on_frame(scene, in_game);
-    coop_give::on_frame(in_game);   // before the avatars: what each body shows of a handover
-    update_avatar(scene, in_game);  // also hides the avatar once co-op is switched off
-    coop_menu::on_frame();
-    if (g_net_enabled) netrt::set_ready(in_game || coop_menu::lobby_ready());  // the lobby's READY / START
-    coop_notices::on_frame(in_game);
-    coop_hud::on_frame(scene, in_game);
-    coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed());
-    dev_commands::on_frame(in_game);
-    test_harness::on_frame(scene);
+    TIMED("world_objects::on_frame", world_objects::on_frame(in_game));
+    TIMED("world_containers::on_frame", world_containers::on_frame(in_game));
+    TIMED("world_fires::on_frame", world_fires::on_frame(in_game));
+    TIMED("world_water::on_frame", world_water::on_frame(in_game));
+    TIMED("world_blood::on_frame", world_blood::on_frame(in_game));
+    TIMED("world_spray::on_frame", world_spray::on_frame(in_game));
+    TIMED("coop_features::on_frame", coop_features::on_frame());
+    TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
+    TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
+    TIMED("custom_pictures::on_frame", custom_pictures::on_frame(scene, in_game));
+    TIMED("adaptive_arsenal::on_frame", adaptive_arsenal::on_frame(scene, in_game));
+    TIMED("coop_backup::on_frame", coop_backup::on_frame(game::active_scene(), g_net_enabled));
+    TIMED("world_join::on_frame", world_join::on_frame(scene, in_game));
+    TIMED("coop_death::on_frame", coop_death::on_frame(scene, in_game));
+    TIMED("coop_lapse::on_frame", coop_lapse::on_frame(scene, in_game));
+    TIMED("coop_sleep::on_frame", coop_sleep::on_frame(scene, in_game));
+    TIMED("coop_give::on_frame", coop_give::on_frame(in_game));   // before the avatars: what each body shows of a handover
+    TIMED("update_avatar", update_avatar(scene, in_game));  // also hides the avatar once co-op is switched off
+    TIMED("coop_menu::on_frame", coop_menu::on_frame());
+    if (g_net_enabled) TIMED("netrt::set_ready", netrt::set_ready(in_game || coop_menu::lobby_ready()));  // the lobby's READY / START
+    TIMED("coop_notices::on_frame", coop_notices::on_frame(in_game));
+    TIMED("coop_hud::on_frame", coop_hud::on_frame(scene, in_game));
+    TIMED("coop_emotes::on_frame", coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed()));
+    TIMED("dev_commands::on_frame", dev_commands::on_frame(in_game));
+    TIMED("test_harness::on_frame", test_harness::on_frame(scene));
+
+    report_frame_costs();  // TLDCoop_DLC
 
     const bool key_down = (GetAsyncKeyState(kSnapshotKey) & 0x8000) != 0;
     if (key_down && !key_was_down && game_window_focused()) {
