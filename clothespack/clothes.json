@@ -516,11 +516,7 @@
       "max": 0
     }
   ],
-  "mirror_items": [
-    "GEAR_ClimbingSocks",
-    "GEAR_CottonSocks",
-    "GEAR_WoolSocks"
-  ],
+  "mirror_items": [],
   "base_items": [
     "GEAR_LongUnderwear",
     "GEAR_WoolSocks"
@@ -570,5 +566,22 @@
   ],
   "skin_mask_items": [
     "GEAR_Balaclava"
+  ],
+  "sock_items": [
+    "GEAR_WoolSocks",
+    "GEAR_CottonSocks",
+    "GEAR_ClimbingSocks"
+  ],
+  "sock_from": "GEAR_BasicShoes",
+  "boot_items": [
+    "GEAR_BasicBoots",
+    "GEAR_BasicShoes",
+    "GEAR_CombatBoots",
+    "GEAR_DeerSkinBoots",
+    "GEAR_InsulatedBoots",
+    "GEAR_LeatherShoes",
+    "GEAR_MuklukBoots",
+    "GEAR_SkiBoots",
+    "GEAR_WorkBoots"
   ]
 }

@@ -90,6 +90,9 @@ namespace TLDCoop {
     // The base every character wears under everything (their own clothes hidden): these items, and a long-sleeved top
     // made from base_top_from in undyed grey (TLDCoop_BaseTop). base_hide: the body's regions never drawn.
     public string[] base_items; public string base_top_from; public string[] base_hide;
+    // socks made in the shape of sock_from (low shoes) instead of the catalog's flat sock; boot_items: footwear, under
+    // which no sock is drawn (it can't be seen, and only pokes through at the toes)
+    public string[] sock_items; public string sock_from; public string[] boot_items;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -228,15 +231,17 @@ public static class BuildClothes {
             if (!string.IsNullOrEmpty(list.base_top_from))
                 baseList.Add(("TLDCoop_BaseTop", Path.Combine(FitDir(list, chars, character), list.base_top_from + ".gltf"), true));
             foreach (string bi in list.base_items ?? new string[0]) baseList.Add((bi, Path.Combine(FitDir(list, chars, character), bi + ".gltf"), false));
-            foreach (var (bItem, bFile, bGrey) in baseList) {
-                if (!File.Exists(bFile)) continue;
+            foreach (var (bItem, bFileOwn, bGrey) in baseList) {
+                bool bSock = list.sock_items != null && list.sock_items.Contains(bItem) && !string.IsNullOrEmpty(list.sock_from);
+                string bFile = bSock ? Path.Combine(FitDir(list, chars, character), list.sock_from + ".gltf") : bFileOwn;
+                if (!File.Exists(bFile) || !File.Exists(bFileOwn)) continue;
                 bool bMirror = list.mirror_items != null && list.mirror_items.Contains(bItem);
                 float bCollar = float.NaN;
                 if (list.collar_items != null)
                     for (int i = 0; i < list.collar_items.Length && i < list.collar_metres.Length; i++)
                         if (list.collar_items[i] == bItem) bCollar = list.collar_metres[i];
                 triangles += Convert(bFile, character, bItem, materials, opaque, twoSided, 0, 0, -1, bCollar, false, false, null, 0,
-                                     new string[0], -1, false, 0, bMirror, bGrey, true);
+                                     new string[0], -1, false, 0, bMirror && !bSock, bGrey, true, sockColourFrom: bSock ? bFileOwn : null);
                 meshes++;
             }
         }
@@ -275,10 +280,14 @@ public static class BuildClothes {
                 bool onHead = list.hat_wrap_items != null && list.hat_wrap_items.Contains(item);
                 if (onHead) { wrap = list.hat_wrap_clearance; wrapMax = 0; }
                 bool mirror = list.mirror_items != null && list.mirror_items.Contains(item);
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead, wrapMax, mirror, false, false,
+                bool sock = list.sock_items != null && list.sock_items.Contains(item) && !string.IsNullOrEmpty(list.sock_from)
+                            && File.Exists(Path.Combine(FitDir(list, chars, character), list.sock_from + ".gltf"));
+                var result = Convert(sock ? Path.Combine(FitDir(list, chars, character), list.sock_from + ".gltf") : file,
+                                     character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead, wrapMax, mirror && !sock, false, false,
                                      list.scarf_items != null && list.scarf_items.Contains(item),
                                      list.slice_fit_items != null && list.slice_fit_items.Contains(item),
-                                     list.skin_mask_items != null && list.skin_mask_items.Contains(item));
+                                     list.skin_mask_items != null && list.skin_mask_items.Contains(item),
+                                     sock ? file : null);
                 triangles += result;
                 meshes++;
             }
@@ -320,7 +329,8 @@ public static class BuildClothes {
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
                         bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead, float wrapMax, bool mirror, bool grey,
-                        bool isBase = false, bool scarf = false, bool sliceFit = false, bool skinMask = false) {
+                        bool isBase = false, bool scarf = false, bool sliceFit = false, bool skinMask = false,
+                        string sockColourFrom = null) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -367,11 +377,31 @@ public static class BuildClothes {
             matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided, grey));
         }
         if (mirror) MirrorPair(g, skin, verts, normals, uvs, weights, submeshes, $"{character}/{item}");
+        if (sockColourFrom != null) {
+            // A worn sock: the shape of this character's low shoes (file), 4 mm inside them, one knitted material in
+            // the sock's own colour, ribs round each foot (the catalog's sock is a single flat ground model).
+            for (int i = 0; i < verts.Count; i++) verts[i] -= normals[i].normalized * 0.004f;
+            var sides = new[] { -1, 1 }.ToDictionary(sd => sd, sd => {
+                var l = verts.Where(v => Mathf.Sign(v.x) == sd).ToList();
+                return l.Count > 0 ? new Vector3(l.Average(v => v.x), 0, l.Average(v => v.z)) : Vector3.zero;
+            });
+            for (int i = 0; i < verts.Count; i++) {
+                var ctr = sides[verts[i].x < 0 ? -1 : 1];
+                float th = Mathf.Atan2(verts[i].x - ctr.x, verts[i].z - ctr.z);
+                uvs[i] = new Vector2(th / (2 * Mathf.PI) * 8f, verts[i].y * 12f);
+            }
+            var all = submeshes.SelectMany(t => t).ToArray();
+            submeshes.Clear(); submeshes.Add(all);
+            matNames.Clear();
+            var gs = JsonUtility.FromJson<Gltf>(File.ReadAllText(sockColourFrom));
+            var colour = KnitMaterial(gs, sockColourFrom, item, twoSided, matNames);
+            Debug.Log($"[Clothes] {character}/{item}: a sock in the shape of the shoes, colour {colour}");
+        }
 
         if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, submeshes, $"{character}/{item}");
         if (skinMask) SkinMask(g, bin, skin, file, item, character, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (scarf) Scarf(g, bin, skin, file, item, verts, normals, uvs, weights, submeshes, matNames, twoSided);
-        if (beanie) Beanie(g, bin, skin, file, item, grow, verts, normals, uvs, weights, submeshes, matNames, twoSided);
+        if (beanie) Beanie(g, bin, skin, file, item, character, grow, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (turn) {  // half round the head's vertical axis
             Vector3 head = JointPos(g, bin, skin, "Head_jnt");
             if (!float.IsNaN(head.x)) {
@@ -609,7 +639,7 @@ public static class BuildClothes {
             var eyeIdx = parts.Select((p, i) => (p, i)).Where(x => x.p.EndsWith(":eyes")).SelectMany(x => tris[x.i]).ToList();
             if (eyeIdx.Count > 0) {
                 float eyeY = eyeIdx.Average(i => v[i].y), eyeZ = eyeIdx.Max(i => v[i].z);
-                float RimY(float z) => eyeY + Mathf.Lerp(0.025f, -0.005f, Mathf.Clamp01((eyeZ - 0.03f - z) / 0.15f));
+                float RimY(float z) => eyeY + Mathf.Lerp(0.035f, -0.02f, Mathf.Clamp01((eyeZ - 0.03f - z) / 0.15f));
                 int count0 = parts.Count;
                 for (int k = 0; k < count0; k++) {
                     var pr = parts[k].Split(':');
@@ -708,6 +738,38 @@ public static class BuildClothes {
         return colour;
     }
 
+    // The skull as an ellipsoid, from the cut body's head (BodyCut): centred at eye height, its front at the eyes,
+    // sides, back and crown at the head's own extent above the eyes; the skin's, or with the hair when the skin
+    // under the hair isn't modelled (its top then lower than 9 cm over the eyes).
+    static (bool ok, Vector3 c, float rx, float ry, float rz, float eyeY, float eyeZ) HeadFit(string character) {
+        var body = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/BodyCut.asset");
+        var info = AssetDatabase.LoadAssetAtPath<TextAsset>($"{OutDir}/{character}/BodyCut.txt");
+        if (!body || !info) return (false, Vector3.zero, 0, 0, 0, 0, 0);
+        string[] lines = info.text.Split('\n');
+        string[] parts = lines[1].Substring("parts ".Length).Trim().Split(',');
+        string[] bodyMats = lines.Length > 2 && lines[2].StartsWith("materials ") ? lines[2].Substring("materials ".Length).Trim().Split(',') : new string[0];
+        var bv = body.vertices;
+        var eyeP = new List<Vector3>(); var skinP = new List<Vector3>(); var hairP = new List<Vector3>();
+        for (int p = 0; p < parts.Length && p < body.subMeshCount; p++) {
+            var pr = parts[p].Split(':');
+            int sub = int.Parse(pr[0]);
+            string mat = sub < bodyMats.Length ? bodyMats[sub] : "";
+            if (pr[1] == "eyes") { foreach (int v in body.GetTriangles(p)) eyeP.Add(bv[v]); continue; }
+            if (pr[1] != "head" && pr[1] != "hairtop") continue;
+            if (System.Text.RegularExpressions.Regex.IsMatch(mat, "Lash|Eye|Teeth|Tear|Glass|Lens", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
+            bool hair = mat.IndexOf("hair", StringComparison.OrdinalIgnoreCase) >= 0;
+            foreach (int v in body.GetTriangles(p)) (hair ? hairP : skinP).Add(bv[v]);
+        }
+        if (eyeP.Count < 20 || skinP.Count < 200) return (false, Vector3.zero, 0, 0, 0, 0, 0);
+        float eyeY = eyeP.Average(q => q.y), eyeZ = eyeP.Max(q => q.z);
+        float Pct(IEnumerable<float> xs, float f) { var l = xs.OrderBy(x => x).ToList(); return l[Mathf.Clamp((int)(f * l.Count), 0, l.Count - 1)]; }
+        var above = skinP.Where(q => q.y > eyeY - 0.01f).ToList();
+        if (Pct(above.Select(q => q.y), 0.995f) < eyeY + 0.09f) above.AddRange(hairP.Where(q => q.y > eyeY - 0.01f));
+        float x0 = Pct(above.Select(q => q.x), 0.01f), x1 = Pct(above.Select(q => q.x), 0.99f);
+        float z0 = Pct(above.Select(q => q.z), 0.02f), y1 = Pct(above.Select(q => q.y), 0.995f);
+        return (true, new Vector3((x0 + x1) / 2, eyeY, (z0 + eyeZ) / 2), (x1 - x0) / 2, y1 - eyeY, (eyeZ - z0) / 2, eyeY, eyeZ);
+    }
+
     // A knitted mask made from the character's own head and neck (BodyCut): its skin, eyes and mouth left out
     // (holes), hair, lashes and eyes' own parts left out, pushed 6 mm out along the skin, softened twice; on Head_jnt,
     // the neck blended down onto Neck_jnt.
@@ -768,6 +830,24 @@ public static class BuildClothes {
             weights.Add(w >= 0.999f ? new BoneWeight { boneIndex0 = hi, weight0 = 1 }
                       : new BoneWeight { boneIndex0 = hi, weight0 = w, boneIndex1 = ni, weight1 = 1 - w });
         }
+        // A beard is not knitted over: under the mouth the mask goes from the chin straight down to the throat (the
+        // beard, part of the hidden head, stays inside), as a mask pulled over a beard lies.
+        {
+            var mouthP = new List<Vector3>();
+            for (int p = 0; p < parts.Length && p < body.subMeshCount; p++)
+                if (parts[p].Split(':')[1] == "mouth") foreach (int v in body.GetTriangles(p)) mouthP.Add(bv[v]);
+            if (mouthP.Count > 20) {
+                float my = mouthP.Average(q => q.y) - 0.012f, mz = mouthP.Max(q => q.z) - 0.004f;
+                float throatZ = neck.z + 0.065f, drop = 0.075f;
+                int flat = 0;
+                for (int i = 0; i < verts.Count; i++) {
+                    if (verts[i].y > my) continue;
+                    float lim = Mathf.Lerp(mz, throatZ, Mathf.Clamp01((my - verts[i].y) / drop));
+                    if (verts[i].z > lim) { verts[i] = new Vector3(verts[i].x, verts[i].y, lim); flat++; }
+                }
+                if (flat > 0) Debug.Log($"[Clothes] {character}/{item}: {flat} vertices of the beard flattened under the mask");
+            }
+        }
         // The back and the crown (the head's own skin there is under the hair, not drawn) and the neck down to the
         // shoulders: a knitted shell over the skull and a tube round the neck, flaring at the bottom.
         float sc = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f);
@@ -797,24 +877,9 @@ public static class BuildClothes {
             float rx = 0.088f * sc, ry = 0.115f * sc, rz = 0.1f * sc;
             // Fitted to this head (its hair and scalp included, they go under the mask): centred at eye height, the
             // front of the shell at the eyes, back, sides and crown just outside the head's own extent.
-            var eyeP = new List<Vector3>(); var headP = new List<Vector3>();
-            for (int p = 0; p < parts.Length && p < body.subMeshCount; p++) {
-                var pr = parts[p].Split(':');
-                int sub = int.Parse(pr[0]);
-                string mat = sub < bodyMats.Length ? bodyMats[sub] : "";
-                if (pr[1] == "eyes") foreach (int v in body.GetTriangles(p)) eyeP.Add(bv[v]);
-                else if (pr[1] == "head" && !System.Text.RegularExpressions.Regex.IsMatch(mat, "Lash|Eye|Teeth|Tear|Glass|Lens",
-                             System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    foreach (int v in body.GetTriangles(p)) headP.Add(bv[v]);
-            }
-            if (eyeP.Count > 20 && headP.Count > 200) {
-                float eyeY = eyeP.Average(q => q.y), eyeZ = eyeP.Max(q => q.z);
-                var above = headP.Where(q => q.y > eyeY - 0.01f).ToList();
-                float Pct(IEnumerable<float> xs, float f) { var l = xs.OrderBy(x => x).ToList(); return l[Mathf.Clamp((int)(f * l.Count), 0, l.Count - 1)]; }
-                float x0 = Pct(above.Select(q => q.x), 0.01f), x1 = Pct(above.Select(q => q.x), 0.99f);
-                float z0 = Pct(above.Select(q => q.z), 0.02f), y1 = Pct(above.Select(q => q.y), 0.995f);
-                c = new Vector3((x0 + x1) / 2, eyeY, (z0 + eyeZ) / 2);
-                rx = (x1 - x0) / 2 + 0.006f; rz = (eyeZ - z0) / 2 + 0.006f; ry = y1 - eyeY + 0.008f;
+            var hf = HeadFit(character);
+            if (hf.ok) {
+                c = hf.c; rx = hf.rx + 0.006f; ry = hf.ry + 0.008f; rz = hf.rz + 0.006f;
                 Debug.Log($"[Clothes] {character}/{item}: shell fitted to the head, centre {c}, radii {rx:F3} {ry:F3} {rz:F3}");
             }
             const int around = 40, up = 14;
@@ -944,7 +1009,7 @@ public static class BuildClothes {
 
     // A worn knitted hat in place of the item's own (folded) model: half an egg over the skull from the forehead up,
     // a turned-up cuff at the bottom, ribbed, all of it on Head_jnt; sized by the length of the neck.
-    static void Beanie(Gltf g, byte[] bin, GSkin skin, string file, string item, float grow, List<Vector3> verts,
+    static void Beanie(Gltf g, byte[] bin, GSkin skin, string file, string item, string character, float grow, List<Vector3> verts,
                        List<Vector3> normals, List<Vector2> uvs, List<BoneWeight> weights, List<int[]> submeshes,
                        List<string> matNames, Shader twoSided) {
         Vector3 head = JointPos(g, bin, skin, "Head_jnt"), neck = JointPos(g, bin, skin, "Neck_jnt");
@@ -953,13 +1018,25 @@ public static class BuildClothes {
         float s = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f) * (1 + grow);
         var c = head + new Vector3(0, 0.115f, 0.012f - 0.1f * grow) * s;
         float rx = 0.104f * s, ry = 0.13f * s, rz = 0.116f * s;
+        // fitted to this head when its cut body is there: 1.4 cm over the skull (the hair pressed under it), the
+        // crown 3 cm higher (the knit's slack), the rim 3.5 cm over the eyes at the front, 2 cm under them at the back
+        var hf = HeadFit(character);
+        float RimY(float th) {
+            if (!hf.ok) return head.y + (0.085f + 0.03f * Mathf.Max(0, Mathf.Cos(th))) * s;
+            return hf.eyeY + Mathf.Lerp(-0.02f, 0.035f, (Mathf.Cos(th) + 1) / 2);
+        }
+        if (hf.ok) {
+            float more = 0.014f + 0.05f * grow;
+            c = hf.c + new Vector3(0, 0, -0.004f); rx = hf.rx + more; rz = hf.rz + more; ry = hf.ry + 0.03f;
+            Debug.Log($"[Clothes] {character}/{item}: beanie fitted to the head, radii {rx:F3} {ry:F3} {rz:F3}");
+        }
         const int around = 40, up = 14;
         verts.Clear(); normals.Clear(); uvs.Clear(); weights.Clear(); submeshes.Clear(); matNames.Clear();
         for (int j = 0; j <= up; j++)
             for (int i = 0; i <= around; i++) {
                 float th = i * 2 * Mathf.PI / around;  // 0: the front (+z)
                 float front = Mathf.Max(0, Mathf.Cos(th));
-                float rimY = head.y + (0.085f + 0.03f * front) * s;  // lower at the back of the head
+                float rimY = RimY(th);  // lower at the back of the head
                 float eRim = Mathf.Asin(Mathf.Clamp((rimY - c.y) / ry, -1, 1));
                 float t = j / (float)up;
                 float e = Mathf.Lerp(eRim, Mathf.PI / 2, t);
@@ -1570,9 +1647,12 @@ public static class BuildClothes {
                     // the base layer under every outfit (TLDCoop_BaseTop first: the long johns' waist goes over it)
                     // (a base sock or long johns left off when the outfit has its own)
                     bool Same(string sx, string sy) => (list.mirror_items != null && list.mirror_items.Contains(sx) && list.mirror_items.Contains(sy)) ||
+                                                       (list.sock_items != null && list.sock_items.Contains(sx) && list.sock_items.Contains(sy)) ||
                                                        (sx.StartsWith("GEAR_LongUnderwear") && sy.StartsWith("GEAR_LongUnderwear"));
                     var under = (list.base_items ?? new string[0]).Where(bi => !outfits[o].Any(ox => Same(ox, bi)));
-                    foreach (string item in new[] { "TLDCoop_BaseTop" }.Concat(under).Concat(outfits[o]))
+                    bool booted = list.boot_items != null && outfits[o].Any(ox => list.boot_items.Contains(ox));
+                    foreach (string item in new[] { "TLDCoop_BaseTop" }.Concat(under).Concat(outfits[o])
+                                 .Where(it => !(booted && list.sock_items != null && list.sock_items.Contains(it))))
                         if (Dress(body, character, item)) dressed.Add(item);
                     var headPos = body.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == "Head_jnt");
                     float headY = headPos ? headPos.position.y + 0.08f : 1.65f;
