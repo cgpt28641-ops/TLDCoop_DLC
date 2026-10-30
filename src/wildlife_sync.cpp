@@ -574,12 +574,24 @@ void capture(const std::string& scene, double now) {
         a.pitch = signed_degrees(euler.x);
         a.roll = signed_degrees(euler.z);
         if (Il2CppObject* animator = il2::read_field<Il2CppObject*>(ai, api.ai_animator)) {
-            // TLDCoop_DLC: animated whether or not our camera sees it (a friend does), once it's near a friend.
-            if (api.set_culling && !g_always_animated.count(key) && near_a_friend(ai)) {
+            // TLDCoop_DLC: animated whether or not our camera sees it (a friend does) while it's near a friend. Every
+            // time: far from our camera TLD makes it an "imposter" (BaseAi.m_Imposter*: its own culling mode, no
+            // walking animation), and a friend away from us saw animals standing still. Its imposter distances made
+            // too big to reach, so it stays a whole animal.
+            if (api.set_culling && near_a_friend(ai)) {
                 int32_t culling = kCullAlwaysAnimate;
                 void* cull_args[] = {&culling};
                 il2::invoke(api.set_culling, animator, cull_args);
-                g_always_animated.insert(key);
+                static const ptrdiff_t on_screen = il2::field_offset_quiet(il2::find_class(kGame, "", "BaseAi"), "m_ImposterDistanceOnScreen");
+                static const ptrdiff_t off_screen = il2::field_offset_quiet(il2::find_class(kGame, "", "BaseAi"), "m_ImposterDistanceOffScreen");
+                static const ptrdiff_t cull_mode = il2::field_offset_quiet(il2::find_class(kGame, "", "BaseAi"), "m_ImposterCullingMode");
+                char* b = reinterpret_cast<char*>(ai);
+                const float far_away = 100000.0f;
+                if (on_screen >= 0) memcpy(b + on_screen, &far_away, sizeof(float));
+                if (off_screen >= 0) memcpy(b + off_screen, &far_away, sizeof(float));
+                if (cull_mode >= 0) memcpy(b + cull_mode, &culling, sizeof(int32_t));
+                if (g_always_animated.insert(key).second && g_always_animated.size() == 1)
+                    logx::info("wildlife: animals near a friend kept whole and animated (no imposters)");
             }
             int32_t layers = 0;
             il2::invoke_value(api.layer_count, animator, layers);

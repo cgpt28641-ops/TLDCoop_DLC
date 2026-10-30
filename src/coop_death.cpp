@@ -132,6 +132,20 @@ struct Api {
     ptrdiff_t cam_pitch_limit = -1, cam_yaw_limit = -1;          // vp_FPSCamera.RotationPitchLimit / RotationYawLimit
     ptrdiff_t cam_default_pitch = -1, cam_default_yaw = -1;      // DefaultRotationPitchLimit / DefaultRotationYawLimit
     ptrdiff_t cam_lock_flag = -1;                                // m_LockRotationLimit
+    // TLDCoop_DLC: more of what a death (in a wolf's struggle) can leave: the camera's script off, the camera driven
+    // by an animation, the struggle's settings, the cursor, input contexts (a screen still holding the input)
+    const MethodInfo* behaviour_enabled = nullptr;   // Behaviour.get_enabled()
+    const MethodInfo* struggle_reset = nullptr;      // PlayerStruggle.ResetGameSettingsToNormal()
+    const MethodInfo* camera_anim = nullptr;         // static GameManager.GetNewPlayerCameraAnim()
+    ptrdiff_t camera_anim_state = -1;                // PlayerCameraAnim.m_State (0 Idle)
+    const MethodInfo* camera_anim_restore = nullptr; // PlayerCameraAnim.RestoreMainCameraPos()
+    const MethodInfo* show_cursor = nullptr;         // static InputManager.ShowCursor(bool)
+    FieldInfo* input_contexts = nullptr;             // static InputManager.m_InputContexts (List<MonoBehaviour>)
+    FieldInfo* input_context = nullptr;              // static InputManager.m_CurrentContext
+    FieldInfo* ignore_input = nullptr;               // static InputManager.s_IgnoreInput
+    const MethodInfo* pop_context = nullptr;         // static InputManager.PopContext(MonoBehaviour)
+    const MethodInfo* controls_locked = nullptr;     // static GameManager.ControlsLocked()
+    const MethodInfo* object_name = nullptr;         // Object.get_name()
     FieldInfo* block_input = nullptr;               // static GameManager.m_BlockNonMovementInput
     FieldInfo* lock_timer = nullptr;                // static GameManager.m_LockControlsTimer
     FieldInfo* block_move = nullptr;                // static GameManager.m_BlockMoveInputUntilReleased
@@ -626,7 +640,8 @@ void restyle(Il2CppObject* p) {
     }
     Il2CppObject* tf = transform_of(p);
     for (const char* path : kLeftLabels) set_text(in_children(child(tf, path), api.label_type), "RESPAWN");
-    for (const char* path : kRightLabels) set_text(in_children(child(tf, path), api.label_type), "NEXT SURVIVOR");
+    // TLDCoop_DLC: no NEXT SURVIVOR (Karol: one button, RESPAWN, as the survivor you are)
+    if (Il2CppObject* right = child(tf, "Stage 1 - Revive/ReviveInteractions/Buttons/RightButton")) set_active(go_of(right), false);
     if (Il2CppObject* go = go_of(target(g_preview)); go && !g_preview_body.empty()) set_active(go, true);
     set_active(go_of(target(g_name_label)), true);
     show_choice();
@@ -787,7 +802,71 @@ void controls_back(Il2CppObject* pm) {
         put<bool>(pm, api.freeze_movement, false);
         note("frozen movement");
     }
+    // TLDCoop_DLC: the camera's own script back on (vp_FPSCamera: turning with the mouse), not driven by an animation
+    if (Il2CppObject* cam = api.get_camera ? il2::invoke(api.get_camera, nullptr) : nullptr) {
+        bool on = true;
+        if (api.behaviour_enabled && il2::invoke_value(api.behaviour_enabled, cam, on) && !on) {
+            bool yes = true;
+            void* a[] = {&yes};
+            il2::invoke(api.set_enabled, cam, a);
+            note("the camera's script (was off)");
+        }
+    }
+    if (Il2CppObject* ca = api.camera_anim ? il2::invoke(api.camera_anim, nullptr) : nullptr) {
+        if (api.camera_anim_state >= 0 && get<int32_t>(ca, api.camera_anim_state) != 0) {
+            if (api.camera_anim_restore) il2::invoke(api.camera_anim_restore, ca);
+            put<int32_t>(ca, api.camera_anim_state, 0);
+            note("the camera's animation");
+        }
+    }
+    if (Il2CppObject* st = api.get_struggle ? il2::invoke(api.get_struggle, nullptr) : nullptr; st && api.struggle_reset) {
+        il2::invoke(api.struggle_reset, st);  // the struggle's own clean-up (harmless when there was none)
+    }
+    if (api.ignore_input) {
+        bool ignore = false;
+        il2::il2cpp_field_static_get_value(api.ignore_input, &ignore);
+        if (ignore) {
+            ignore = false;
+            il2::il2cpp_field_static_set_value(api.ignore_input, &ignore);
+            note("ignored input");
+        }
+    }
+    // A screen of TLD's still holding the input (the death screen's): let go of it.
+    if (api.input_context && api.pop_context) {
+        Il2CppObject* ctx = nullptr;
+        il2::il2cpp_field_static_get_value(api.input_context, &ctx);
+        const std::string cls = ctx ? il2::class_name_of(ctx) : std::string();
+        if (ctx && cls.rfind("Panel_LifeAfterDeath", 0) == 0) {
+            void* a[] = {ctx};
+            il2::invoke(api.pop_context, nullptr, a);
+            note("the death screen's hold on the input");
+        }
+    }
+    if (api.show_cursor) {
+        bool show = false;
+        void* a[] = {&show};
+        il2::invoke(api.show_cursor, nullptr, a);
+    }
     logx::info("death: controls back: %s", undone.empty() ? "nothing was locked" : undone.c_str());
+    // For the log: what else could hold the camera.
+    std::string ctxs;
+    if (api.input_contexts) {
+        Il2CppObject* list = nullptr;
+        il2::il2cpp_field_static_get_value(api.input_contexts, &list);
+        Il2CppObject* items = list ? get<Il2CppObject*>(list, 0x10) : nullptr;
+        const int32_t n = list ? get<int32_t>(list, 0x18) : 0;
+        for (int32_t i = 0; i < n && static_cast<size_t>(i) < il2::array_length(items); ++i) {
+            Il2CppObject* c = il2::array_object_at(items, static_cast<size_t>(i));
+            ctxs += (ctxs.empty() ? "" : ", ") + (c ? il2::class_name_of(c) : std::string("null"));
+        }
+    }
+    Il2CppObject* cur = nullptr;
+    if (api.input_context) il2::il2cpp_field_static_get_value(api.input_context, &cur);
+    bool locked = false;
+    if (api.controls_locked) il2::invoke_value(api.controls_locked, nullptr, locked);
+    int32_t mode = pm && api.control_mode >= 0 ? get<int32_t>(pm, api.control_mode) : -1;
+    logx::info("death: input now: contexts [%s], current %s; controls locked %s; control mode %d", ctxs.c_str(),
+               cur ? il2::class_name_of(cur).c_str() : "none", locked ? "yes" : "no", mode);
 }
 
 // Beside another living player in our scene; a friend with nobody here goes to the host; otherwise where we died.
@@ -901,7 +980,7 @@ void left_detour(Il2CppObject* self, const MethodInfo* method) {
 
 void right_detour(Il2CppObject* self, const MethodInfo* method) {
     if (!ours(self)) return g_right(self, method);
-    next_survivor(1);
+    // TLDCoop_DLC: NEXT SURVIVOR is gone; the button (and its key) does nothing
 }
 
 void back_detour(Il2CppObject* self, const MethodInfo* method) {
@@ -1171,6 +1250,23 @@ bool init() {
         api.cam_default_yaw = il2::field_offset_quiet(cam, "DefaultRotationYawLimit");
         api.cam_lock_flag = il2::field_offset_quiet(cam, "m_LockRotationLimit");
     }
+    if (Il2CppClass* beh = il2::find_class(kCore, "UnityEngine", "Behaviour"))
+        api.behaviour_enabled = il2::find_method_quiet(beh, "get_enabled", 0);
+    api.camera_anim = il2::find_method_quiet(game_manager, "GetNewPlayerCameraAnim", 0);
+    if (Il2CppClass* ca = il2::find_class(kGame, "", "PlayerCameraAnim")) {
+        api.camera_anim_state = il2::field_offset_quiet(ca, "m_State");
+        api.camera_anim_restore = il2::find_method_quiet(ca, "RestoreMainCameraPos", 0);
+    }
+    if (Il2CppClass* st = il2::find_class(kGame, "", "PlayerStruggle"))
+        api.struggle_reset = il2::find_method_quiet(st, "ResetGameSettingsToNormal", 0);
+    if (Il2CppClass* im = il2::find_class(kGame, "", "InputManager")) {
+        api.show_cursor = il2::find_method_quiet(im, "ShowCursor", 1);
+        api.input_contexts = il2::il2cpp_class_get_field_from_name(im, "m_InputContexts");
+        api.input_context = il2::il2cpp_class_get_field_from_name(im, "m_CurrentContext");
+        api.ignore_input = il2::il2cpp_class_get_field_from_name(im, "s_IgnoreInput");
+        api.pop_context = il2::find_method_quiet(im, "PopContext", 1);
+    }
+    api.controls_locked = il2::find_method_quiet(game_manager, "ControlsLocked", 0);
     api.get_struggle = il2::find_method_quiet(game_manager, "GetPlayerStruggleComponent", 0);
     if (Il2CppClass* st = il2::find_class(kGame, "", "PlayerStruggle")) {
         api.in_struggle = il2::find_method_quiet(st, "InStruggle", 0);

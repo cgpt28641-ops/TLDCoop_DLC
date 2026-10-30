@@ -96,6 +96,7 @@ struct Api {
     const MethodInfo* widget_set_color = nullptr;
     const MethodInfo* sprite_set_name = nullptr;    // UISprite.set_spriteName(string)
     const MethodInfo* sprite_valid = nullptr;       // UISprite.get_isValid(): the atlas has that sprite
+    const MethodInfo* behaviour_set_enabled = nullptr;  // Behaviour.set_enabled (TLDCoop_DLC)
     const MethodInfo* widget_width = nullptr;       // UIWidget.get_width()
     const MethodInfo* widget_height = nullptr;
     const MethodInfo* get_local_scale = nullptr;    // Transform.get_localScale()
@@ -1266,8 +1267,17 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
         if (!live(m.icon)) {
             drop(m.icon);
             Il2CppObject* icon = clone_under(icon_sprite, elements, "TLDCoop_Friend" + std::to_string(who.player));
+            // TLDCoop_DLC: TLD's own arrow is switched off when the game doesn't show the player on the map (the
+            // copy was too: names, no arrows); ours on, and TLD's map arrow sprite from its atlas if there's no copy.
+            if (!icon) icon = make_sprite(elements, "TLDCoop_Friend" + std::to_string(who.player), "ico_map_directional", 24);
+            if (icon && api.behaviour_set_enabled) {
+                bool on = true;
+                void* a[] = {&on};
+                il2::invoke(api.behaviour_set_enabled, icon, a);
+            }
             set_color(icon, kFriendColor);
             m.icon = hold(icon);
+            logx::info("hud: map arrow for player %u made (%s)", who.player, icon ? "TLD's map arrow" : "none");
         }
         if (!live(m.label)) {
             drop(m.label);
@@ -1286,6 +1296,12 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
             continue;
         set_active(go_of(icon), true);
         set_active(go_of(label), true);
+        if (api.behaviour_set_enabled && icon) {  // TLDCoop_DLC: (TLD may switch its arrow's copies off with it)
+            bool on = true;
+            void* a[] = {&on};
+            il2::invoke(api.behaviour_set_enabled, icon, a);
+        }
+        set_vec(api.set_local_scale, transform_of(icon), {1, 1, 1});
         set_vec(api.set_local_position, transform_of(icon), {mp.x, mp.y, 0});
         const float heading = std::atan2(mp_ahead.y - mp.y, mp_ahead.x - mp.x) * 180.0f / hud::kPi;
         set_vec(api.set_local_euler, transform_of(icon), {0, 0, heading - 90.0f});  // the arrow points up
@@ -1370,6 +1386,8 @@ bool init() {
     api.widget_set_color = il2::find_method(widget, "set_color", 1);
     api.sprite_set_name = il2::find_method(sprite, "set_spriteName", 1);
     api.sprite_valid = il2::find_method(sprite, "get_isValid", 0);
+    if (Il2CppClass* beh = il2::find_class(kCore, "UnityEngine", "Behaviour"))
+        api.behaviour_set_enabled = il2::find_method(beh, "set_enabled", 1);
     api.widget_width = il2::find_method(widget, "get_width", 0);
     api.widget_height = il2::find_method(widget, "get_height", 0);
     api.get_local_scale = il2::find_method(transform, "get_localScale", 0);
