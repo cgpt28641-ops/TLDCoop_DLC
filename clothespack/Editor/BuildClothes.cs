@@ -389,6 +389,9 @@ public static class BuildClothes {
             for (int pass = 0; pass < 2; pass++)
                 Wrap(verts, submeshes, character, wrap, $"{character}/{item}" + (pass > 0 ? " (2nd pass)" : ""), onHead, wrapMax,
                      float.IsNaN(neckY) ? 1.5f : neckY - 0.06f);
+            // and last, vertex by vertex with no smoothing: nothing of an inner layer left out over its limit
+            // (a sweater's shoulder through a parka), nothing of an outer one left under its clearance
+            if (!onHead) ClampLayer(verts, character, wrap, wrapMax, float.IsNaN(neckY) ? 1.5f : neckY - 0.025f, $"{character}/{item}");
         }
         if (isBase) {  // the surface the other pieces lie over
             if (!BaseSurface.TryGetValue(character, out var surf)) BaseSurface[character] = surf = (new List<Vector3>(), new List<Vector3>());
@@ -928,14 +931,14 @@ public static class BuildClothes {
 
     // An undyed grey copy of a colour texture (a heather grey from its brightness): Textures/<name>_grey.png.
     static string GreyCopy(string texName) {
-        string src = $"{OutDir}/Textures/{texName}.png", name = texName + "_grey", dst = $"{OutDir}/Textures/{name}.png";
+        string src = $"{OutDir}/Textures/{texName}.png", name = texName + "_thermal", dst = $"{OutDir}/Textures/{name}.png";
         if (AssetDatabase.LoadAssetAtPath<Texture2D>(dst)) return name;
         var t = new Texture2D(2, 2);
         if (!File.Exists(src) || !t.LoadImage(File.ReadAllBytes(src))) { UnityEngine.Object.DestroyImmediate(t); return texName; }
         var px = t.GetPixels32();
         for (int i = 0; i < px.Length; i++) {
             float lum = (0.3f * px[i].r + 0.59f * px[i].g + 0.11f * px[i].b) / 255f;
-            byte v = (byte)Mathf.Clamp(255 * (0.38f + 0.5f * lum), 0, 255);
+            byte v = (byte)Mathf.Clamp(255 * (0.2f + 0.42f * lum), 0, 255);  // a charcoal thermal, not a white one
             px[i] = new Color32(v, v, (byte)Mathf.Min(255, v + 4), 255);
         }
         t.SetPixels32(px);
@@ -1127,6 +1130,29 @@ public static class BuildClothes {
 
     // Every vertex pushed out to at least `clearance` above the nearest skin (along the skin's normal there), the pushes
     // then smoothed over the piece's own triangles so it bends round the body instead of denting.
+    static void ClampLayer(List<Vector3> verts, string character, float clearance, float most, float pullBelow, string what) {
+        var skin = SkinOf(character, false);
+        if (skin == null) return;
+        int pushed = 0, pulled = 0;
+        for (int i = 0; i < verts.Count; i++) {
+            var c = Cell(verts[i]);
+            int best = -1; float bestD = float.MaxValue;
+            for (int dx = -3; dx <= 3; dx++) for (int dy = -3; dy <= 3; dy++) for (int dz = -3; dz <= 3; dz++)
+                if (skin.grid.TryGetValue(new Vector3Int(c.x + dx, c.y + dy, c.z + dz), out var l))
+                    foreach (int k in l) {
+                        float d = (skin.p[k] - verts[i]).sqrMagnitude;
+                        if (d < bestD) { bestD = d; best = k; }
+                    }
+            if (best < 0) continue;
+            float above = Vector3.Dot(verts[i] - skin.p[best], skin.n[best]);
+            if (above < clearance - 0.002f && clearance - above < 0.03f) { verts[i] += skin.n[best] * (clearance - above); pushed++; }
+            else if (most > 0 && above > most + 0.003f && above - most < 0.05f && verts[i].y < pullBelow) {
+                verts[i] -= skin.n[best] * (above - most); pulled++;
+            }
+        }
+        if (pushed + pulled > 0) Debug.Log($"[Clothes] {what}: last clamp to its layer, {pushed} out, {pulled} in");
+    }
+
     static void Wrap(List<Vector3> verts, List<int[]> submeshes, string character, float clearance, string what, bool onHead,
                      float most, float pullBelow) {
         var skin = SkinOf(character, onHead);
