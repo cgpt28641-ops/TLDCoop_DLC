@@ -63,7 +63,8 @@ def main(cab,outdir,names):
             r=vreg[tri]  # a triangle's region: its vertices' majority (ties: the lowest index, the most central)
             treg=np.array([np.bincount(x,minlength=len(REGIONS)).argmax() for x in r])
             cy=P[tri][:,:,1].mean(1)
-            low=(treg==2)&(cy<BAND_TOP)
+            # the torso, hips and legs between BAND_TOP and the lowest band: what a coat's hem may or may not reach
+            low=np.isin(treg,[2,5,6])&(cy<BAND_TOP)&(cy>=BAND_TOP-15*BAND_STEP)
             treg[low]=8+np.clip(((BAND_TOP-cy[low])/BAND_STEP).astype(int),0,14)
             subs.append((tri,treg))
         bp=np.array([[m['e%d%d'%(i,j)] for i in range(4) for j in range(4)] for m in mesh['m_BindPose']['Array']])
