@@ -385,6 +385,15 @@ public static class BuildClothes {
                 float footY = Mathf.Max(JointPos(g, bin, skin, "LeftFoot_jnt").y, JointPos(g, bin, skin, "RightFoot_jnt").y);
                 if (!float.IsNaN(footY)) {
                     float cutY = footY + cl.ankle_cut; int before = 0, after = 0;
+                    // never above the sock's top less 2 cm (the sock reaches 5 cm over the shoe that shapes it)
+                    string shoeFile = Path.Combine(Path.GetDirectoryName(file), (cl.sock_from ?? "") + ".gltf");
+                    if (!string.IsNullOrEmpty(cl.sock_from) && File.Exists(shoeFile)) {
+                        var gs = JsonUtility.FromJson<Gltf>(File.ReadAllText(shoeFile));
+                        byte[] sb = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(shoeFile), Uri.UnescapeDataString(gs.buffers[0].uri)));
+                        var ys = gs.meshes[gs.nodes[Array.FindIndex(gs.nodes, nd => nd.mesh >= 0)].mesh].primitives
+                                   .SelectMany(pr => ReadVec3(gs, sb, pr.attributes.POSITION)).Select(v => v.y).OrderBy(y => y).ToList();
+                        if (ys.Count > 0) cutY = Mathf.Min(cutY, ys[(int)(ys.Count * 0.99f)] + 0.03f);
+                    }
                     for (int m = 0; m < submeshes.Count; m++) {
                         var t = submeshes[m]; var keep = new List<int>();
                         for (int k = 0; k + 2 < t.Length; k += 3) {
