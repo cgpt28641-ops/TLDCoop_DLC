@@ -313,5 +313,14 @@
     "GEAR_DownVest",
     "GEAR_InsulatedVest"
   ],
-  "wrap_clearance": 0.012
+  "wrap_clearance": 0.012,
+  "hat_wrap_items": [
+    "GEAR_BasicWoolHat",
+    "GEAR_Toque",
+    "GEAR_ImprovisedHat",
+    "GEAR_RabbitskinHat",
+    "GEAR_BaseballCap",
+    "GEAR_EarMuffs"
+  ],
+  "hat_wrap_clearance": 0.006
 }

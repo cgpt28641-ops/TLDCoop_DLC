@@ -62,6 +62,8 @@ namespace TLDCoop {
     // Pieces kept off the body: every vertex at least wrap_clearance outside its torso, arms, neck and legs (a flat
     // cloak given volume, a sleeve never under the skin).
     public string[] wrap_items; public float wrap_clearance = 0.012f;
+    // Hats kept off the head and its hair the same way (the fringe never through a beanie).
+    public string[] hat_wrap_items; public float hat_wrap_clearance = 0.006f;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -214,7 +216,9 @@ public static class BuildClothes {
                 var cutRegions = (list.hide_rules ?? new HideRule[0]).Where(r => r.under != null && r.regions != null && r.under.Contains(item))
                     .SelectMany(r => r.regions).Distinct().ToArray();
                 float wrap = list.wrap_items != null && list.wrap_items.Contains(item) ? list.wrap_clearance : -1;
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap);
+                bool onHead = list.hat_wrap_items != null && list.hat_wrap_items.Contains(item);
+                if (onHead) wrap = list.hat_wrap_clearance;
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead);
                 triangles += result;
                 meshes++;
             }
@@ -253,7 +257,7 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap) {
+                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead = false) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -315,7 +319,7 @@ public static class BuildClothes {
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
         if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 
-        if (wrap > 0) Wrap(verts, submeshes, character, wrap, $"{character}/{item}");
+        if (wrap > 0) Wrap(verts, submeshes, character, wrap, $"{character}/{item}", onHead);
         var mesh = new Mesh { name = $"{character}_{item}" };
         if (verts.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
         mesh.SetVertices(verts);
@@ -652,8 +656,9 @@ public static class BuildClothes {
     static readonly Dictionary<string, Skin> Skins = new Dictionary<string, Skin>();
     const float SkinCell = 0.03f;
     static Vector3Int Cell(Vector3 p) => new Vector3Int(Mathf.FloorToInt(p.x / SkinCell), Mathf.FloorToInt(p.y / SkinCell), Mathf.FloorToInt(p.z / SkinCell));
-    static Skin SkinOf(string character) {
-        if (Skins.TryGetValue(character, out var known)) return known;
+    static Skin SkinOf(string character, bool head) {
+        string key = character + (head ? "/head" : "");
+        if (Skins.TryGetValue(key, out var known)) return known;
         Skin skin = null;
         var mesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/BodyCut.asset");
         var info = AssetDatabase.LoadAssetAtPath<TextAsset>($"{OutDir}/{character}/BodyCut.txt");
@@ -662,7 +667,7 @@ public static class BuildClothes {
             var use = new HashSet<int>();
             for (int i = 0; i < parts.Length && i < mesh.subMeshCount; i++) {
                 string region = parts[i].Split(':')[1];
-                if (region == "head" || region == "hands" || region == "feet") continue;
+                if (head ? region != "head" : region == "head" || region == "hands" || region == "feet") continue;
                 foreach (int v in mesh.GetTriangles(i)) use.Add(v);
             }
             var all = mesh.vertices; var normals = mesh.normals;
@@ -673,13 +678,13 @@ public static class BuildClothes {
                 l.Add(i);
             }
         }
-        return Skins[character] = skin;
+        return Skins[key] = skin;
     }
 
     // Every vertex pushed out to at least `clearance` above the nearest skin (along the skin's normal there), the pushes
     // then smoothed over the piece's own triangles so it bends round the body instead of denting.
-    static void Wrap(List<Vector3> verts, List<int[]> submeshes, string character, float clearance, string what) {
-        var skin = SkinOf(character);
+    static void Wrap(List<Vector3> verts, List<int[]> submeshes, string character, float clearance, string what, bool onHead) {
+        var skin = SkinOf(character, onHead);
         if (skin == null) return;
         var push = new Vector3[verts.Count];
         int moved = 0;

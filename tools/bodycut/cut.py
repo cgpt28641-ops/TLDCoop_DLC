@@ -52,10 +52,14 @@ def main(cab,outdir,names):
         ib=mesh['m_IndexBuffer']; ib=ib['Array'] if isinstance(ib,dict) else ib
         idx=np.frombuffer(ib,dtype='<u4' if mesh['m_IndexFormat']==1 else '<u2').astype(np.int64)
         breg=np.array([REGIONS.index(region_of(b)) for b in bones])
+        bpm=mesh['m_BindPose']['Array'][bones.index('Neck_jnt')]
+        M=np.array([[bpm['e%d%d'%(i,j)] for j in range(4)] for i in range(4)])
+        neck_y=np.linalg.inv(M)[1,3]
         # each vertex's region: the region carrying most of its weight
         vr=np.zeros((len(P),len(REGIONS)))
         for k in range(4): np.add.at(vr,(np.arange(len(P)),breg[J[:,k]]),W[:,k])
         vreg=vr.argmax(1)
+        mats=[R(m['m_PathID'])['m_Name'] for m in d['m_Materials']['Array']]
         subs=[]
         isz=4 if mesh['m_IndexFormat']==1 else 2
         for sm in mesh['m_SubMeshes']['Array']:
@@ -63,12 +67,15 @@ def main(cab,outdir,names):
             r=vreg[tri]  # a triangle's region: its vertices' majority (ties: the lowest index, the most central)
             treg=np.array([np.bincount(x,minlength=len(REGIONS)).argmax() for x in r])
             cy=P[tri][:,:,1].mean(1)
+            # the top of the torso round the neck stays with the neck: a coat's collar sits there and must not show a gap
+            # (skin only: a jacket's or sweater's own collar or hood stays torso, hidden under a coat)
+            if not re.search('Jacket|Sweater|Coat|Parka|Hoodie|Shirt|Vest|Overall',mats[min(len(subs),len(mats)-1)],re.I):
+                treg[(treg==2)&(cy>neck_y-0.02)]=1
             # the torso, hips and legs between BAND_TOP and the lowest band: what a coat's hem may or may not reach
             low=np.isin(treg,[2,5,6])&(cy<BAND_TOP)&(cy>=BAND_TOP-15*BAND_STEP)
             treg[low]=8+np.clip(((BAND_TOP-cy[low])/BAND_STEP).astype(int),0,14)
             subs.append((tri,treg))
         bp=np.array([[m['e%d%d'%(i,j)] for i in range(4) for j in range(4)] for m in mesh['m_BindPose']['Array']])
-        mats=[R(m['m_PathID'])['m_Name'] for m in d['m_Materials']['Array']]
         write(os.path.join(outdir,mesh['m_Name']+'.bodycut'),P,N,T,UV,W,J,subs,bp,mats)
         counts={REGIONS[i]:int(sum((t[1]==i).sum() for t in subs)) for i in range(len(REGIONS))}
         print(mesh['m_Name'],len(P),'verts',len(subs),'subs',counts,'mats',mats)
