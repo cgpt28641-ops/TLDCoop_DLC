@@ -1226,14 +1226,15 @@ public static class BuildClothes {
             var path = new List<(Vector3 p, Vector3 t, float a, float b)>();
             for (int k = 0; k <= 8; k++) {
                 float y = Mathf.Lerp(top, soleY + bend, k / 8f);
-                path.Add((new Vector3(cx, y, ankleZ), Vector3.down, 0.043f, 0.043f));
+                float r = Mathf.Lerp(0.053f, 0.044f, k / 8f);  // wide enough at the top to take the long johns' leg in
+                path.Add((new Vector3(cx, y, ankleZ - 0.004f * (1 - k / 8f)), Vector3.down, r, r));
             }
             for (int k = 1; k <= 6; k++) {
                 float an = k / 6f * Mathf.PI / 2;
                 var p = new Vector3(cx, soleY + bend - Mathf.Sin(an) * bend, ankleZ + (1 - Mathf.Cos(an)) * bend);
                 var t = new Vector3(0, -Mathf.Cos(an), Mathf.Sin(an));
                 float u = k / 6f;
-                path.Add((p, t, Mathf.Lerp(0.043f, half, u), Mathf.Lerp(0.043f, 0.034f, u)));
+                path.Add((p, t, Mathf.Lerp(0.044f, half, u), Mathf.Lerp(0.044f, 0.034f, u)));
             }
             float start = ankleZ + bend, end = toe - 0.012f;
             for (int k = 1; k <= 10; k++) {
