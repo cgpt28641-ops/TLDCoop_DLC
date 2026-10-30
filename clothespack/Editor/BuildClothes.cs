@@ -24,6 +24,8 @@ using UnityEngine;
 
 namespace TLDCoop {
 
+[Serializable] class HideRule { public string[] under; public string[] words; }
+
 [Serializable] class ClothesList {
     public string[] items;
     public string[] preview_characters;
@@ -34,8 +36,9 @@ namespace TLDCoop {
     public string[] inflate_items; public float[] inflate_metres;
     // Coats too long: the hem raised to this far from the knees (0) to the hips (1), what's under the hips squeezed up.
     public string[] shorten_items; public float[] shorten_to;
-    // Under these items (coats) a body's own submeshes whose material name has one of hide_words are not drawn.
-    public string[] hide_under; public string[] hide_words;
+    // Under the items of a rule a body's own submeshes whose material name has one of its words are not drawn (its
+    // jacket under a coat, its hair or own hat under a hat).
+    public HideRule[] hide_rules;
     // Only these character folders go in the pack (empty: all of them).
     public string[] characters;
     // Collars that rose up the face: the top brought down to this many metres from Head_jnt (the jaw's height), the
@@ -180,9 +183,9 @@ public static class BuildClothes {
             }
         }
         // What the mod hides under which items: one TextAsset for the whole pack.
-        File.WriteAllText(OutDir + "/rules.txt",
-            "hide_under " + string.Join(",", list.hide_under ?? new string[0]) + "\n" +
-            "hide_words " + string.Join(",", list.hide_words ?? new string[0]) + "\n");
+        // One line per rule: "hide <item>,<item>... : <word>,<word>..."
+        File.WriteAllText(OutDir + "/rules.txt", string.Concat((list.hide_rules ?? new HideRule[0]).Select(r =>
+            "hide " + string.Join(",", r.under ?? new string[0]) + " : " + string.Join(",", r.words ?? new string[0]) + "\n")));
         AssetDatabase.ImportAsset(OutDir + "/rules.txt");
         AssetDatabase.SaveAssets();
 
@@ -538,14 +541,15 @@ public static class BuildClothes {
         if (missing > 0) Debug.LogWarning($"[Clothes] {character}/{item}: {missing} of {bones.Length} bones not on the body");
         // Under a coat: the body's own jacket / sweater submeshes aren't drawn.
         var list = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json"));
-        if (list.hide_under != null && list.hide_under.Contains(item) && list.hide_words != null) {
+        foreach (var rule in list.hide_rules ?? new HideRule[0]) {
+            if (rule.under == null || rule.words == null || !rule.under.Contains(item)) continue;
             var hidden = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
             foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
                 if (r.gameObject == go) continue;
                 var mats = r.sharedMaterials;
                 bool changed = false;
                 for (int i = 0; i < mats.Length; i++)
-                    if (mats[i] && list.hide_words.Any(w => mats[i].name.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0)) {
+                    if (mats[i] && mats[i] != hidden && rule.words.Any(w => mats[i].name.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0)) {
                         Debug.Log($"[Clothes] {character}/{item}: the body's {mats[i].name} hidden");
                         mats[i] = hidden;
                         changed = true;

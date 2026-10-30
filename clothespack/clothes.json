@@ -1,44 +1,250 @@
 {
-  "comment": "What goes into tldcoop_clothes: these items, for every character folder in the catalog. Start: hats and outer layers.",
+  "comment": "What goes into tldcoop_clothes: these items, for every character folder in the catalog. Start: hats and outer layers. Hats: lifted to the forehead; the body's hair hidden under full hats, its own hat under any.",
   "items": [
-    "GEAR_BasicWoolHat", "GEAR_BaseballCap", "GEAR_Toque", "GEAR_RabbitskinHat", "GEAR_ImprovisedHat",
-    "GEAR_EarMuffs", "GEAR_Balaclava",
-    "GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
-    "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak", "GEAR_PremiumWinterCoat",
-    "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape", "GEAR_DownVest", "GEAR_InsulatedVest"
+    "GEAR_BasicWoolHat",
+    "GEAR_BaseballCap",
+    "GEAR_Toque",
+    "GEAR_RabbitskinHat",
+    "GEAR_ImprovisedHat",
+    "GEAR_EarMuffs",
+    "GEAR_Balaclava",
+    "GEAR_BasicWinterCoat",
+    "GEAR_BearSkinCoat",
+    "GEAR_DownParka",
+    "GEAR_DownSkiJacket",
+    "GEAR_HeavyParka",
+    "GEAR_LightParka",
+    "GEAR_MackinawJacket",
+    "GEAR_MilitaryParka",
+    "GEAR_MooseHideCloak",
+    "GEAR_PremiumWinterCoat",
+    "GEAR_QualityWinterCoat",
+    "GEAR_SkiJacket",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest"
   ],
-  "lift_items": ["GEAR_BasicWoolHat", "GEAR_Toque", "GEAR_BaseballCap", "GEAR_RabbitskinHat"],
-  "lift_metres": [-0.08, -0.08, -0.04, 0.05],
-  "inflate_items": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
-                    "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak",
-                    "GEAR_PremiumWinterCoat", "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape",
-                    "GEAR_DownVest", "GEAR_InsulatedVest"],
-  "inflate_metres": [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
-  "shorten_items": ["GEAR_DownParka"],
-  "shorten_to": [0.45],
-  "hide_under": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
-                 "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_PremiumWinterCoat",
-                 "GEAR_QualityWinterCoat", "GEAR_SkiJacket"],
-  "characters": ["mackenzie", "mackenzie_indoor", "astrid", "astrid_outdoor", "molly"],
-  "collar_items": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka", "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak", "GEAR_PremiumWinterCoat", "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape", "GEAR_DownVest", "GEAR_InsulatedVest"],
-  "collar_metres": [-0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01, -0.01],
-  "hide_words": ["Jacket", "Sweater", "Coat", "Parka", "Hoodie", "Shirt", "Vest", "Top"],
-  "preview_characters": ["mackenzie", "mackenzie_indoor", "astrid", "astrid_outdoor", "molly"],
+  "lift_items": [
+    "GEAR_BasicWoolHat",
+    "GEAR_Toque",
+    "GEAR_BaseballCap",
+    "GEAR_RabbitskinHat"
+  ],
+  "lift_metres": [
+    -0.02,
+    -0.02,
+    -0.02,
+    0.05
+  ],
+  "inflate_items": [
+    "GEAR_BasicWinterCoat",
+    "GEAR_BearSkinCoat",
+    "GEAR_DownParka",
+    "GEAR_DownSkiJacket",
+    "GEAR_HeavyParka",
+    "GEAR_LightParka",
+    "GEAR_MackinawJacket",
+    "GEAR_MilitaryParka",
+    "GEAR_MooseHideCloak",
+    "GEAR_PremiumWinterCoat",
+    "GEAR_QualityWinterCoat",
+    "GEAR_SkiJacket",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest",
+    "GEAR_BasicWoolHat",
+    "GEAR_Toque",
+    "GEAR_BaseballCap",
+    "GEAR_EarMuffs"
+  ],
+  "inflate_metres": [
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.01,
+    0.01,
+    0.02,
+    0.015
+  ],
+  "shorten_items": [
+    "GEAR_DownParka"
+  ],
+  "shorten_to": [
+    0.45
+  ],
+  "characters": [
+    "mackenzie",
+    "mackenzie_indoor",
+    "astrid",
+    "astrid_outdoor",
+    "molly"
+  ],
+  "collar_items": [
+    "GEAR_BasicWinterCoat",
+    "GEAR_BearSkinCoat",
+    "GEAR_DownParka",
+    "GEAR_DownSkiJacket",
+    "GEAR_HeavyParka",
+    "GEAR_LightParka",
+    "GEAR_MackinawJacket",
+    "GEAR_MilitaryParka",
+    "GEAR_MooseHideCloak",
+    "GEAR_PremiumWinterCoat",
+    "GEAR_QualityWinterCoat",
+    "GEAR_SkiJacket",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest"
+  ],
+  "collar_metres": [
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01
+  ],
+  "preview_characters": [
+    "mackenzie",
+    "mackenzie_indoor",
+    "astrid",
+    "astrid_outdoor",
+    "molly"
+  ],
   "preview_outfits": [
-    ["GEAR_BasicWoolHat", "GEAR_BasicWinterCoat"],
-    ["GEAR_BaseballCap", "GEAR_BearSkinCoat"],
-    ["GEAR_Toque", "GEAR_DownParka"],
-    ["GEAR_RabbitskinHat", "GEAR_DownSkiJacket"],
-    ["GEAR_ImprovisedHat", "GEAR_HeavyParka"],
-    ["GEAR_EarMuffs", "GEAR_LightParka"],
-    ["GEAR_Balaclava", "GEAR_MackinawJacket"],
-    ["GEAR_BasicWoolHat", "GEAR_MilitaryParka"],
-    ["GEAR_BaseballCap", "GEAR_MooseHideCloak"],
-    ["GEAR_Toque", "GEAR_PremiumWinterCoat"],
-    ["GEAR_RabbitskinHat", "GEAR_QualityWinterCoat"],
-    ["GEAR_ImprovisedHat", "GEAR_SkiJacket"],
-    ["GEAR_EarMuffs", "GEAR_WolfSkinCape"],
-    ["GEAR_Balaclava", "GEAR_DownVest"],
-    ["GEAR_BasicWoolHat", "GEAR_InsulatedVest"]
+    [
+      "GEAR_BasicWoolHat",
+      "GEAR_BasicWinterCoat"
+    ],
+    [
+      "GEAR_BaseballCap",
+      "GEAR_BearSkinCoat"
+    ],
+    [
+      "GEAR_Toque",
+      "GEAR_DownParka"
+    ],
+    [
+      "GEAR_RabbitskinHat",
+      "GEAR_DownSkiJacket"
+    ],
+    [
+      "GEAR_ImprovisedHat",
+      "GEAR_HeavyParka"
+    ],
+    [
+      "GEAR_EarMuffs",
+      "GEAR_LightParka"
+    ],
+    [
+      "GEAR_Balaclava",
+      "GEAR_MackinawJacket"
+    ],
+    [
+      "GEAR_BasicWoolHat",
+      "GEAR_MilitaryParka"
+    ],
+    [
+      "GEAR_BaseballCap",
+      "GEAR_MooseHideCloak"
+    ],
+    [
+      "GEAR_Toque",
+      "GEAR_PremiumWinterCoat"
+    ],
+    [
+      "GEAR_RabbitskinHat",
+      "GEAR_QualityWinterCoat"
+    ],
+    [
+      "GEAR_ImprovisedHat",
+      "GEAR_SkiJacket"
+    ],
+    [
+      "GEAR_EarMuffs",
+      "GEAR_WolfSkinCape"
+    ],
+    [
+      "GEAR_Balaclava",
+      "GEAR_DownVest"
+    ],
+    [
+      "GEAR_BasicWoolHat",
+      "GEAR_InsulatedVest"
+    ]
+  ],
+  "hide_rules": [
+    {
+      "under": [
+        "GEAR_BasicWinterCoat",
+        "GEAR_BearSkinCoat",
+        "GEAR_DownParka",
+        "GEAR_DownSkiJacket",
+        "GEAR_HeavyParka",
+        "GEAR_LightParka",
+        "GEAR_MackinawJacket",
+        "GEAR_MilitaryParka",
+        "GEAR_PremiumWinterCoat",
+        "GEAR_QualityWinterCoat",
+        "GEAR_SkiJacket"
+      ],
+      "words": [
+        "Jacket",
+        "Sweater",
+        "Coat",
+        "Parka",
+        "Hoodie",
+        "Shirt",
+        "Vest",
+        "Top"
+      ]
+    },
+    {
+      "under": [
+        "GEAR_BasicWoolHat",
+        "GEAR_Toque",
+        "GEAR_RabbitskinHat",
+        "GEAR_ImprovisedHat",
+        "GEAR_Balaclava"
+      ],
+      "words": [
+        "Hair",
+        "Toque",
+        "Beanie",
+        "Hat"
+      ]
+    },
+    {
+      "under": [
+        "GEAR_BaseballCap",
+        "GEAR_EarMuffs"
+      ],
+      "words": [
+        "Toque",
+        "Beanie",
+        "Hat"
+      ]
+    }
   ]
 }
