@@ -27,7 +27,12 @@ namespace TLDCoop {
 // An item the catalog fitted the wrong way round (the balaclava upside down and back to front, the ear warmer standing
 // up round the face): turned about the x axis through its middle, scaled, its middle put at Head_jnt + centre (times
 // the head's size), and skinned anew: to the head ("head") or the head above the neck ("headneck").
-[Serializable] class Reshape { public string item; public float rotate_x; public float scale = 1; public float[] centre; public string weights; }
+[Serializable] class Reshape {
+    public string item; public float rotate_x; public float scale = 1; public float[] centre; public string weights;
+    // tilt: y raised by tilt × (how far forward), so the back hangs lower; back_only: the part in front of
+    // centre z + cut_front left out (a behind-the-head ear warmer: on the ears, round the back, nothing over the face)
+    public float tilt; public bool back_only; public float cut_front;
+}
 
 // How far from the skin a kind of clothing lies: at least min (pushed out), at most max (pulled in below the
 // shoulders; 0: no limit), so the layers stack (base layer, shirt or sweater, trousers, vest, coat) without crossing.
@@ -362,7 +367,7 @@ public static class BuildClothes {
         }
         if (mirror) MirrorPair(g, skin, verts, normals, uvs, weights, submeshes, $"{character}/{item}");
 
-        if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, $"{character}/{item}");
+        if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, submeshes, $"{character}/{item}");
         if (skinMask) SkinMask(g, bin, skin, file, item, character, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (scarf) Scarf(g, bin, skin, file, item, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (beanie) Beanie(g, bin, skin, file, item, grow, verts, normals, uvs, weights, submeshes, matNames, twoSided);
@@ -516,7 +521,7 @@ public static class BuildClothes {
     }
 
     static void DoReshape(Gltf g, byte[] bin, GSkin skin, Reshape r, List<Vector3> verts, List<Vector3> normals,
-                          List<BoneWeight> weights, string what) {
+                          List<BoneWeight> weights, List<int[]> submeshes, string what) {
         Vector3 head = JointPos(g, bin, skin, "Head_jnt"), neck = JointPos(g, bin, skin, "Neck_jnt");
         int hi = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Head_jnt");
         int ni = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Neck_jnt");
@@ -530,6 +535,7 @@ public static class BuildClothes {
         var rot = Quaternion.Euler(r.rotate_x, 0, 0);
         for (int i = 0; i < verts.Count; i++) {
             verts[i] = to + rot * (verts[i] - mid) * r.scale * s;
+            if (r.tilt != 0) verts[i] += Vector3.up * r.tilt * (verts[i].z - to.z);
             normals[i] = rot * normals[i];
             float y = verts[i].y;
             float w = r.weights == "headneck" ? Mathf.Clamp01((y - neck.y) / Mathf.Max(0.01f, head.y - neck.y)) : r.weights == "neck" ? 0 : 1;
@@ -537,7 +543,14 @@ public static class BuildClothes {
                        : w <= 0.001f ? new BoneWeight { boneIndex0 = ni, weight0 = 1 }
                                      : new BoneWeight { boneIndex0 = hi, weight0 = w, boneIndex1 = ni, weight1 = 1 - w };
         }
-        Debug.Log($"[Clothes] {what}: turned {r.rotate_x} degrees, scaled {r.scale * s:F2}, put at the head");
+        if (r.back_only)
+            for (int m = 0; m < submeshes.Count; m++) {
+                var t = submeshes[m]; var kept = new List<int>();
+                for (int k = 0; k + 2 < t.Length; k += 3)
+                    if ((verts[t[k]].z + verts[t[k + 1]].z + verts[t[k + 2]].z) / 3 < to.z + r.cut_front * s) { kept.Add(t[k]); kept.Add(t[k + 1]); kept.Add(t[k + 2]); }
+                submeshes[m] = kept.ToArray();
+            }
+        Debug.Log($"[Clothes] {what}: turned {r.rotate_x} degrees, scaled {r.scale * s:F2}, put at the head" + (r.back_only ? ", front left out" : ""));
     }
 
     // As tools/bodycut/cut.py names them: the torso's lower part in 3 cm bands from BandTop down.

@@ -369,13 +369,16 @@
     {
       "item": "GEAR_EarMuffs",
       "rotate_x": 90,
-      "scale": 1.0,
+      "scale": 0.85,
       "centre": [
         0,
-        0.09,
-        -0.005
+        0.075,
+        -0.012
       ],
-      "weights": "head"
+      "weights": "head",
+      "tilt": 0.35,
+      "back_only": true,
+      "cut_front": 0.025
     }
   ],
   "beanie_grow_characters": [
