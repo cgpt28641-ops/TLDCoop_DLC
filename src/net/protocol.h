@@ -86,6 +86,9 @@
 //                          (net/container_locks.h). Client->host: op Take (search or open it; again while busy) or
 //                          Release; owner unused. Host->client: op State, owner the player in it (kNoOwner: free).
 //                          (TLDCoop_DLC)
+//   BloodMark either       scene[48], u8 kind, f32 x y z, f32 a b, i32 count: blood a bleeding player left in the
+//                          sender's world (TLD's BloodTrail: kind 0 a drop at x y z, 1 a stain (a b: its scale's range),
+//                          2 a cluster of `count` drops); the others' games leave the same (TLDCoop_DLC)
 //   WaterList host->client scene[48], u32 n, then n times id (u16 n + n), u32 n + n bytes: every water source the host
 //                          has there, when a friend comes into its scene (TLDCoop_DLC)
 //   CaughtUp client->host  u32 n: once linked (again), after the n world changes the client made while the link was
@@ -100,6 +103,7 @@
 //                          our part of sleep `id` ended early (`why`), or we weren't in bed for its Start
 
 #include <cstddef>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -110,7 +114,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 32;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 33;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -147,6 +151,7 @@ constexpr uint16_t kProtocolVersion = 32;  // v4: World. v5: Animals. v6: sounds
                                            // v31 (TLDCoop_DLC): sleep votes 1 HOUR and 2 HOURS (waiting)
                                            // v32 (TLDCoop_DLC): gestures (State's emote, emote_seq); held
                                            // kind Match, held flag kHeldIgniting
+                                           // v33 (TLDCoop_DLC): players' blood (BloodMark)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -168,7 +173,8 @@ enum class Msg : uint8_t {
     Reliable = 14, Ack = 15, Hit = 16, Thrown = 17, Carcasses = 18, Harvest = 19, Quartered = 20, Chunk = 21,
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
-    Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40
+    Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
+    BloodMark = 41
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1059,6 +1065,41 @@ inline bool read_container_lock(Reader& r, ContainerLockMsg& m) {
     if (op > static_cast<uint8_t>(LockOp::State)) return false;
     m.op = static_cast<LockOp>(op);
     return r.ok();
+}
+
+// Players' blood (TLDCoop_DLC): what TLD's BloodTrail leaves on the ground for a bleeding player.
+enum class BloodKind : uint8_t { Drop = 0, Stain = 1, Cluster = 2 };
+struct BloodMarkMsg {
+    std::string scene;
+    BloodKind kind = BloodKind::Drop;
+    float x = 0, y = 0, z = 0;
+    float a = 0, b = 0;  // Stain: its scale's range (min, max)
+    int32_t count = 0;   // Cluster: how many drops
+};
+
+inline void write_blood_mark(Writer& w, const BloodMarkMsg& m) {
+    w.put_str(m.scene, kSceneLen);
+    w.put(static_cast<uint8_t>(m.kind));
+    w.put(m.x);
+    w.put(m.y);
+    w.put(m.z);
+    w.put(m.a);
+    w.put(m.b);
+    w.put(m.count);
+}
+
+inline bool read_blood_mark(Reader& r, BloodMarkMsg& m) {
+    m.scene = r.get_str(kSceneLen);
+    const uint8_t kind = r.get<uint8_t>();
+    m.x = r.get<float>();
+    m.y = r.get<float>();
+    m.z = r.get<float>();
+    m.a = r.get<float>();
+    m.b = r.get<float>();
+    m.count = r.get<int32_t>();
+    if (kind > static_cast<uint8_t>(BloodKind::Cluster)) return false;
+    m.kind = static_cast<BloodKind>(kind);
+    return r.ok() && std::isfinite(m.x) && std::isfinite(m.y) && std::isfinite(m.z) && m.count >= 0 && m.count <= 64;
 }
 
 // Water sources (TLDCoop_DLC): toilets, tanks... TLD's WaterSource, named by its persistent id (or its position when it

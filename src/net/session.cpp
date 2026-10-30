@@ -873,6 +873,7 @@ struct Session::Impl {
             case Msg::FirePut:
             case Msg::WaterPut:
             case Msg::ContainerLock:
+            case Msg::BloodMark:
             case Msg::Sleep:
             case Msg::Give: {
                 if (!linked) return;

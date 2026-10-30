@@ -38,6 +38,7 @@
 #include "world_containers.h"
 #include "world_fires.h"
 #include "world_water.h"
+#include "world_blood.h"
 #include "world_objects.h"
 #include "world_items.h"
 #include "world_join.h"
@@ -479,6 +480,7 @@ void on_frame() {
     world_containers::on_frame(in_game);
     world_fires::on_frame(in_game);
     world_water::on_frame(in_game);
+    world_blood::on_frame(in_game);
     world_join::on_frame(scene, in_game);
     coop_death::on_frame(scene, in_game);
     coop_lapse::on_frame(scene, in_game);
@@ -600,6 +602,7 @@ void on_runtime_ready() {
     world_objects::init();
     world_fires::init();
     world_water::init();
+    world_blood::init();
     world_join::init();
     coop_death::init();
     coop_lapse::init();
