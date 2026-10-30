@@ -146,7 +146,6 @@ struct Api {
     FieldInfo* ignore_input = nullptr;               // static InputManager.s_IgnoreInput
     const MethodInfo* pop_context = nullptr;         // static InputManager.PopContext(MonoBehaviour)
     const MethodInfo* controls_locked = nullptr;     // static GameManager.ControlsLocked()
-    const MethodInfo* object_name = nullptr;         // Object.get_name()
     FieldInfo* block_input = nullptr;               // static GameManager.m_BlockNonMovementInput
     FieldInfo* lock_timer = nullptr;                // static GameManager.m_LockControlsTimer
     FieldInfo* block_move = nullptr;                // static GameManager.m_BlockMoveInputUntilReleased
