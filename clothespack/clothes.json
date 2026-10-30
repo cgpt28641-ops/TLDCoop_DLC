@@ -1,0 +1,16 @@
+{
+  "comment": "What goes into tldcoop_clothes: these items, for every character folder in the catalog. Start: hats and outer layers.",
+  "items": [
+    "GEAR_BasicWoolHat", "GEAR_BaseballCap", "GEAR_Toque", "GEAR_RabbitskinHat", "GEAR_ImprovisedHat",
+    "GEAR_EarMuffs", "GEAR_Balaclava",
+    "GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
+    "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_MooseHideCloak", "GEAR_PremiumWinterCoat",
+    "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape", "GEAR_DownVest", "GEAR_InsulatedVest"
+  ],
+  "preview_characters": ["mackenzie", "astrid", "heller", "molly"],
+  "preview_outfits": [
+    ["GEAR_BasicWoolHat", "GEAR_BasicWinterCoat"],
+    ["GEAR_RabbitskinHat", "GEAR_BearSkinCoat"],
+    ["GEAR_BaseballCap", "GEAR_DownParka"]
+  ]
+}
