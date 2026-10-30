@@ -320,10 +320,20 @@
     {
       "under": [
         "GEAR_BasicWoolHat",
-        "GEAR_BaseballCap",
         "GEAR_Toque",
+        "GEAR_ImprovisedHat"
+      ],
+      "words": [
+        "Hair",
+        "Toque",
+        "Beanie",
+        "Hat"
+      ]
+    },
+    {
+      "under": [
+        "GEAR_BaseballCap",
         "GEAR_RabbitskinHat",
-        "GEAR_ImprovisedHat",
         "GEAR_EarMuffs"
       ],
       "words": [
@@ -423,7 +433,7 @@
         "GEAR_WoolSweater"
       ],
       "min": 0.004,
-      "max": 0.012
+      "max": 0.009
     },
     {
       "items": [
@@ -443,7 +453,7 @@
         "GEAR_InsulatedVest",
         "GEAR_BallisticVest"
       ],
-      "min": 0.014,
+      "min": 0.02,
       "max": 0
     },
     {

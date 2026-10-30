@@ -422,6 +422,16 @@ public static class BuildClothes {
         if (skinMask || scarf || beanie)  // knitted pieces sit over hair the game hides: only a light shade, no dark blotches
             for (int i = 0; i < ao.Length; i++) { float o = 0.8f + 0.2f * ao[i].r; ao[i] = new Color(o, o, o, 1); }
         mesh.colors = ao;
+        // Depth bias by layer (the further out, the more it wins a depth tie): where an inner and an outer piece lie
+        // within a millimetre or two, the outer one is drawn, not a patchwork of both.
+        if (wrap > 0)
+            foreach (var mn in matNames.Distinct()) {
+                var m = AssetDatabase.LoadAssetAtPath<Material>($"{OutDir}/Materials/{mn}.mat");
+                if (!m) continue;
+                m.SetFloat("_OffsetFactor", -Mathf.Round(wrap * 100));
+                m.SetFloat("_OffsetUnits", -Mathf.Round(wrap * 2000));
+                EditorUtility.SetDirty(m);
+            }
         AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/{item}.asset");
 
         string bones = string.Join(",", skin.joints.Select(j => g.nodes[j].name));

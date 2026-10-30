@@ -10,10 +10,13 @@ Shader "TLDCoop/Cloth" {
         _Cutoff ("Alpha cutoff", Range(0, 1)) = 0.5
         _AO ("Baked occlusion", Range(0, 1)) = 1
         _Smoothness ("Smoothness", Range(0, 1)) = 0.12
+        _OffsetFactor ("Depth offset factor (by layer)", Float) = 0
+        _OffsetUnits ("Depth offset units (by layer)", Float) = 0
     }
     SubShader {
         Tags { "Queue" = "AlphaTest" "RenderType" = "TransparentCutout" }
         Cull Off
+        Offset [_OffsetFactor], [_OffsetUnits]
         CGPROGRAM
         #pragma surface surf Standard alphatest:_Cutoff addshadow fullforwardshadows
         #pragma target 3.0
