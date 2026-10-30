@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <map>
+#include <random>
 #include <tuple>
 #include <unordered_map>
 
@@ -102,6 +104,15 @@ struct Api {
     const MethodInfo* not_potable = nullptr;        // Inventory.GetNonPotableWaterSupply()
     ptrdiff_t gear_clothing = -1;                   // GearItem.m_ClothingItem
     ptrdiff_t gear_water = -1;                      // GearItem.m_WaterSupply
+    // TLDCoop_DLC: what a death may not take (story, mission and undroppable items)
+    ptrdiff_t gear_cant_drop = -1;                  // GearItem.m_CantDropItem
+    ptrdiff_t gear_narrative = -1;                  // GearItem.m_NarrativeCollectibleItem
+    ptrdiff_t gear_mission = -1;                    // GearItem.m_MissionObject
+    ptrdiff_t gear_blueprint = -1;                  // GearItem.m_BlueprintItemUnlock
+    ptrdiff_t gear_data = -1;                       // GearItem.m_GearItemData
+    ptrdiff_t data_cant_drop = -1, data_remain = -1;  // GearItemData.m_CantDrop, m_RemainInInventoryOnDrop
+    const MethodInfo* destroy_object = nullptr;     // static Object.Destroy(Object)
+    const MethodInfo* gear_name = nullptr;          // Object.get_name()
     ptrdiff_t water_volume = -1;                    // WaterSupply.m_VolumeInLiters (ItemLiquidVolume: int64 units)
     const MethodInfo* wearing = nullptr;            // ClothingItem.IsWearing()
     const MethodInfo* make_gear = nullptr;          // static GearItem.InstantiateGearItem(string)
@@ -403,7 +414,19 @@ int64_t pour_water(Il2CppObject* c, Il2CppObject* supply, const std::string& nam
     return units;
 }
 
-// Where we died: TLD's corpse, holding all we carried and wore. Its record goes to the others.
+// TLDCoop_DLC: an item a death never takes: the story's (narrative collectibles), a mission's, blueprints, and what TLD
+// itself won't let go of (can't be dropped, stays in the pack when dropped).
+bool special_item(Il2CppObject* gi) {
+    auto has = [&](ptrdiff_t off) { return off >= 0 && get<Il2CppObject*>(gi, off) != nullptr; };
+    auto flag = [&](Il2CppObject* o, ptrdiff_t off) { return o && off >= 0 && get<bool>(o, off); };
+    if (flag(gi, api.gear_cant_drop) || has(api.gear_narrative) || has(api.gear_mission) || has(api.gear_blueprint))
+        return true;
+    Il2CppObject* data = api.gear_data >= 0 ? get<Il2CppObject*>(gi, api.gear_data) : nullptr;
+    return flag(data, api.data_cant_drop) || flag(data, api.data_remain);
+}
+
+// Where we died: TLD's corpse, holding what we carried and wore, less what the death took (coop.ini [death]
+// lose_percent, 70 by default, of the ordinary items, picked at random). Its record goes to the others.
 void leave_body() {
     const game::PlayerState me = game::read_player();
     Il2CppObject* pm = il2::invoke(api.player_manager, nullptr);
@@ -439,21 +462,51 @@ void leave_body() {
         il2::invoke(api.unequip, pm, unequip_args);  // nothing in our hands (TLD's death does this next anyway)
         Il2CppObject* potable = il2::invoke(api.potable, inv);
         Il2CppObject* not_potable = il2::invoke(api.not_potable, inv);
+        // TLDCoop_DLC: which items the death takes: lose_percent of the ordinary ones, at random.
+        std::vector<Il2CppObject*> items, ordinary;
         for (Il2CppObject* gi : pack_items(inv)) {
             if (gi == potable || gi == not_potable) continue;
+            items.push_back(gi);
+            if (!special_item(gi)) ordinary.push_back(gi);
+        }
+        const int percent = std::clamp(config::load().death_lose_percent, 0, 100);
+        std::shuffle(ordinary.begin(), ordinary.end(), std::mt19937{std::random_device{}()});
+        ordinary.resize(static_cast<size_t>(std::lround(ordinary.size() * percent / 100.0)));
+        std::string lost_names;
+        int lost = 0, kept_special = 0;
+        for (Il2CppObject* gi : items) {
+            const bool lose = std::find(ordinary.begin(), ordinary.end(), gi) != ordinary.end();
+            if (!lose && special_item(gi)) ++kept_special;
             Il2CppObject* clothing = get<Il2CppObject*>(gi, api.gear_clothing);
             bool worn = false;
             if (alive(clothing) && il2::invoke_value(api.wearing, clothing, worn) && worn) {
                 void* args[] = {gi};
                 il2::invoke(api.take_off, pm, args);
             }
+            bool to_container = true;
+            if (lose) {  // out of the pack and gone
+                Il2CppObject* go = go_of(gi);
+                if (lost < 40 && api.gear_name)
+                    if (Il2CppObject* n = il2::invoke(api.gear_name, gi))
+                        lost_names += (lost_names.empty() ? "" : ", ") + il2::to_utf8(reinterpret_cast<Il2CppString*>(n));
+                void* remove[] = {go, &to_container};
+                il2::invoke(api.inv_remove, inv, remove);
+                if (api.destroy_object && alive(go)) {
+                    void* d[] = {go};
+                    il2::invoke(api.destroy_object, nullptr, d);
+                }
+                ++lost;
+                continue;
+            }
             void* add[] = {gi};
             il2::invoke(api.container_add, c, add);
-            bool to_container = true;
             void* remove[] = {go_of(gi), &to_container};
             il2::invoke(api.inv_remove, inv, remove);
             ++moved;
         }
+        logx::info("death: %d of %zu item(s) lost (%d%% of the %zu ordinary ones; %d special kept)%s%s", lost,
+                   items.size(), percent, items.size() - static_cast<size_t>(kept_special), kept_special,
+                   lost ? ": " : "", lost_names.c_str());
         water += pour_water(c, potable, api.potable_name);
         water += pour_water(c, not_potable, api.not_potable_name);
     } else {
@@ -1074,6 +1127,19 @@ bool init() {
     api.not_potable = il2::find_method(inventory, "GetNonPotableWaterSupply", 0);
     api.gear_clothing = il2::field_offset(gear, "m_ClothingItem");
     api.gear_water = il2::field_offset(gear, "m_WaterSupply");
+    api.gear_cant_drop = il2::field_offset_quiet(gear, "m_CantDropItem");
+    api.gear_narrative = il2::field_offset_quiet(gear, "m_NarrativeCollectibleItem");
+    api.gear_mission = il2::field_offset_quiet(gear, "m_MissionObject");
+    api.gear_blueprint = il2::field_offset_quiet(gear, "m_BlueprintItemUnlock");
+    api.gear_data = il2::field_offset_quiet(gear, "m_GearItemData");
+    if (Il2CppClass* data = il2::find_class(kGame, "TLD.Gear", "GearItemData")) {
+        api.data_cant_drop = il2::field_offset_quiet(data, "m_CantDrop");
+        api.data_remain = il2::field_offset_quiet(data, "m_RemainInInventoryOnDrop");
+    }
+    if (Il2CppClass* obj = il2::find_class(kCore, "UnityEngine", "Object")) {
+        api.destroy_object = il2::find_method_params(obj, "Destroy", {"UnityEngine.Object"});
+        api.gear_name = il2::find_method(obj, "get_name", 0);
+    }
     api.water_volume = il2::field_offset(il2::find_class(kGame, "", "WaterSupply"), "m_VolumeInLiters");
     api.wearing = il2::find_method(il2::find_class(kGame, "", "ClothingItem"), "IsWearing", 0);
     api.make_gear = il2::find_method_params(gear, "InstantiateGearItem", {"System.String"});

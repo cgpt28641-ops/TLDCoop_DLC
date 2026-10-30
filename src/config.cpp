@@ -98,6 +98,11 @@ constexpr const char* kDefaultIni =
     "; in snowy, windy weather and goes in clear, windy weather. In co-op the HOST decides for everyone (MODS).\n"
     "enabled=1\n"
     "\n"
+    "[death]\n"
+    "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
+    "; items never); the rest stay in your body for anyone to take back. 0 = keep everything.\n"
+    "lose_percent=70\n"
+    "\n"
     "[arsenal]\n"
     "; Adaptive Arsenal (built in, by Deaadman, with his permission): rifle and revolver bullets fly, with drop,\n"
     "; spread and damage drop-off; the revolver can be aimed on the move. In co-op the HOST decides (MODS).\n"
@@ -205,6 +210,7 @@ Settings load() {
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
     s.adaptive_arsenal = GetPrivateProfileIntW(L"arsenal", L"enabled", 1, ini.c_str()) != 0;
+    s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
         if (!t.empty()) v = static_cast<float>(atof(t.c_str()));
