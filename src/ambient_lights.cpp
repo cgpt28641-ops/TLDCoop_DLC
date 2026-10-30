@@ -31,7 +31,8 @@ constexpr ptrdiff_t kListItems = 0x10, kListSize = 0x18;   // List<T>._items, _s
 constexpr ptrdiff_t kArrayFirst = 0x20;                    // T[]: the first element
 constexpr ptrdiff_t kCachedPtr = 0x10;                     // UnityEngine.Object.m_CachedPtr: null once destroyed
 constexpr size_t kLightDefSize = 40;                        // DarkLightingManager.LightDef: Light, float, Color, Vector3
-constexpr double kSettleMs = 4000;                          // a scene this long in (loaded) before its lights are set up
+constexpr double kSettleMs = 4000;   // no InteriorLightingManager by then (dark interiors): set up anyway
+constexpr double kLookMs = 100;      // how often to look for the scene's InteriorLightingManager until it's there
 constexpr double kHostCheckMs = 2000;
 constexpr int kPointLight = 2, kSpotLight = 0;              // UnityEngine.LightType
 
@@ -74,6 +75,7 @@ struct Api {
     const MethodInfo* wind_mph = nullptr;        // Wind.GetSpeedMPH()
     const MethodInfo* aurora_alpha = nullptr, *aurora_colour = nullptr, *aurora_cinematic = nullptr;
     ptrdiff_t aurora_active = -1, aurora_full = -1;  // m_NormalizedActive, m_FullyActiveValue
+    ptrdiff_t ilm_initialized = -1;              // InteriorLightingManager.m_Initialized
     ptrdiff_t ilm_groups = -1, ilm_loose = -1, ilm_loose_midday = -1;  // InteriorLightingManager lists
     ptrdiff_t group_lights = -1, group_glow_mats = -1;  // InteriorLightingGroup.m_Lights, m_GlowObjectMaterialsToUpdate
     ptrdiff_t amb_day = -1, amb_night = -1;      // TodAmbientLight.m_AmbientIndoorsDay / Night
@@ -93,6 +95,7 @@ std::array<uint32_t, net::kMaxPlayers> g_told{};
 
 std::string g_scene;
 double g_scene_since = 0;
+double g_last_look = 0;
 const ambient::SceneLights* g_cfg = nullptr;  // this scene's emitters; null: the game's own lighting
 bool g_set_up = false;
 bool g_ready = false;           // lights set up and a light set computed: the hooks act
@@ -683,6 +686,7 @@ bool resolve() {
     api.aurora_active = il2::field_offset(aurora, "m_NormalizedActive");
     api.aurora_full = il2::field_offset(aurora, "m_FullyActiveValue");
     api.ilm_groups = il2::field_offset(ilm, "m_LightGroupList");
+    api.ilm_initialized = il2::field_offset_quiet(ilm, "m_Initialized");
     api.ilm_loose = il2::field_offset(ilm, "m_LooseLightList");
     api.ilm_loose_midday = il2::field_offset(ilm, "m_LooseLightsMiddayList");
     api.group_lights = il2::field_offset(group, "m_Lights");
@@ -784,7 +788,18 @@ void on_frame(const std::string& scene, bool in_game) {
         return;
     }
     if (!g_set_up) {
-        if (now - g_scene_since < kSettleMs) return;
+        // As soon as TLD's own indoor lighting has started (its manager initialized: the scene's lights are all in),
+        // so the window light is there when the scene shows; a scene without that manager after kSettleMs.
+        if (now - g_last_look < kLookMs) return;
+        g_last_look = now;
+        bool lit = false;
+        if (Il2CppObject* managers = find_all(api.ilm_type); il2::array_length(managers)) {
+            Il2CppObject* m = il2::array_object_at(managers, 0);
+            lit = alive(m) && (api.ilm_initialized < 0 || il2::read_field<bool>(m, api.ilm_initialized));
+        }
+        if (!lit && now - g_scene_since < kSettleMs) return;
+        logx::info("ambient: %s set up %.1f s after it came in%s", scene.c_str(), (now - g_scene_since) / 1000.0,
+                   lit ? "" : " (no indoor lighting manager)");
         set_up(scene);
     }
     if (!g_cfg || paused()) return;
