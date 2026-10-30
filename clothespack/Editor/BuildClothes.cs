@@ -24,6 +24,11 @@ using UnityEngine;
 
 namespace TLDCoop {
 
+// An item the catalog fitted the wrong way round (the balaclava upside down and back to front, the ear warmer standing
+// up round the face): turned about the x axis through its middle, scaled, its middle put at Head_jnt + centre (times
+// the head's size), and skinned anew: to the head ("head") or the head above the neck ("headneck").
+[Serializable] class Reshape { public string item; public float rotate_x; public float scale = 1; public float[] centre; public string weights; }
+
 [Serializable] class HideRule { public string[] under; public string[] words; }
 
 [Serializable] class ClothesList {
@@ -49,6 +54,7 @@ namespace TLDCoop {
     // Knitted hats whose catalog model is the folded one lying on the ground: a worn beanie is made instead, fitted to
     // the head, in the item's colour.
     public string[] beanie_items;
+    public Reshape[] reshape;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -184,7 +190,8 @@ public static class BuildClothes {
                         if (list.collar_items[i] == item) collar = list.collar_metres[i];
                 bool turn = list.turn_items != null && list.turn_items.Contains(item);
                 bool beanie = list.beanie_items != null && list.beanie_items.Contains(item);
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie);
+                var reshape = list.reshape?.FirstOrDefault(r => r.item == item);
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape);
                 triangles += result;
                 meshes++;
             }
@@ -215,7 +222,7 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie) {
+                        bool turn, bool beanie, Reshape reshape) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -262,6 +269,7 @@ public static class BuildClothes {
             matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided));
         }
 
+        if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, $"{character}/{item}");
         if (beanie) Beanie(g, bin, skin, file, item, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (turn) {  // half round the head's vertical axis
             Vector3 head = JointPos(g, bin, skin, "Head_jnt");
@@ -364,6 +372,30 @@ public static class BuildClothes {
             moved++;
         }
         Debug.Log($"[Clothes] {what}: collar from {highest:F2} m down to {back:F2} m (neck {neck.y:F2}, head {head.y:F2}), {moved} vertices");
+    }
+
+    static void DoReshape(Gltf g, byte[] bin, GSkin skin, Reshape r, List<Vector3> verts, List<Vector3> normals,
+                          List<BoneWeight> weights, string what) {
+        Vector3 head = JointPos(g, bin, skin, "Head_jnt"), neck = JointPos(g, bin, skin, "Neck_jnt");
+        int hi = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Head_jnt");
+        int ni = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Neck_jnt");
+        if (float.IsNaN(head.y) || float.IsNaN(neck.y) || hi < 0 || ni < 0) return;
+        float s = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f);
+        Vector3 min = verts[0], max = verts[0];
+        foreach (var v in verts) { min = Vector3.Min(min, v); max = Vector3.Max(max, v); }
+        Vector3 mid = (min + max) / 2;
+        var c = r.centre != null && r.centre.Length == 3 ? new Vector3(r.centre[0], r.centre[1], r.centre[2]) : Vector3.zero;
+        Vector3 to = head + c * s;
+        var rot = Quaternion.Euler(r.rotate_x, 0, 0);
+        for (int i = 0; i < verts.Count; i++) {
+            verts[i] = to + rot * (verts[i] - mid) * r.scale * s;
+            normals[i] = rot * normals[i];
+            float y = verts[i].y;
+            float w = r.weights == "headneck" ? Mathf.Clamp01((y - neck.y) / Mathf.Max(0.01f, head.y - neck.y)) : 1;
+            weights[i] = w >= 0.999f ? new BoneWeight { boneIndex0 = hi, weight0 = 1 }
+                                     : new BoneWeight { boneIndex0 = hi, weight0 = w, boneIndex1 = ni, weight1 = 1 - w };
+        }
+        Debug.Log($"[Clothes] {what}: turned {r.rotate_x} degrees, scaled {r.scale * s:F2}, put at the head");
     }
 
     // A worn knitted hat in place of the item's own (folded) model: half an egg over the skull from the forehead up,

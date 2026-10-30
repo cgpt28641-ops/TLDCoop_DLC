@@ -5,7 +5,9 @@
     "GEAR_BaseballCap",
     "GEAR_Toque",
     "GEAR_RabbitskinHat",
+    "GEAR_ImprovisedHat",
     "GEAR_EarMuffs",
+    "GEAR_Balaclava",
     "GEAR_BasicWinterCoat",
     "GEAR_BearSkinCoat",
     "GEAR_DownParka",
@@ -46,8 +48,7 @@
     "GEAR_WolfSkinCape",
     "GEAR_DownVest",
     "GEAR_InsulatedVest",
-    "GEAR_BaseballCap",
-    "GEAR_EarMuffs"
+    "GEAR_BaseballCap"
   ],
   "inflate_metres": [
     0.02,
@@ -65,8 +66,7 @@
     0.02,
     0.02,
     0.02,
-    0.02,
-    0.015
+    0.02
   ],
   "shorten_items": [
     "GEAR_DownParka"
@@ -144,43 +144,43 @@
       "GEAR_HeavyParka"
     ],
     [
-      "GEAR_RabbitskinHat",
+      "GEAR_Balaclava",
       "GEAR_LightParka"
     ],
     [
-      "GEAR_BasicWoolHat",
+      "GEAR_ImprovisedHat",
       "GEAR_MackinawJacket"
     ],
     [
-      "GEAR_Toque",
+      "GEAR_RabbitskinHat",
       "GEAR_MilitaryParka"
     ],
     [
-      "GEAR_BaseballCap",
+      "GEAR_BasicWoolHat",
       "GEAR_MooseHideCloak"
     ],
     [
-      "GEAR_EarMuffs",
+      "GEAR_Toque",
       "GEAR_PremiumWinterCoat"
     ],
     [
-      "GEAR_RabbitskinHat",
+      "GEAR_BaseballCap",
       "GEAR_QualityWinterCoat"
     ],
     [
-      "GEAR_BasicWoolHat",
+      "GEAR_EarMuffs",
       "GEAR_SkiJacket"
     ],
     [
-      "GEAR_Toque",
+      "GEAR_Balaclava",
       "GEAR_WolfSkinCape"
     ],
     [
-      "GEAR_BaseballCap",
+      "GEAR_ImprovisedHat",
       "GEAR_DownVest"
     ],
     [
-      "GEAR_EarMuffs",
+      "GEAR_RabbitskinHat",
       "GEAR_InsulatedVest"
     ]
   ],
@@ -214,7 +214,9 @@
       "under": [
         "GEAR_BasicWoolHat",
         "GEAR_Toque",
-        "GEAR_RabbitskinHat"
+        "GEAR_RabbitskinHat",
+        "GEAR_ImprovisedHat",
+        "GEAR_Balaclava"
       ],
       "words": [
         "Hair",
@@ -238,6 +240,31 @@
   "turn_items": [],
   "beanie_items": [
     "GEAR_BasicWoolHat",
-    "GEAR_Toque"
+    "GEAR_Toque",
+    "GEAR_ImprovisedHat"
+  ],
+  "reshape": [
+    {
+      "item": "GEAR_Balaclava",
+      "rotate_x": 180,
+      "scale": 0.88,
+      "centre": [
+        0,
+        0.078,
+        -0.024
+      ],
+      "weights": "headneck"
+    },
+    {
+      "item": "GEAR_EarMuffs",
+      "rotate_x": 90,
+      "scale": 1.0,
+      "centre": [
+        0,
+        0.09,
+        -0.005
+      ],
+      "weights": "head"
+    }
   ]
 }
