@@ -602,8 +602,14 @@ public static class BuildClothes {
             r.sharedMesh = mesh;
             var baseHide = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json")).base_hide ?? new string[0];
             var hiddenMat = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
-            r.sharedMaterials = parts.Select(p => baseHide.Contains(p.Split(':')[1]) ? hiddenMat
-                                                  : own[Math.Min(int.Parse(p.Split(':')[0]), own.Length - 1)]).ToArray();
+            // "region" hides the region; "region@word" only where the part's own material is named with that word
+            // (Mackenzie's shirt round his neck and shoulders, not his neck's skin)
+            bool Hidden(string p) {
+                string region = p.Split(':')[1];
+                var m = own[Math.Min(int.Parse(p.Split(':')[0]), own.Length - 1)];
+                return baseHide.Any(h => h == region || (h.StartsWith(region + "@") && m && m.name.Contains(h.Substring(region.Length + 1))));
+            }
+            r.sharedMaterials = parts.Select(p => Hidden(p) ? hiddenMat : own[Math.Min(int.Parse(p.Split(':')[0]), own.Length - 1)]).ToArray();
             CutParts[body.GetInstanceID()] = parts;
             Debug.Log($"[Clothes] preview {character}: on the cut body ({parts.Length} parts)");
             return;
