@@ -247,11 +247,11 @@
     {
       "item": "GEAR_Balaclava",
       "rotate_x": 180,
-      "scale": 0.88,
+      "scale": 0.95,
       "centre": [
         0,
-        0.078,
-        -0.024
+        0.075,
+        0.02
       ],
       "weights": "headneck"
     },
@@ -266,5 +266,11 @@
       ],
       "weights": "head"
     }
+  ],
+  "beanie_grow_characters": [
+    "mackenzie"
+  ],
+  "beanie_grow": [
+    0.1
   ]
 }

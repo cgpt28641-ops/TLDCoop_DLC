@@ -55,6 +55,8 @@ namespace TLDCoop {
     // the head, in the item's colour.
     public string[] beanie_items;
     public Reshape[] reshape;
+    // A bigger beanie for characters with something of their own on the head (Mackenzie's own hat): this much bigger.
+    public string[] beanie_grow_characters; public float[] beanie_grow;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -191,7 +193,11 @@ public static class BuildClothes {
                 bool turn = list.turn_items != null && list.turn_items.Contains(item);
                 bool beanie = list.beanie_items != null && list.beanie_items.Contains(item);
                 var reshape = list.reshape?.FirstOrDefault(r => r.item == item);
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape);
+                float grow = 0;
+                if (list.beanie_grow_characters != null)
+                    for (int i = 0; i < list.beanie_grow_characters.Length && i < list.beanie_grow.Length; i++)
+                        if (list.beanie_grow_characters[i] == character) grow = list.beanie_grow[i];
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow);
                 triangles += result;
                 meshes++;
             }
@@ -222,7 +228,7 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie, Reshape reshape) {
+                        bool turn, bool beanie, Reshape reshape, float grow) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -270,7 +276,7 @@ public static class BuildClothes {
         }
 
         if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, $"{character}/{item}");
-        if (beanie) Beanie(g, bin, skin, file, item, verts, normals, uvs, weights, submeshes, matNames, twoSided);
+        if (beanie) Beanie(g, bin, skin, file, item, grow, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (turn) {  // half round the head's vertical axis
             Vector3 head = JointPos(g, bin, skin, "Head_jnt");
             if (!float.IsNaN(head.x)) {
@@ -400,14 +406,14 @@ public static class BuildClothes {
 
     // A worn knitted hat in place of the item's own (folded) model: half an egg over the skull from the forehead up,
     // a turned-up cuff at the bottom, ribbed, all of it on Head_jnt; sized by the length of the neck.
-    static void Beanie(Gltf g, byte[] bin, GSkin skin, string file, string item, List<Vector3> verts,
+    static void Beanie(Gltf g, byte[] bin, GSkin skin, string file, string item, float grow, List<Vector3> verts,
                        List<Vector3> normals, List<Vector2> uvs, List<BoneWeight> weights, List<int[]> submeshes,
                        List<string> matNames, Shader twoSided) {
         Vector3 head = JointPos(g, bin, skin, "Head_jnt"), neck = JointPos(g, bin, skin, "Neck_jnt");
         int headIndex = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Head_jnt");
         if (float.IsNaN(head.y) || float.IsNaN(neck.y) || headIndex < 0) return;
-        float s = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f);
-        var c = head + new Vector3(0, 0.115f, 0.012f) * s;
+        float s = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f) * (1 + grow);
+        var c = head + new Vector3(0, 0.115f, 0.012f - 0.1f * grow) * s;
         float rx = 0.104f * s, ry = 0.13f * s, rz = 0.116f * s;
         const int around = 40, up = 14;
         verts.Clear(); normals.Clear(); uvs.Clear(); weights.Clear(); submeshes.Clear(); matNames.Clear();
