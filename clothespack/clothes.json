@@ -1,5 +1,5 @@
 {
-  "comment": "The worn clothing pack. Every character wears a base (grey long-sleeved top from base_top_from, long johns, socks) over a body whose own clothes are hidden (base_hide); the clothes stack over it in layers (layers: min/max distance from the skin).",
+  "comment": "The worn clothing pack. Every character wears a base (grey long-sleeved top from base_top_from, long johns, socks) over a body whose own clothes are hidden (base_hide); the clothes stack over it in layers (layers: min/max distance from the skin). Distances are from the base layer's surface (the base itself keeps the catalog's fit); gloves from the hands, hats from the head.",
   "items": [
     "GEAR_BasicWoolHat",
     "GEAR_BaseballCap",
@@ -400,8 +400,8 @@
         "GEAR_CottonSocks",
         "GEAR_WoolSocks"
       ],
-      "min": 0.003,
-      "max": 0.007
+      "min": 0.002,
+      "max": 0.006
     },
     {
       "items": [
@@ -417,8 +417,8 @@
         "GEAR_WoolShirt",
         "GEAR_WoolSweater"
       ],
-      "min": 0.009,
-      "max": 0.018
+      "min": 0.004,
+      "max": 0.012
     },
     {
       "items": [
@@ -429,8 +429,8 @@
         "GEAR_Jeans",
         "GEAR_WorkPants"
       ],
-      "min": 0.009,
-      "max": 0.02
+      "min": 0.004,
+      "max": 0.014
     },
     {
       "items": [
@@ -438,8 +438,8 @@
         "GEAR_InsulatedVest",
         "GEAR_BallisticVest"
       ],
-      "min": 0.02,
-      "max": 0.026
+      "min": 0.014,
+      "max": 0.02
     },
     {
       "items": [
@@ -457,7 +457,7 @@
         "GEAR_SkiJacket",
         "GEAR_WolfSkinCape"
       ],
-      "min": 0.03,
+      "min": 0.022,
       "max": 0
     },
     {
@@ -472,7 +472,7 @@
         "GEAR_SkiBoots",
         "GEAR_WorkBoots"
       ],
-      "min": 0.024,
+      "min": 0.01,
       "max": 0
     },
     {
@@ -495,7 +495,7 @@
         "GEAR_CottonScarf",
         "GEAR_WoolWrap"
       ],
-      "min": 0.04,
+      "min": 0.03,
       "max": 0
     }
   ],

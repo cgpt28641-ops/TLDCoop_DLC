@@ -197,8 +197,24 @@ public static class BuildClothes {
             BodyCut(src, kv[0], kv[1]);
             cut++;
         }
+        // The base layer first (TLDCoop_BaseTop from base_top_from in undyed grey, then base_items), kept as the
+        // catalog fitted them: every other piece is laid over its surface (BaseSurface), not over the hidden body.
+        foreach (string character in Characters(list, chars).OrderBy(s => s)) {
+            var baseList = new List<(string item, string file, bool grey)>();
+            if (!string.IsNullOrEmpty(list.base_top_from))
+                baseList.Add(("TLDCoop_BaseTop", Path.Combine(chars, character, list.base_top_from + ".gltf"), true));
+            foreach (string bi in list.base_items ?? new string[0]) baseList.Add((bi, Path.Combine(chars, character, bi + ".gltf"), false));
+            foreach (var (bItem, bFile, bGrey) in baseList) {
+                if (!File.Exists(bFile)) continue;
+                bool bMirror = list.mirror_items != null && list.mirror_items.Contains(bItem);
+                triangles += Convert(bFile, character, bItem, materials, opaque, twoSided, 0, 0, -1, float.NaN, false, false, null, 0,
+                                     new string[0], -1, false, 0, bMirror, bGrey, true);
+                meshes++;
+            }
+        }
         foreach (string character in Characters(list, chars).OrderBy(s => s)) {
             foreach (string item in list.items) {
+                if (list.base_items != null && list.base_items.Contains(item)) continue;  // built above
                 string file = Path.Combine(chars, character, item + ".gltf");
                 if (!File.Exists(file)) { skipped++; continue; }
                 float lift = 0, inflate = 0;
@@ -236,17 +252,8 @@ public static class BuildClothes {
                 meshes++;
             }
         }
-        // The base layer's top: base_top_from again, in undyed grey, as TLDCoop_BaseTop.
-        if (!string.IsNullOrEmpty(list.base_top_from))
-            foreach (string character in Characters(list, chars).OrderBy(s => s)) {
-                string file = Path.Combine(chars, character, list.base_top_from + ".gltf");
-                if (!File.Exists(file)) continue;
-                var layer = list.layers?.FirstOrDefault(x => x.items != null && x.items.Contains("TLDCoop_BaseTop"));
-                triangles += Convert(file, character, "TLDCoop_BaseTop", materials, opaque, twoSided, 0, 0, -1, float.NaN, false, false,
-                                     null, 0, new string[0], layer != null ? layer.min : 0.003f, false, layer != null ? layer.max : 0, false, true);
-                meshes++;
-            }
-        Skins.Clear();  // after the base top too
+        Skins.Clear();
+        BaseSurface.Clear();
         foreach (var b in OcclusionBodies.Values) if (b) UnityEngine.Object.DestroyImmediate(b);
         OcclusionBodies.Clear();
         // What the mod hides under which items: one TextAsset for the whole pack.
@@ -280,7 +287,8 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead, float wrapMax, bool mirror, bool grey) {
+                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead, float wrapMax, bool mirror, bool grey,
+                        bool isBase = false) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -346,6 +354,11 @@ public static class BuildClothes {
         if (wrap > 0) {
             float neckY = JointPos(g, bin, skin, "Neck_jnt").y;
             Wrap(verts, submeshes, character, wrap, $"{character}/{item}", onHead, wrapMax, float.IsNaN(neckY) ? 1.5f : neckY - 0.06f);
+        }
+        if (isBase) {  // the surface the other pieces lie over
+            if (!BaseSurface.TryGetValue(character, out var surf)) BaseSurface[character] = surf = (new List<Vector3>(), new List<Vector3>());
+            surf.p.AddRange(verts);
+            surf.n.AddRange(normals.Select(x => x.normalized));
         }
         var mesh = new Mesh { name = $"{character}_{item}" };
         if (verts.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
@@ -740,6 +753,7 @@ public static class BuildClothes {
     // The body's skin that clothes must stay off (torso, arms, neck, hips, legs, the bands), at rest, with a 3 cm grid.
     class Skin { public Vector3[] p, n; public Dictionary<Vector3Int, List<int>> grid = new Dictionary<Vector3Int, List<int>>(); }
     static readonly Dictionary<string, Skin> Skins = new Dictionary<string, Skin>();
+    static readonly Dictionary<string, (List<Vector3> p, List<Vector3> n)> BaseSurface = new Dictionary<string, (List<Vector3> p, List<Vector3> n)>();
     const float SkinCell = 0.03f;
     static Vector3Int Cell(Vector3 p) => new Vector3Int(Mathf.FloorToInt(p.x / SkinCell), Mathf.FloorToInt(p.y / SkinCell), Mathf.FloorToInt(p.z / SkinCell));
     static Skin SkinOf(string character, bool head) {
@@ -757,6 +771,16 @@ public static class BuildClothes {
                 foreach (int v in mesh.GetTriangles(i)) use.Add(v);
             }
             var all = mesh.vertices; var normals = mesh.normals;
+            if (!head && BaseSurface.TryGetValue(character, out var surf)) {
+                // over the base layer, and the body's own neck and hands (all that shows of it below the head)
+                var shown = new HashSet<int>();
+                for (int i = 0; i < parts.Length && i < mesh.subMeshCount; i++) {
+                    string region = parts[i].Split(':')[1];
+                    if (region == "neck" || region == "hands") foreach (int v in mesh.GetTriangles(i)) shown.Add(v);
+                }
+                skin = new Skin { p = surf.p.Concat(shown.Select(i => all[i])).ToArray(),
+                                  n = surf.n.Concat(shown.Select(i => normals[i].normalized)).ToArray() };
+            } else
             skin = new Skin { p = use.Select(i => all[i]).ToArray(), n = use.Select(i => normals[i].normalized).ToArray() };
             for (int i = 0; i < skin.p.Length; i++) {
                 var c = Cell(skin.p[i]);

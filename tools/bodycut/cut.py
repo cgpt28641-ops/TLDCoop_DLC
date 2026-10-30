@@ -67,10 +67,7 @@ def main(cab,outdir,names):
             r=vreg[tri]  # a triangle's region: its vertices' majority (ties: the lowest index, the most central)
             treg=np.array([np.bincount(x,minlength=len(REGIONS)).argmax() for x in r])
             cy=P[tri][:,:,1].mean(1)
-            # the top of the torso round the neck stays with the neck: a coat's collar sits there and must not show a gap
-            # (skin only: a jacket's or sweater's own collar or hood stays torso, hidden under a coat)
-            if not re.search('Jacket|Sweater|Coat|Parka|Hoodie|Shirt|Vest|Overall',mats[min(len(subs),len(mats)-1)],re.I):
-                treg[(treg==2)&(cy>neck_y-0.02)]=1
+            # (the neck region is what the Neck bone carries: the skin there and a collar round it)
             # the torso, hips and legs between BAND_TOP and the lowest band: what a coat's hem may or may not reach
             low=np.isin(treg,[2,5,6])&(cy<BAND_TOP)&(cy>=BAND_TOP-15*BAND_STEP)
             treg[low]=8+np.clip(((BAND_TOP-cy[low])/BAND_STEP).astype(int),0,14)
