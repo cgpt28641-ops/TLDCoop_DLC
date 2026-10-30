@@ -377,39 +377,6 @@
         -0.005
       ],
       "weights": "head"
-    },
-    {
-      "item": "GEAR_BasicWoolScarf",
-      "rotate_x": 90,
-      "scale": 0.95,
-      "centre": [
-        0,
-        -0.1,
-        0.015
-      ],
-      "weights": "neck"
-    },
-    {
-      "item": "GEAR_CottonScarf",
-      "rotate_x": 90,
-      "scale": 0.95,
-      "centre": [
-        0,
-        -0.1,
-        0.015
-      ],
-      "weights": "neck"
-    },
-    {
-      "item": "GEAR_WoolWrap",
-      "rotate_x": 90,
-      "scale": 0.8,
-      "centre": [
-        0,
-        -0.09,
-        0.015
-      ],
-      "weights": "neck"
     }
   ],
   "beanie_grow_characters": [
@@ -585,5 +552,15 @@
   ],
   "shorten_to": [
     0.45
+  ],
+  "scarf_items": [
+    "GEAR_BasicWoolScarf",
+    "GEAR_CottonScarf",
+    "GEAR_WoolWrap"
+  ],
+  "slice_fit_items": [
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest",
+    "GEAR_BallisticVest"
   ]
 }

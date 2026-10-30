@@ -58,6 +58,11 @@ namespace TLDCoop {
     // Knitted hats whose catalog model is the folded one lying on the ground: a worn beanie is made instead, fitted to
     // the head, in the item's colour.
     public string[] beanie_items;
+    // Scarves whose catalog model is a loose coil: a worn one made instead, wound round the neck with one end hanging.
+    public string[] scarf_items;
+    // Torso pieces cut for a slimmer body (the vests): first widened slice by slice to the base layer's width and depth
+    // (each 2 cm of height on its own, smoothed), so the wrap after only has to settle them.
+    public string[] slice_fit_items;
     public Reshape[] reshape;
     // A bigger beanie for characters with something of their own on the head (Mackenzie's own hat): this much bigger.
     public string[] beanie_grow_characters; public float[] beanie_grow;
@@ -251,7 +256,9 @@ public static class BuildClothes {
                 bool onHead = list.hat_wrap_items != null && list.hat_wrap_items.Contains(item);
                 if (onHead) { wrap = list.hat_wrap_clearance; wrapMax = 0; }
                 bool mirror = list.mirror_items != null && list.mirror_items.Contains(item);
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead, wrapMax, mirror, false);
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead, wrapMax, mirror, false, false,
+                                     list.scarf_items != null && list.scarf_items.Contains(item),
+                                     list.slice_fit_items != null && list.slice_fit_items.Contains(item));
                 triangles += result;
                 meshes++;
             }
@@ -292,7 +299,7 @@ public static class BuildClothes {
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
                         bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead, float wrapMax, bool mirror, bool grey,
-                        bool isBase = false) {
+                        bool isBase = false, bool scarf = false, bool sliceFit = false) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -341,6 +348,7 @@ public static class BuildClothes {
         if (mirror) MirrorPair(g, skin, verts, normals, uvs, weights, submeshes, $"{character}/{item}");
 
         if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, $"{character}/{item}");
+        if (scarf) Scarf(g, bin, skin, file, item, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (beanie) Beanie(g, bin, skin, file, item, grow, verts, normals, uvs, weights, submeshes, matNames, twoSided);
         if (turn) {  // half round the head's vertical axis
             Vector3 head = JointPos(g, bin, skin, "Head_jnt");
@@ -355,6 +363,7 @@ public static class BuildClothes {
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
         if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 
+        if (sliceFit && wrap > 0) SliceFit(verts, character, wrap, $"{character}/{item}");
         if (wrap > 0) {
             float neckY = JointPos(g, bin, skin, "Neck_jnt").y;
             // twice: the smoothing of the first pass leaves a few vertices short of their layer, the second places them
@@ -575,6 +584,120 @@ public static class BuildClothes {
         Debug.LogWarning($"[Clothes] preview {character}: no renderer with mesh {meshName}");
     }
 
+    // The item's colour (its own texture averaged) knitted into a small ribbed tiling texture, as a material.
+    static Color KnitMaterial(Gltf g, string file, string item, Shader twoSided, List<string> matNames) {
+        // Its colour: the item's own texture, averaged; ribs knitted into a small tiling texture.
+        var colour = new Color(0.45f, 0.18f, 0.16f);
+        try {
+            var img = g.images[g.textures[g.materials[0].pbrMetallicRoughness.baseColorTexture.index].source];
+            var src = new Texture2D(2, 2);
+            if (src.LoadImage(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(img.uri))))) {
+                var px = src.GetPixels32(); double r = 0, gg = 0, b = 0;
+                foreach (var q in px) { r += q.r; gg += q.g; b += q.b; }
+                colour = new Color((float)(r / px.Length / 255), (float)(gg / px.Length / 255), (float)(b / px.Length / 255));
+            }
+            UnityEngine.Object.DestroyImmediate(src);
+        } catch (Exception e) { Debug.LogWarning($"[Clothes] {item}: no colour from its texture ({e.Message})"); }
+        string texPath = $"{OutDir}/Textures/Knit_{item}.png";
+        var knit = new Texture2D(32, 32, TextureFormat.RGB24, false);
+        for (int y = 0; y < 32; y++)
+            for (int x = 0; x < 32; x++) {
+                float rib = 0.82f + 0.18f * Mathf.Abs(Mathf.Sin(x * Mathf.PI / 32f * 2));  // two ribs a tile
+                float stitch = 0.94f + 0.06f * Mathf.Abs(Mathf.Sin(y * Mathf.PI / 4f));
+                knit.SetPixel(x, y, colour * rib * stitch);
+            }
+        File.WriteAllBytes(texPath, knit.EncodeToPNG());
+        UnityEngine.Object.DestroyImmediate(knit);
+        AssetDatabase.ImportAsset(texPath);
+        string matName = "Beanie_" + item;
+        string matPath = $"{OutDir}/Materials/{matName}.mat";
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+        if (!mat) { mat = new Material(twoSided) { name = matName }; AssetDatabase.CreateAsset(mat, matPath); }
+        mat.SetTexture("_MainTex", AssetDatabase.LoadAssetAtPath<Texture2D>(texPath));
+        mat.SetColor("_Color", Color.white);
+        var knitNormal = NormalFromColour(texPath, $"{OutDir}/Textures/Knit_{item}_N.png", 6f);
+        if (knitNormal) mat.SetTexture("_Normal", knitNormal);
+        EditorUtility.SetDirty(mat);
+        matNames.Add(matName);
+        return colour;
+    }
+
+    // A worn scarf in place of the catalog's loose coil: two turns of a soft tube round the neck (a little lower and
+    // looser at the front), and one end hanging down the chest, flattened; knitted in the item's colour.
+    static void Scarf(Gltf g, byte[] bin, GSkin skin, string file, string item, List<Vector3> verts, List<Vector3> normals,
+                      List<Vector2> uvs, List<BoneWeight> weights, List<int[]> submeshes, List<string> matNames, Shader twoSided) {
+        Vector3 neck = JointPos(g, bin, skin, "Neck_jnt"), head = JointPos(g, bin, skin, "Head_jnt");
+        int ni = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Neck_jnt");
+        int si = Array.FindIndex(skin.joints, k => g.nodes[k].name == "Spine3_jnt");
+        if (float.IsNaN(neck.y) || float.IsNaN(head.y) || ni < 0) return;
+        if (si < 0) si = ni;
+        float s = Mathf.Clamp((head.y - neck.y) / 0.083f, 0.8f, 1.2f);
+        verts.Clear(); normals.Clear(); uvs.Clear(); weights.Clear(); submeshes.Clear(); matNames.Clear();
+        var tris = new List<int>();
+        void Quad(int a, int b, int c, int d, Vector3 outward) {
+            foreach (var (x, y, z) in new[] { (a, b, c), (a, c, d) }) {
+                var n = Vector3.Cross(verts[y] - verts[x], verts[z] - verts[x]);
+                if (Vector3.Dot(n, outward) < 0) { tris.Add(x); tris.Add(z); tris.Add(y); } else { tris.Add(x); tris.Add(y); tris.Add(z); }
+            }
+        }
+        // the turns: a tube along a ring (rx, rz) round the neck, its centre line dipping at the front
+        const int along = 48, round = 10;
+        float tube = 0.026f * s;
+        for (int turn = 0; turn < 2; turn++) {
+            int start = verts.Count;
+            for (int i = 0; i <= along; i++) {
+                float th = i * 2 * Mathf.PI / along;
+                float front = Mathf.Max(0, Mathf.Cos(th));
+                float rx = (0.085f + 0.022f * turn) * s, rz = (0.09f + 0.022f * turn) * s;
+                var centre = new Vector3(neck.x + Mathf.Sin(th) * rx, neck.y - (0.035f + 0.03f * turn + 0.03f * front) * s,
+                                         neck.z + 0.01f * s + Mathf.Cos(th) * rz);
+                var radial = new Vector3(Mathf.Sin(th), 0, Mathf.Cos(th));
+                for (int j = 0; j <= round; j++) {
+                    float ph = j * 2 * Mathf.PI / round;
+                    var n = radial * Mathf.Cos(ph) + Vector3.up * Mathf.Sin(ph);
+                    verts.Add(centre + new Vector3(n.x * tube * 1.15f, n.y * tube * 0.85f, n.z * tube * 1.15f));
+                    normals.Add(n);
+                    uvs.Add(new Vector2(j / (float)round * 2f, i / (float)along * 10f));
+                    weights.Add(new BoneWeight { boneIndex0 = ni, weight0 = 0.7f, boneIndex1 = si, weight1 = 0.3f });
+                }
+            }
+            for (int i = 0; i < along; i++)
+                for (int j = 0; j < round; j++) {
+                    int a = start + i * (round + 1) + j, b = a + 1, c = a + round + 1 + 1, d = a + round + 1;
+                    var mid = (verts[a] + verts[c]) / 2;
+                    Quad(a, b, c, d, (verts[a] - mid) + normals[a]);
+                }
+        }
+        // the hanging end: a flat knitted strip from the front of the turns down the chest, slightly to one side
+        {
+            int start = verts.Count;
+            const int down = 10;
+            float width = 0.07f * s, length = 0.32f * s, thick = 0.008f * s;
+            var top = new Vector3(neck.x + 0.035f * s, neck.y - 0.09f * s, neck.z + 0.115f * s);
+            for (int i = 0; i <= down; i++) {
+                float t = i / (float)down;
+                var p = top + new Vector3(0.01f * t * s, -length * t, 0.025f * t * s);
+                foreach (float side in new[] { -1f, 1f })
+                    foreach (float face in new[] { 1f, -1f }) {
+                        verts.Add(p + new Vector3(side * width / 2, 0, face * thick));
+                        normals.Add(new Vector3(0, 0, face));
+                        uvs.Add(new Vector2((side + 1) / 2, t * 4));
+                        weights.Add(new BoneWeight { boneIndex0 = si, weight0 = 1 });
+                    }
+            }
+            for (int i = 0; i < down; i++) {
+                int r0 = start + i * 4, r1 = r0 + 4;  // per row: left front, left back, right front, right back
+                Quad(r0, r0 + 2, r1 + 2, r1, Vector3.forward);          // front face
+                Quad(r0 + 1, r1 + 1, r1 + 3, r0 + 3, Vector3.back);      // back face
+                Quad(r0, r1, r1 + 1, r0 + 1, Vector3.left);              // left edge
+                Quad(r0 + 2, r0 + 3, r1 + 3, r1 + 2, Vector3.right);     // right edge
+            }
+        }
+        submeshes.Add(tris.ToArray());
+        var colour = KnitMaterial(g, file, item, twoSided, matNames);
+        Debug.Log($"[Clothes] {item}: a worn scarf (colour {colour}) instead of the catalog's loose coil");
+    }
+
     // A worn knitted hat in place of the item's own (folded) model: half an egg over the skull from the forehead up,
     // a turned-up cuff at the bottom, ribbed, all of it on Head_jnt; sized by the length of the neck.
     static void Beanie(Gltf g, byte[] bin, GSkin skin, string file, string item, float grow, List<Vector3> verts,
@@ -617,39 +740,7 @@ public static class BuildClothes {
             }
         submeshes.Add(tris.ToArray());
 
-        // Its colour: the item's own texture, averaged; ribs knitted into a small tiling texture.
-        var colour = new Color(0.45f, 0.18f, 0.16f);
-        try {
-            var img = g.images[g.textures[g.materials[0].pbrMetallicRoughness.baseColorTexture.index].source];
-            var src = new Texture2D(2, 2);
-            if (src.LoadImage(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(img.uri))))) {
-                var px = src.GetPixels32(); double r = 0, gg = 0, b = 0;
-                foreach (var q in px) { r += q.r; gg += q.g; b += q.b; }
-                colour = new Color((float)(r / px.Length / 255), (float)(gg / px.Length / 255), (float)(b / px.Length / 255));
-            }
-            UnityEngine.Object.DestroyImmediate(src);
-        } catch (Exception e) { Debug.LogWarning($"[Clothes] {item}: no colour from its texture ({e.Message})"); }
-        string texPath = $"{OutDir}/Textures/Knit_{item}.png";
-        var knit = new Texture2D(32, 32, TextureFormat.RGB24, false);
-        for (int y = 0; y < 32; y++)
-            for (int x = 0; x < 32; x++) {
-                float rib = 0.82f + 0.18f * Mathf.Abs(Mathf.Sin(x * Mathf.PI / 32f * 2));  // two ribs a tile
-                float stitch = 0.94f + 0.06f * Mathf.Abs(Mathf.Sin(y * Mathf.PI / 4f));
-                knit.SetPixel(x, y, colour * rib * stitch);
-            }
-        File.WriteAllBytes(texPath, knit.EncodeToPNG());
-        UnityEngine.Object.DestroyImmediate(knit);
-        AssetDatabase.ImportAsset(texPath);
-        string matName = "Beanie_" + item;
-        string matPath = $"{OutDir}/Materials/{matName}.mat";
-        var mat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
-        if (!mat) { mat = new Material(twoSided) { name = matName }; AssetDatabase.CreateAsset(mat, matPath); }
-        mat.SetTexture("_MainTex", AssetDatabase.LoadAssetAtPath<Texture2D>(texPath));
-        mat.SetColor("_Color", Color.white);
-        var knitNormal = NormalFromColour(texPath, $"{OutDir}/Textures/Knit_{item}_N.png", 6f);
-        if (knitNormal) mat.SetTexture("_Normal", knitNormal);
-        EditorUtility.SetDirty(mat);
-        matNames.Add(matName);
+        var colour = KnitMaterial(g, file, item, twoSided, matNames);
         Debug.Log($"[Clothes] {item}: a fitted beanie (colour {colour}) instead of the catalog's folded model");
     }
 
@@ -797,6 +888,56 @@ public static class BuildClothes {
             }
         }
         return Skins[key] = skin;
+    }
+
+    static void SliceFit(List<Vector3> verts, string character, float clearance, string what) {
+        if (!BaseSurface.TryGetValue(character, out var surf)) return;
+        const float bin = 0.02f, torso = 0.22f;
+        float zc = surf.p.Where(v => Mathf.Abs(v.x) < torso).Select(v => v.z).DefaultIfEmpty(0).Average();
+        int Bin(float y) => Mathf.FloorToInt(y / bin);
+        // per height: the base's half width, front and back depth; the piece's the same (95th percentile)
+        Dictionary<int, float[]> Extents(IEnumerable<Vector3> pts) {
+            var acc = new Dictionary<int, List<Vector3>>();
+            foreach (var v in pts.Where(v => Mathf.Abs(v.x) < torso)) {
+                int b = Bin(v.y);
+                if (!acc.TryGetValue(b, out var l)) acc[b] = l = new List<Vector3>();
+                l.Add(v);
+            }
+            float P95(IEnumerable<float> xs) { var a = xs.OrderBy(x => x).ToList(); return a.Count == 0 ? 0 : a[Mathf.Min(a.Count - 1, (int)(a.Count * 0.95f))]; }
+            return acc.ToDictionary(e => e.Key, e => new[] {
+                P95(e.Value.Select(v => Mathf.Abs(v.x))), P95(e.Value.Where(v => v.z >= zc).Select(v => v.z - zc)),
+                P95(e.Value.Where(v => v.z < zc).Select(v => zc - v.z)) });
+        }
+        var bse = Extents(surf.p);
+        var pc = Extents(verts);
+        var factor = new Dictionary<int, float[]>();
+        foreach (var e in pc) {
+            if (!bse.TryGetValue(e.Key, out var b)) continue;
+            factor[e.Key] = new float[3];
+            for (int a = 0; a < 3; a++)
+                factor[e.Key][a] = e.Value[a] > 0.01f && b[a] > 0 ? Mathf.Clamp((b[a] + clearance) / e.Value[a], 1, 1.6f) : 1;
+        }
+        // smooth over the neighbouring slices
+        var smooth = new Dictionary<int, float[]>();
+        foreach (var key in factor.Keys) {
+            var f = new float[3];
+            for (int a = 0; a < 3; a++) {
+                float sum = 0; int n = 0;
+                for (int d = -2; d <= 2; d++) if (factor.TryGetValue(key + d, out var o)) { sum += o[a]; n++; }
+                f[a] = sum / n;
+            }
+            smooth[key] = f;
+        }
+        float most = 1;
+        for (int i = 0; i < verts.Count; i++) {
+            var v = verts[i];
+            if (!smooth.TryGetValue(Bin(v.y), out var f)) continue;
+            float w = Mathf.Clamp01((torso + 0.06f - Mathf.Abs(v.x)) / 0.06f);  // the arms keep their place
+            float fx = Mathf.Lerp(1, f[0], w), fz = Mathf.Lerp(1, v.z >= zc ? f[1] : f[2], w);
+            verts[i] = new Vector3(v.x * fx, v.y, zc + (v.z - zc) * fz);
+            most = Mathf.Max(most, Mathf.Max(fx, fz));
+        }
+        Debug.Log($"[Clothes] {what}: widened slice by slice to the base, up to x{most:F2}");
     }
 
     // Every vertex pushed out to at least `clearance` above the nearest skin (along the skin's normal there), the pushes
