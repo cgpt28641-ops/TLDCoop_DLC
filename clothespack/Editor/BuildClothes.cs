@@ -1057,11 +1057,11 @@ public static class BuildClothes {
             go.transform.rotation = Quaternion.Euler(euler);
             return l;
         }
-        AddLight("Key", new Color(1f, 0.96f, 0.9f), 0.95f, new Vector3(40, 150, 0), true);
+        AddLight("Key", new Color(1f, 0.96f, 0.9f), 0.8f, new Vector3(40, 150, 0), true);
         AddLight("Fill", new Color(0.75f, 0.85f, 1f), 0.28f, new Vector3(15, -130, 0), false);
-        AddLight("Rim", new Color(0.9f, 0.95f, 1f), 0.35f, new Vector3(25, 20, 0), false);
+        AddLight("Rim", new Color(0.9f, 0.95f, 1f), 0.25f, new Vector3(25, 20, 0), false);
         RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-        RenderSettings.ambientSkyColor = new Color(0.36f, 0.39f, 0.46f);
+        RenderSettings.ambientSkyColor = new Color(0.3f, 0.33f, 0.39f);
         RenderSettings.ambientEquatorColor = new Color(0.3f, 0.31f, 0.34f);
         RenderSettings.ambientGroundColor = new Color(0.36f, 0.37f, 0.4f);
         QualitySettings.shadows = ShadowQuality.All;
