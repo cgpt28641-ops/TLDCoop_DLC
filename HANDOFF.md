@@ -104,6 +104,12 @@
 
 **Karol's latest request:** "make it much better than it is now". Quality matters to him: the clothes and animations are supposed to look really good.
 
+**DECISION (30.10, Karol: "nie wiem który wariant, chcę żeby wyglądało bardzo dobrze"):** go with variant 1, for quality.
+- Visible clothes are dressed only onto the bodies with separate parts: **Mackenzie, Astrid (indoor/outdoor) and Molly**. Mackenzie and Astrid are the game's own player characters anyway.
+- Other bodies keep their original outfit and no clothes are added onto them. No stronger inflate.
+- Variant 3 (covering the body with a stencil) is an optional later experiment, only if they want more characters.
+- Effort now goes into polishing those 3 characters: collars, sleeves, hem lengths, and checking all 22 items on each of them from several angles.
+
 ## Next steps
 1. Fix the collars (point 1 above), Jeremiah's coat and the sleeves. Do another build_clothes iteration and check the previews.
 2. Get Karol's decision on (1)/(2)/(3) for the single-piece bodies.
