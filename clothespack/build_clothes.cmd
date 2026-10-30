@@ -26,6 +26,8 @@ if not exist "%PROJECT%\Assets\BodyPackShaders" mkdir "%PROJECT%\Assets\BodyPack
 copy /y "%HERE%Editor\BuildClothes.cs" "%PROJECT%\Assets\Editor\" >nul
 copy /y "%HERE%Shaders\*.shader" "%PROJECT%\Assets\BodyPackShaders\" >nul
 copy /y "%HERE%clothes.json" "%PROJECT%\clothes.json" >nul
+if not exist "%PROJECT%\bodycut" mkdir "%PROJECT%\bodycut"
+if exist "%HERE%bodycut" copy /y "%HERE%bodycut\*.bodycut" "%PROJECT%\bodycut\" >nul
 > "%PROJECT%\catalog.txt" echo %CATALOG%
 > "%PROJECT%\bodies.txt" echo %GAME%\TLDCoop\tldcoop_bodies.bundle
 

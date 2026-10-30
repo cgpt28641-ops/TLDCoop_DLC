@@ -29,7 +29,7 @@ namespace TLDCoop {
 // the head's size), and skinned anew: to the head ("head") or the head above the neck ("headneck").
 [Serializable] class Reshape { public string item; public float rotate_x; public float scale = 1; public float[] centre; public string weights; }
 
-[Serializable] class HideRule { public string[] under; public string[] words; }
+[Serializable] class HideRule { public string[] under; public string[] words; public string[] regions; }
 
 [Serializable] class ClothesList {
     public string[] items;
@@ -57,6 +57,8 @@ namespace TLDCoop {
     public Reshape[] reshape;
     // A bigger beanie for characters with something of their own on the head (Mackenzie's own hat): this much bigger.
     public string[] beanie_grow_characters; public float[] beanie_grow;
+    // The bodies cut into regions (bodycut/<mesh>.bodycut, from tools/bodycut.py): "<character>:<its mesh>".
+    public string[] body_meshes;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -204,8 +206,21 @@ public static class BuildClothes {
         }
         // What the mod hides under which items: one TextAsset for the whole pack.
         // One line per rule: "hide <item>,<item>... : <word>,<word>..."
+        // and "cut <item>,<item>... : <region>,<region>..." (the body's regions not drawn under them).
         File.WriteAllText(OutDir + "/rules.txt", string.Concat((list.hide_rules ?? new HideRule[0]).Select(r =>
-            "hide " + string.Join(",", r.under ?? new string[0]) + " : " + string.Join(",", r.words ?? new string[0]) + "\n")));
+            (r.words != null && r.words.Length > 0
+                ? "hide " + string.Join(",", r.under ?? new string[0]) + " : " + string.Join(",", r.words) + "\n" : "") +
+            (r.regions != null && r.regions.Length > 0
+                ? "cut " + string.Join(",", r.under ?? new string[0]) + " : " + string.Join(",", r.regions) + "\n" : ""))));
+        int cut = 0;
+        foreach (string entry in list.body_meshes ?? new string[0]) {
+            string[] kv = entry.Split(':');
+            if (kv.Length != 2 || !keep.Contains(kv[0])) continue;
+            string src = $"bodycut/{kv[1]}.bodycut";
+            if (!File.Exists(src)) { Debug.LogWarning($"[Clothes] no {src}: {kv[0]} keeps its whole body"); continue; }
+            BodyCut(src, kv[0], kv[1]);
+            cut++;
+        }
         AssetDatabase.ImportAsset(OutDir + "/rules.txt");
         AssetDatabase.SaveAssets();
 
@@ -220,6 +235,7 @@ public static class BuildClothes {
             BuildTarget.StandaloneWindows64);
         if (manifest == null) throw new Exception("BuildAssetBundles returned null");
         var size = new FileInfo(Path.Combine(BuildDir, BundleName)).Length;
+        Debug.Log($"[Clothes] {cut} bodies cut into regions");
         Debug.Log($"[Clothes] built {meshes} meshes ({triangles} triangles, {materials.Count} materials, {skipped} " +
                   $"missing in the catalog), bundle {size / 1048576.0:F1} MB");
     }
@@ -402,6 +418,79 @@ public static class BuildClothes {
                                      : new BoneWeight { boneIndex0 = hi, weight0 = w, boneIndex1 = ni, weight1 = 1 - w };
         }
         Debug.Log($"[Clothes] {what}: turned {r.rotate_x} degrees, scaled {r.scale * s:F2}, put at the head");
+    }
+
+    static readonly string[] Regions = { "head", "neck", "torso", "arms", "hands", "hips", "legs", "feet" };
+
+    // A body's mesh again, the same vertices and bones, its triangles split by region inside each of its submeshes:
+    // <character>/Body.asset, and Body.txt: "mesh <the body's own mesh name>", "parts <submesh>:<region>,..." (one per
+    // submesh of the cut mesh, in order: which of the body's materials draws it and which region it is).
+    static void BodyCut(string file, string character, string meshName) {
+        using var br = new BinaryReader(File.OpenRead(file));
+        if (new string(br.ReadChars(8)) != "TLDCUT1\0") throw new Exception(file + ": not a body cut");
+        int n = br.ReadInt32(), subs = br.ReadInt32(), boneCount = br.ReadInt32(), matCount = br.ReadInt32();
+        var v = new Vector3[n]; var nr = new Vector3[n]; var tg = new Vector4[n]; var uv = new Vector2[n]; var w = new float[n * 4];
+        for (int i = 0; i < n; i++) {
+            v[i] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+            nr[i] = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+            tg[i] = new Vector4(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
+            uv[i] = new Vector2(br.ReadSingle(), br.ReadSingle());
+            for (int k = 0; k < 4; k++) w[i * 4 + k] = br.ReadSingle();
+        }
+        var bw = new BoneWeight[n];
+        for (int i = 0; i < n; i++)
+            bw[i] = new BoneWeight {
+                boneIndex0 = br.ReadInt32(), boneIndex1 = br.ReadInt32(), boneIndex2 = br.ReadInt32(), boneIndex3 = br.ReadInt32(),
+                weight0 = w[i * 4], weight1 = w[i * 4 + 1], weight2 = w[i * 4 + 2], weight3 = w[i * 4 + 3],
+            };
+        var bind = new Matrix4x4[boneCount];
+        for (int b = 0; b < boneCount; b++) {
+            var m = new Matrix4x4();
+            for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) m[r, c] = br.ReadSingle();
+            bind[b] = m;
+        }
+        var parts = new List<string>(); var tris = new List<int[]>();
+        for (int sIndex = 0; sIndex < subs; sIndex++) {
+            int count = br.ReadInt32();
+            var byRegion = new List<int>[Regions.Length];
+            for (int t = 0; t < count; t++) {
+                int a = br.ReadInt32(), b = br.ReadInt32(), c = br.ReadInt32(), reg = br.ReadInt32();
+                (byRegion[reg] ??= new List<int>()).AddRange(new[] { a, b, c });
+            }
+            for (int reg = 0; reg < Regions.Length; reg++)
+                if (byRegion[reg] != null) { parts.Add($"{sIndex}:{Regions[reg]}"); tris.Add(byRegion[reg].ToArray()); }
+        }
+        var mesh = new Mesh { name = "BodyCut_" + character, indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+        mesh.vertices = v; mesh.normals = nr; mesh.tangents = tg; mesh.uv = uv; mesh.boneWeights = bw; mesh.bindposes = bind;
+        mesh.subMeshCount = tris.Count;
+        for (int i = 0; i < tris.Count; i++) mesh.SetTriangles(tris[i], i);
+        mesh.RecalculateBounds();
+        AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/Body.asset");
+        File.WriteAllText($"{OutDir}/{character}/Body.txt", $"mesh {meshName}\nparts {string.Join(",", parts)}\n");
+        AssetDatabase.ImportAsset($"{OutDir}/{character}/Body.txt");
+        Debug.Log($"[Clothes] {character}: body {meshName} cut into {parts.Count} parts ({n} vertices, {boneCount} bones)");
+    }
+
+    // The preview's body on its cut mesh (once): each part drawn by the body's own material for its submesh.
+    static readonly Dictionary<int, string[]> CutParts = new Dictionary<int, string[]>();
+    static void EnsureCut(GameObject body, string character) {
+        if (CutParts.ContainsKey(body.GetInstanceID())) return;
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/Body.asset");
+        var info = AssetDatabase.LoadAssetAtPath<TextAsset>($"{OutDir}/{character}/Body.txt");
+        if (!mesh || !info) return;
+        string[] lines = info.text.Split('\n');
+        string meshName = lines[0].Substring("mesh ".Length).Trim();
+        string[] parts = lines[1].Substring("parts ".Length).Trim().Split(',');
+        foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
+            if (!r.sharedMesh || r.sharedMesh.name != meshName) continue;
+            var own = r.sharedMaterials;
+            r.sharedMesh = mesh;
+            r.sharedMaterials = parts.Select(p => own[Math.Min(int.Parse(p.Split(':')[0]), own.Length - 1)]).ToArray();
+            CutParts[body.GetInstanceID()] = parts;
+            Debug.Log($"[Clothes] preview {character}: on the cut body ({parts.Length} parts)");
+            return;
+        }
+        Debug.LogWarning($"[Clothes] preview {character}: no renderer with mesh {meshName}");
     }
 
     // A worn knitted hat in place of the item's own (folded) model: half an egg over the skull from the forehead up,
@@ -672,8 +761,21 @@ public static class BuildClothes {
         smr.updateWhenOffscreen = true;
         smr.sharedMaterials = matNames.Select(n => AssetDatabase.LoadAssetAtPath<Material>($"{OutDir}/Materials/{n.Trim()}.mat")).ToArray();
         if (missing > 0) Debug.LogWarning($"[Clothes] {character}/{item}: {missing} of {bones.Length} bones not on the body");
-        // Under a coat: the body's own jacket / sweater submeshes aren't drawn.
+        // Under a coat: the body's own torso and arms (cut body), and its jacket / sweater submeshes, aren't drawn.
         var list = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json"));
+        EnsureCut(body, character);
+        if (CutParts.TryGetValue(body.GetInstanceID(), out var cutParts))
+            foreach (var rule in list.hide_rules ?? new HideRule[0]) {
+                if (rule.under == null || rule.regions == null || !rule.under.Contains(item)) continue;
+                var hiddenMat = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
+                foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
+                    if (!r.sharedMesh || !r.sharedMesh.name.StartsWith("BodyCut_")) continue;
+                    var mats = r.sharedMaterials;
+                    for (int i = 0; i < mats.Length && i < cutParts.Length; i++)
+                        if (rule.regions.Contains(cutParts[i].Split(':')[1])) mats[i] = hiddenMat;
+                    r.sharedMaterials = mats;
+                }
+            }
         foreach (var rule in list.hide_rules ?? new HideRule[0]) {
             if (rule.under == null || rule.words == null || !rule.under.Contains(item)) continue;
             var hidden = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");

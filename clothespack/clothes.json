@@ -51,21 +51,21 @@
     "GEAR_BaseballCap"
   ],
   "inflate_metres": [
+    0.005,
+    0.005,
+    0.005,
+    0.005,
+    0.005,
+    0.005,
+    0.005,
+    0.005,
     0.02,
+    0.005,
+    0.005,
+    0.005,
     0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
-    0.02,
+    0.005,
+    0.005,
     0.02
   ],
   "shorten_items": [
@@ -204,6 +204,10 @@
         "Shirt",
         "Vest",
         "Top"
+      ],
+      "regions": [
+        "torso",
+        "arms"
       ]
     },
     {
@@ -230,6 +234,16 @@
         "Toque",
         "Beanie",
         "Hat"
+      ]
+    },
+    {
+      "under": [
+        "GEAR_DownVest",
+        "GEAR_InsulatedVest"
+      ],
+      "words": [],
+      "regions": [
+        "torso"
       ]
     }
   ],
@@ -264,5 +278,10 @@
     }
   ],
   "beanie_grow_characters": [],
-  "beanie_grow": []
+  "beanie_grow": [],
+  "body_meshes": [
+    "mackenzie_indoor:Mackenzie_noJacket_LO",
+    "astrid:Astrid_Ep5",
+    "molly:MESH_MOLLY"
+  ]
 }
