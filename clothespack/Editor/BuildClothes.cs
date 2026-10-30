@@ -32,6 +32,8 @@ namespace TLDCoop {
     // over the body's own clothes).
     public string[] lift_items; public float[] lift_metres;
     public string[] inflate_items; public float[] inflate_metres;
+    // Coats too long: the hem raised to this far from the knees (0) to the hips (1), what's under the hips squeezed up.
+    public string[] shorten_items; public float[] shorten_to;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -146,7 +148,11 @@ public static class BuildClothes {
                 if (list.inflate_items != null)
                     for (int i = 0; i < list.inflate_items.Length && i < list.inflate_metres.Length; i++)
                         if (list.inflate_items[i] == item) inflate = list.inflate_metres[i];
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate);
+                float shorten = -1;
+                if (list.shorten_items != null)
+                    for (int i = 0; i < list.shorten_items.Length && i < list.shorten_to.Length; i++)
+                        if (list.shorten_items[i] == item) shorten = list.shorten_to[i];
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten);
                 triangles += result;
                 meshes++;
             }
@@ -171,7 +177,7 @@ public static class BuildClothes {
     // --- one glTF -> Mesh + TextAsset -----------------------------------------------------------------------------
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
-                        Shader opaque, Shader twoSided, float lift, float inflate) {
+                        Shader opaque, Shader twoSided, float lift, float inflate, float shorten) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -218,6 +224,8 @@ public static class BuildClothes {
             matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided));
         }
 
+        if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
+
         var mesh = new Mesh { name = $"{character}_{item}" };
         if (verts.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
         mesh.SetVertices(verts);
@@ -246,6 +254,30 @@ public static class BuildClothes {
         long triangles = 0;
         foreach (var s in submeshes) triangles += s.Length / 3;
         return triangles;
+    }
+
+    // The hem up to `to` (0 the knees, 1 the hips): everything under the hips squeezed towards them. The joints' heights
+    // come from the skin's inverse bind matrices.
+    static void Shorten(Gltf g, byte[] bin, GSkin skin, List<Vector3> verts, float to, string what) {
+        float[] ibm = ReadFloats(g, bin, skin.inverseBindMatrices);
+        float JointY(string name) {
+            int j = Array.FindIndex(skin.joints, k => g.nodes[k].name == name);
+            if (j < 0) return float.NaN;
+            var m = new Matrix4x4();
+            for (int c = 0; c < 4; c++)
+                for (int r = 0; r < 4; r++) m[r, c] = ibm[j * 16 + c * 4 + r];
+            return m.inverse.GetColumn(3).y;
+        }
+        float hips = JointY("Hips_jnt"), knees = JointY("LeftKnee_jnt");
+        if (float.IsNaN(hips) || float.IsNaN(knees) || hips <= knees) return;
+        float bottom = verts.Min(v => v.y), target = knees + Mathf.Clamp01(to) * (hips - knees);
+        if (bottom >= target) return;
+        float k = (hips - target) / (hips - bottom);
+        for (int i = 0; i < verts.Count; i++) {
+            var v = verts[i];
+            if (v.y < hips) verts[i] = new Vector3(v.x, hips - (hips - v.y) * k, v.z);
+        }
+        Debug.Log($"[Clothes] {what}: hem from {bottom:F2} m up to {target:F2} m (hips {hips:F2}, knees {knees:F2})");
     }
 
     static Matrix4x4 Mirror(Matrix4x4 m) {

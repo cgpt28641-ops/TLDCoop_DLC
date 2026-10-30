@@ -14,6 +14,8 @@
                     "GEAR_PremiumWinterCoat", "GEAR_QualityWinterCoat", "GEAR_SkiJacket", "GEAR_WolfSkinCape",
                     "GEAR_DownVest", "GEAR_InsulatedVest"],
   "inflate_metres": [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
+  "shorten_items": ["GEAR_DownParka"],
+  "shorten_to": [0.45],
   "preview_characters": ["mackenzie", "astrid", "heller", "molly"],
   "preview_outfits": [
     ["GEAR_BasicWoolHat", "GEAR_BasicWinterCoat"],
