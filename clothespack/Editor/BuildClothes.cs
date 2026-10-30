@@ -93,6 +93,7 @@ namespace TLDCoop {
     // socks made in the shape of sock_from (low shoes) instead of the catalog's flat sock; boot_items: footwear, under
     // which no sock is drawn (it can't be seen, and only pokes through at the toes)
     public string[] sock_items; public string sock_from; public string[] boot_items;
+    public string[] ankle_cut_items; public float ankle_cut = 0.05f;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -377,6 +378,25 @@ public static class BuildClothes {
             matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided, grey));
         }
         if (mirror) MirrorPair(g, skin, verts, normals, uvs, weights, submeshes, $"{character}/{item}");
+        {   // long johns stop above the foot (ankle_cut_items: cut ankle_cut over Foot_jnt): what went lower showed out of
+            // the socks' fronts; socks or footwear cover the rest
+            var cl = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json"));
+            if (cl.ankle_cut_items != null && cl.ankle_cut_items.Contains(item)) {
+                float footY = Mathf.Max(JointPos(g, bin, skin, "LeftFoot_jnt").y, JointPos(g, bin, skin, "RightFoot_jnt").y);
+                if (!float.IsNaN(footY)) {
+                    float cutY = footY + cl.ankle_cut; int before = 0, after = 0;
+                    for (int m = 0; m < submeshes.Count; m++) {
+                        var t = submeshes[m]; var keep = new List<int>();
+                        for (int k = 0; k + 2 < t.Length; k += 3) {
+                            before++;
+                            if ((verts[t[k]].y + verts[t[k + 1]].y + verts[t[k + 2]].y) / 3 >= cutY) { keep.Add(t[k]); keep.Add(t[k + 1]); keep.Add(t[k + 2]); after++; }
+                        }
+                        submeshes[m] = keep.ToArray();
+                    }
+                    Debug.Log($"[Clothes] {character}/{item}: legs cut at {cutY:F2} m, {after} of {before} triangles kept");
+                }
+            }
+        }
         if (sockColourFrom != null) {
             // A worn sock: the shape of this character's low shoes (file), 4 mm inside them, one knitted material in
             // the sock's own colour, ribs round each foot (the catalog's sock is a single flat ground model).
@@ -1231,17 +1251,6 @@ public static class BuildClothes {
                 float r = Mathf.Lerp(0.053f, 0.044f, k / 8f);
                 var ring = new Vector3(cx, y, ankleZ - 0.004f * (1 - k / 8f));
                 float ra = r, rb = r;
-                // round the long johns' leg at this height (on this side), 6 mm out, where they reach
-                var leg = under.Where(q => Mathf.Sign(q.x) == side && Mathf.Abs(q.y - y) < 0.012f && Mathf.Abs(q.x - cx) < 0.09f
-                                           && Mathf.Abs(q.z - ankleZ) < 0.12f).ToList();
-                if (leg.Count > 12 && y > soleY + bend * 0.5f) {
-                    float lx = leg.Average(q => q.x), lz = leg.Average(q => q.z);
-                    float Q(IEnumerable<float> xs) { var l = xs.OrderBy(x => x).ToList(); return l[Mathf.Clamp((int)(0.95f * l.Count), 0, l.Count - 1)]; }
-                    float la = Q(leg.Select(q => Mathf.Abs(q.x - lx))), lb = Q(leg.Select(q => Mathf.Abs(q.z - lz)));
-                    float w = Mathf.Clamp01((y - (soleY + bend)) / 0.04f);  // down at the heel's bend: back to the foot's own line
-                    ring = new Vector3(Mathf.Lerp(cx, lx, w), y, Mathf.Lerp(ring.z, lz, w));
-                    ra = Mathf.Lerp(r, Mathf.Max(r, la + 0.006f), w); rb = Mathf.Lerp(r, Mathf.Max(r, lb + 0.006f), w);
-                }
                 path.Add((ring, Vector3.down, ra, rb));
             }
             for (int k = 1; k <= 6; k++) {

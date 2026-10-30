@@ -583,5 +583,10 @@
     "GEAR_MuklukBoots",
     "GEAR_SkiBoots",
     "GEAR_WorkBoots"
-  ]
+  ],
+  "ankle_cut_items": [
+    "GEAR_LongUnderwear",
+    "GEAR_LongUnderwearWool"
+  ],
+  "ankle_cut": 0.05
 }
