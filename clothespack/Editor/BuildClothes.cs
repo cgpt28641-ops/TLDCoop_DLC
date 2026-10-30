@@ -59,6 +59,9 @@ namespace TLDCoop {
     public string[] beanie_grow_characters; public float[] beanie_grow;
     // The bodies cut into regions (bodycut/<mesh>.bodycut, from tools/bodycut.py): "<character>:<its mesh>".
     public string[] body_meshes;
+    // Pieces kept off the body: every vertex at least wrap_clearance outside its torso, arms, neck and legs (a flat
+    // cloak given volume, a sleeve never under the skin).
+    public string[] wrap_items; public float wrap_clearance = 0.012f;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -210,11 +213,13 @@ public static class BuildClothes {
                         if (list.beanie_grow_characters[i] == character) grow = list.beanie_grow[i];
                 var cutRegions = (list.hide_rules ?? new HideRule[0]).Where(r => r.under != null && r.regions != null && r.under.Contains(item))
                     .SelectMany(r => r.regions).Distinct().ToArray();
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions);
+                float wrap = list.wrap_items != null && list.wrap_items.Contains(item) ? list.wrap_clearance : -1;
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap);
                 triangles += result;
                 meshes++;
             }
         }
+        Skins.Clear();
         foreach (var b in OcclusionBodies.Values) if (b) UnityEngine.Object.DestroyImmediate(b);
         OcclusionBodies.Clear();
         // What the mod hides under which items: one TextAsset for the whole pack.
@@ -248,7 +253,7 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions) {
+                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -310,6 +315,7 @@ public static class BuildClothes {
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
         if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 
+        if (wrap > 0) Wrap(verts, submeshes, character, wrap, $"{character}/{item}");
         var mesh = new Mesh { name = $"{character}_{item}" };
         if (verts.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
         mesh.SetVertices(verts);
@@ -639,6 +645,79 @@ public static class BuildClothes {
             imp.SaveAndReimport();
         }
         return AssetDatabase.LoadAssetAtPath<Texture2D>(normalPath);
+    }
+
+    // The body's skin that clothes must stay off (torso, arms, neck, hips, legs, the bands), at rest, with a 3 cm grid.
+    class Skin { public Vector3[] p, n; public Dictionary<Vector3Int, List<int>> grid = new Dictionary<Vector3Int, List<int>>(); }
+    static readonly Dictionary<string, Skin> Skins = new Dictionary<string, Skin>();
+    const float SkinCell = 0.03f;
+    static Vector3Int Cell(Vector3 p) => new Vector3Int(Mathf.FloorToInt(p.x / SkinCell), Mathf.FloorToInt(p.y / SkinCell), Mathf.FloorToInt(p.z / SkinCell));
+    static Skin SkinOf(string character) {
+        if (Skins.TryGetValue(character, out var known)) return known;
+        Skin skin = null;
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/BodyCut.asset");
+        var info = AssetDatabase.LoadAssetAtPath<TextAsset>($"{OutDir}/{character}/BodyCut.txt");
+        if (mesh && info) {
+            string[] parts = info.text.Split('\n')[1].Substring("parts ".Length).Trim().Split(',');
+            var use = new HashSet<int>();
+            for (int i = 0; i < parts.Length && i < mesh.subMeshCount; i++) {
+                string region = parts[i].Split(':')[1];
+                if (region == "head" || region == "hands" || region == "feet") continue;
+                foreach (int v in mesh.GetTriangles(i)) use.Add(v);
+            }
+            var all = mesh.vertices; var normals = mesh.normals;
+            skin = new Skin { p = use.Select(i => all[i]).ToArray(), n = use.Select(i => normals[i].normalized).ToArray() };
+            for (int i = 0; i < skin.p.Length; i++) {
+                var c = Cell(skin.p[i]);
+                if (!skin.grid.TryGetValue(c, out var l)) skin.grid[c] = l = new List<int>();
+                l.Add(i);
+            }
+        }
+        return Skins[character] = skin;
+    }
+
+    // Every vertex pushed out to at least `clearance` above the nearest skin (along the skin's normal there), the pushes
+    // then smoothed over the piece's own triangles so it bends round the body instead of denting.
+    static void Wrap(List<Vector3> verts, List<int[]> submeshes, string character, float clearance, string what) {
+        var skin = SkinOf(character);
+        if (skin == null) return;
+        var push = new Vector3[verts.Count];
+        int moved = 0;
+        for (int i = 0; i < verts.Count; i++) {
+            var c = Cell(verts[i]);
+            int best = -1; float bestD = float.MaxValue;
+            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
+                if (skin.grid.TryGetValue(new Vector3Int(c.x + dx, c.y + dy, c.z + dz), out var l))
+                    foreach (int k in l) {
+                        float d = (skin.p[k] - verts[i]).sqrMagnitude;
+                        if (d < bestD) { bestD = d; best = k; }
+                    }
+            if (best < 0) continue;
+            float above = Vector3.Dot(verts[i] - skin.p[best], skin.n[best]);
+            if (above < clearance) { push[i] = skin.n[best] * (clearance - above); moved++; }
+        }
+        // smooth the pushes twice over the piece's edges (a vertex keeps at least its own push)
+        var neighbours = new List<int>[verts.Count];
+        foreach (var tris in submeshes)
+            for (int t = 0; t + 2 < tris.Length; t += 3)
+                for (int e = 0; e < 3; e++) {
+                    int a = tris[t + e], b = tris[t + (e + 1) % 3];
+                    (neighbours[a] ??= new List<int>()).Add(b);
+                    (neighbours[b] ??= new List<int>()).Add(a);
+                }
+        for (int pass = 0; pass < 2; pass++) {
+            var next = new Vector3[push.Length];
+            for (int i = 0; i < push.Length; i++) {
+                if (neighbours[i] == null) { next[i] = push[i]; continue; }
+                var sum = push[i];
+                foreach (int k in neighbours[i]) sum += push[k];
+                var avg = sum / (neighbours[i].Count + 1);
+                next[i] = avg.sqrMagnitude > push[i].sqrMagnitude ? avg : push[i];
+            }
+            push = next;
+        }
+        for (int i = 0; i < verts.Count; i++) verts[i] += push[i];
+        Debug.Log($"[Clothes] {what}: kept {clearance * 100:F1} cm off the body ({moved} vertices pushed out)");
     }
 
     // Ambient occlusion per vertex, into the vertex colour: rays over the half of the sky its normal faces, blocked by

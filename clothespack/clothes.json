@@ -19,7 +19,10 @@
     "GEAR_MooseHideCloak",
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
-    "GEAR_SkiJacket"
+    "GEAR_SkiJacket",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest"
   ],
   "lift_items": [
     "GEAR_BaseballCap",
@@ -43,7 +46,10 @@
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
     "GEAR_BaseballCap",
-    "GEAR_RabbitskinHat"
+    "GEAR_RabbitskinHat",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest"
   ],
   "inflate_metres": [
     0.005,
@@ -59,7 +65,10 @@
     0.005,
     0.005,
     0.02,
-    0.012
+    0.012,
+    0.005,
+    0.005,
+    0.005
   ],
   "shorten_items": [
     "GEAR_DownParka"
@@ -84,9 +93,15 @@
     "GEAR_MooseHideCloak",
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
-    "GEAR_SkiJacket"
+    "GEAR_SkiJacket",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest"
   ],
   "collar_metres": [
+    -0.01,
+    -0.01,
+    -0.01,
     -0.01,
     -0.01,
     -0.01,
@@ -153,6 +168,18 @@
     [
       "GEAR_EarMuffs",
       "GEAR_SkiJacket"
+    ],
+    [
+      "GEAR_Balaclava",
+      "GEAR_WolfSkinCape"
+    ],
+    [
+      "GEAR_ImprovisedHat",
+      "GEAR_DownVest"
+    ],
+    [
+      "GEAR_RabbitskinHat",
+      "GEAR_InsulatedVest"
     ]
   ],
   "hide_rules": [
@@ -168,7 +195,9 @@
         "GEAR_MilitaryParka",
         "GEAR_PremiumWinterCoat",
         "GEAR_QualityWinterCoat",
-        "GEAR_SkiJacket"
+        "GEAR_SkiJacket",
+        "GEAR_WolfSkinCape",
+        "GEAR_MooseHideCloak"
       ],
       "words": [
         "Jacket",
@@ -209,6 +238,16 @@
         "Toque",
         "Beanie",
         "Hat"
+      ]
+    },
+    {
+      "under": [
+        "GEAR_DownVest",
+        "GEAR_InsulatedVest"
+      ],
+      "words": [],
+      "regions": [
+        "torso"
       ]
     }
   ],
@@ -256,5 +295,23 @@
     "mackenzie_indoor:Mackenzie_noJacket_LO",
     "astrid:Astrid_Ep5",
     "molly:MESH_MOLLY"
-  ]
+  ],
+  "wrap_items": [
+    "GEAR_BasicWinterCoat",
+    "GEAR_BearSkinCoat",
+    "GEAR_DownParka",
+    "GEAR_DownSkiJacket",
+    "GEAR_HeavyParka",
+    "GEAR_LightParka",
+    "GEAR_MackinawJacket",
+    "GEAR_MilitaryParka",
+    "GEAR_MooseHideCloak",
+    "GEAR_PremiumWinterCoat",
+    "GEAR_QualityWinterCoat",
+    "GEAR_SkiJacket",
+    "GEAR_WolfSkinCape",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest"
+  ],
+  "wrap_clearance": 0.012
 }
