@@ -800,8 +800,8 @@ public static class BuildClothes {
             for (int i = 0; i <= along; i++) {
                 float th = i * 2 * Mathf.PI / along;
                 float front = Mathf.Max(0, Mathf.Cos(th));
-                float rx = (0.085f + 0.022f * turn) * s, rz = (0.09f + 0.022f * turn) * s;
-                var centre = new Vector3(neck.x + Mathf.Sin(th) * rx, neck.y - (0.035f + 0.03f * turn + 0.03f * front) * s,
+                float rx = (0.074f + 0.02f * turn) * s, rz = (0.08f + 0.02f * turn) * s;  // snug round the neck
+                var centre = new Vector3(neck.x + Mathf.Sin(th) * rx, neck.y - (0.0f + 0.03f * turn + 0.02f * front) * s,
                                          neck.z + 0.01f * s + Mathf.Cos(th) * rz);
                 var radial = new Vector3(Mathf.Sin(th), 0, Mathf.Cos(th));
                 for (int j = 0; j <= round; j++) {
@@ -825,7 +825,7 @@ public static class BuildClothes {
             int start = verts.Count;
             const int down = 10;
             float width = 0.07f * s, length = 0.32f * s, thick = 0.008f * s;
-            var top = new Vector3(neck.x + 0.035f * s, neck.y - 0.09f * s, neck.z + 0.115f * s);
+            var top = new Vector3(neck.x + 0.03f * s, neck.y - 0.06f * s, neck.z + 0.105f * s);
             for (int i = 0; i <= down; i++) {
                 float t = i / (float)down;
                 var p = top + new Vector3(0.01f * t * s, -length * t, 0.025f * t * s);
