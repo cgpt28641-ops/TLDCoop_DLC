@@ -112,6 +112,13 @@ struct Api {
     const MethodInfo* force_lock = nullptr;       // Lock.FinishForceLock(bool complete)
     ptrdiff_t safe_cracked = -1;                  // SafeCracking.m_Cracked
     const MethodInfo* crack_safe = nullptr;       // SafeCracking.UnlockSafe()
+    // TLDCoop_DLC: furniture to repair (safehouse mode: RepairableInteractiveItem), shared as a lock is
+    Il2CppObject* repairable_type = nullptr;
+    ptrdiff_t repaired = -1;                      // <IsRepaired>k__BackingField
+    ptrdiff_t repair_fixed = -1, repair_broken = -1;  // m_FixedGameobject / m_BrokenGameobject
+    Il2CppClass* repair_save_class = nullptr;     // InteractiveObjects.RepairableItemSaveState
+    ptrdiff_t repair_save_guid = -1, repair_save_done = -1;
+    const MethodInfo* repair_load = nullptr;      // RepairableInteractiveItem.Deserialize(RepairableItemSaveState)
     // Placements a player moves, picks up or puts down (milestone 10): decorations, movable containers
     ptrdiff_t placeable_guid = -1;                // Placeable.m_Guid
     const MethodInfo* to_player = nullptr;        // static PlaceableManager.MoveToPlayer(Placeable): picked up
@@ -287,7 +294,7 @@ void list_into(FieldInfo* field, Kind kind, std::vector<Object>& out) {
     each_in(field, [&](Il2CppObject* o) { out.push_back(Object{kind, o}); });
 }
 
-bool is_lock(Kind k) { return k == Kind::Lock || k == Kind::Safe; }
+bool is_lock(Kind k) { return k == Kind::Lock || k == Kind::Safe || k == Kind::Repair; }  // (polled, not hooked)
 
 // Locks and safes: on containers (Container.m_Lock / m_Safe), lockers and safes (OpenClose) and doors (LoadScene).
 void locks_into(std::vector<Object>& out) {
@@ -306,6 +313,23 @@ void locks_into(std::vector<Object>& out) {
         add(Kind::Safe, oc, api.open_close_safe);
     });
     each_in(api.doors, [&](Il2CppObject* door) { add(Kind::Lock, door, api.interaction_lock); });
+    // TLDCoop_DLC: furniture to repair: found every few seconds (TLD keeps no list of them)
+    static std::vector<uintptr_t> repairables;
+    static double found_at = -1e9;
+    const double now = GetTickCount64();
+    if (api.repairable_type && api.repaired >= 0 && api.find_all && now - found_at > 3000) {
+        found_at = now;
+        for (uintptr_t h : repairables) il2::il2cpp_gchandle_free(h);
+        repairables.clear();
+        bool inactive = false;
+        void* args[] = {api.repairable_type, &inactive};
+        Il2CppObject* found = il2::invoke(api.find_all, nullptr, args);
+        for (size_t i = 0, n = il2::array_length(found); i < n; ++i)
+            repairables.push_back(il2::il2cpp_gchandle_new(il2::array_object_at(found, i), false));
+    }
+    for (uintptr_t h : repairables)
+        if (Il2CppObject* r = il2::il2cpp_gchandle_get_target(h); alive(r) && seen.insert(r).second)
+            out.push_back(Object{Kind::Repair, r});
 }
 
 std::vector<Object> lock_objects() {
@@ -330,6 +354,8 @@ uint8_t value_of(const Object& x) {
         case Kind::Harvestable: return get<bool>(x.o, api.harvested) ? 1 : 0;
         case Kind::Lock: return static_cast<uint8_t>(get<int32_t>(x.o, api.lock_state));
         case Kind::Safe: return get<bool>(x.o, api.safe_cracked) ? 1 : 0;
+        case Kind::Repair: return get<bool>(x.o, api.repaired) ? 1 : 0;
+        default: break;
     }
     return 0;
 }
@@ -337,7 +363,7 @@ bool done(const Object& x) { return value_of(x) != 0; }
 
 const char* kind_name(Kind k) {
     return k == Kind::BreakDown ? "breakdown" : k == Kind::Harvestable ? "plant" : k == Kind::Lock ? "lock"
-         : k == Kind::Safe ? "safe" : k == Kind::Body ? "body" : "placeable";
+         : k == Kind::Safe ? "safe" : k == Kind::Body ? "body" : k == Kind::Repair ? "repairable" : "placeable";
 }
 const char* done_name(Kind k) {
     return k == Kind::BreakDown ? "broken down" : k == Kind::Harvestable ? "harvested" : k == Kind::Lock ? "open" : "cracked";
@@ -348,6 +374,7 @@ const char* placement_name(int32_t v) {
 const char* state_name(Kind k, uint8_t v) {
     if (k == Kind::Lock) return v == 0 ? "locked" : v == 1 ? "unlocked" : "forced";
     if (k == Kind::Safe) return v ? "cracked" : "locked";
+    if (k == Kind::Repair) return v ? "repaired" : "broken";
     if (k == Kind::Placement) return placement_name(v);
     return v ? done_name(k) : "whole";
 }
@@ -359,13 +386,14 @@ const char* verb(const net::ObjectState& s) {
         case Kind::Safe: return s.done ? "cracked" : "locked";
         case Kind::Placement: return s.done == 0 ? "placed" : s.done == kRemoved ? "removed" : s.done == kOnPlayer ? "picked up" : "put away";
         case Kind::Body: return "died, leaving";
+        case Kind::Repair: return s.done ? "repaired" : "left broken";
     }
     return "changed";
 }
 
 std::string key_of(Kind k, const std::string& id) {
     return (k == Kind::BreakDown ? "b/" : k == Kind::Harvestable ? "h/" : k == Kind::Lock ? "l/" : k == Kind::Safe ? "s/"
-            : k == Kind::Body ? "d/" : "p/") + id;
+            : k == Kind::Body ? "d/" : k == Kind::Repair ? "r/" : "p/") + id;
 }
 
 net::ObjectState state_of(const Object& x, const std::string& id) {
@@ -678,7 +706,21 @@ bool apply_placement(const net::ObjectState& s) {
 bool apply(const Object& x, const net::ObjectState& s) {
     if (is_lock(x.kind)) {  // as loading a save does (Lock.Deserialize: the state; SafeCracking: cracked)
         if (value_of(x) == s.done) return false;
-        if (x.kind == Kind::Lock) {
+        if (x.kind == Kind::Repair) {  // TLDCoop_DLC: as loading a save does (RepairableInteractiveItem.Deserialize)
+            if (!s.done) return false;  // (only ever repaired in play)
+            Il2CppObject* st = api.repair_save_class ? il2::il2cpp_object_new(api.repair_save_class) : nullptr;
+            if (st && api.repair_load && api.repair_save_done >= 0) {
+                put<bool>(st, api.repair_save_done, true);
+                if (api.repair_save_guid >= 0) put<Il2CppString*>(st, api.repair_save_guid, il2::il2cpp_string_new(id_of(x.o).c_str()));
+                void* args[] = {st};
+                il2::invoke(api.repair_load, x.o, args);
+            }
+            if (!get<bool>(x.o, api.repaired)) {  // by hand, if that didn't
+                put<bool>(x.o, api.repaired, true);
+                if (Il2CppObject* f = api.repair_fixed >= 0 ? get<Il2CppObject*>(x.o, api.repair_fixed) : nullptr) set_active(f, true);
+                if (Il2CppObject* b = api.repair_broken >= 0 ? get<Il2CppObject*>(x.o, api.repair_broken) : nullptr) set_active(b, false);
+            }
+        } else if (x.kind == Kind::Lock) {
             put<int32_t>(x.o, api.lock_state, s.done);
             if (s.done && api.unlock_companion) il2::invoke(api.unlock_companion, x.o);  // as forcing it does
         } else {
@@ -1546,6 +1588,18 @@ bool init() {
     api.force_lock = il2::find_method_params(lock, "FinishForceLock", {"System.Boolean"});
     api.safe_cracked = il2::field_offset(safe, "m_Cracked");
     api.crack_safe = il2::find_method(safe, "UnlockSafe", 0);
+    if (Il2CppClass* rep = il2::find_class(kGame, "InteractiveObjects", "RepairableInteractiveItem")) {  // TLDCoop_DLC
+        api.repairable_type = type_of(rep);
+        api.repaired = il2::field_offset_quiet(rep, "<IsRepaired>k__BackingField");
+        api.repair_fixed = il2::field_offset_quiet(rep, "m_FixedGameobject");
+        api.repair_broken = il2::field_offset_quiet(rep, "m_BrokenGameobject");
+        api.repair_load = il2::find_method_quiet(rep, "Deserialize", 1);
+        api.repair_save_class = il2::find_class(kGame, "InteractiveObjects", "RepairableItemSaveState");
+        if (api.repair_save_class) {
+            api.repair_save_guid = il2::field_offset_quiet(api.repair_save_class, "m_Guid");
+            api.repair_save_done = il2::field_offset_quiet(api.repair_save_class, "m_IsRepaired");
+        }
+    }
     Il2CppClass* placeable = il2::find_class(kGame, "TLD.Placement", "Placeable");
     Il2CppClass* decoration = il2::find_class(kGame, "", "DecorationItem");
     api.placeable_guid = il2::field_offset(placeable, "m_Guid");

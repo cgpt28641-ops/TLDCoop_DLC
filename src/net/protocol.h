@@ -937,7 +937,7 @@ inline bool read_container_want(Reader& r, ContainerWantMsg& m) {
 // Things in the world that are broken down or harvested (milestone 8c); locks and safes, placements (decorations,
 // movable containers) a player moved, and dead players' bodies (milestone 10). Named by TLD's persistent id for them
 // (or "@name|x|y|z" in cm when they have none).
-enum class ObjectKind : uint8_t { BreakDown = 1, Harvestable = 2, Lock = 3, Safe = 4, Placement = 5, Body = 6 };
+enum class ObjectKind : uint8_t { BreakDown = 1, Harvestable = 2, Lock = 3, Safe = 4, Placement = 5, Body = 6, Repair = 7 };
 constexpr size_t kPlacementEntryMax = 16 * 1024;  // one placement's record
 constexpr size_t kBodyTextMax = 192 * 1024;       // one body: who, its TLD record and what it holds
 inline bool has_text(ObjectKind k) { return k == ObjectKind::Placement || k == ObjectKind::Body; }
@@ -980,7 +980,7 @@ inline bool read_object_state(Reader& r, ObjectState& s) {
     s.refresh = r.get<float>();
     s.id = r.get_blob(kPdidMax);
     if (has_text(s.kind)) s.text = r.get_long_blob(s.kind == ObjectKind::Body ? kBodyTextMax : kPlacementEntryMax);
-    return r.ok() && kind >= 1 && kind <= 6;
+    return r.ok() && kind >= 1 && kind <= 7;  // TLDCoop_DLC: 7 Repair (a safehouse's furniture repaired)
 }
 
 inline void write_object_put(Writer& w, const ObjectPutMsg& m) {
