@@ -393,7 +393,27 @@ public static class BuildClothes {
                         }
                         submeshes[m] = keep.ToArray();
                     }
-                    Debug.Log($"[Clothes] {character}/{item}: legs cut at {cutY:F2} m, {after} of {before} triangles kept");
+                    // and drawn in round the ankle (from 13 cm over the foot joint down to 9 cm: at most 4.2 cm from the
+                    // leg's middle), so the hem goes inside the sock instead of flaring over it
+                    var mid = new Dictionary<(int, int), Vector3>(); var cnt = new Dictionary<(int, int), int>();
+                    for (int i = 0; i < verts.Count; i++) {
+                        if (verts[i].y > footY + 0.15f) continue;
+                        var key = (verts[i].x < 0 ? -1 : 1, Mathf.FloorToInt(verts[i].y / 0.02f));
+                        mid[key] = (mid.TryGetValue(key, out var a0) ? a0 : Vector3.zero) + verts[i];
+                        cnt[key] = (cnt.TryGetValue(key, out int c0) ? c0 : 0) + 1;
+                    }
+                    int pulled = 0;
+                    for (int i = 0; i < verts.Count; i++) {
+                        float w = Mathf.Clamp01((footY + 0.13f - verts[i].y) / 0.04f);
+                        if (w <= 0) continue;
+                        var key = (verts[i].x < 0 ? -1 : 1, Mathf.FloorToInt(verts[i].y / 0.02f));
+                        if (!cnt.TryGetValue(key, out int n0) || n0 < 4) continue;
+                        var c = mid[key] / n0;
+                        var d = new Vector3(verts[i].x - c.x, 0, verts[i].z - c.z);
+                        float r = d.magnitude, lim = Mathf.Lerp(r, Mathf.Min(r, 0.042f), w);
+                        if (lim < r - 1e-4f) { verts[i] = new Vector3(c.x, verts[i].y, c.z) + d / r * lim; pulled++; }
+                    }
+                    Debug.Log($"[Clothes] {character}/{item}: legs cut at {cutY:F2} m, {after} of {before} triangles kept, {pulled} drawn in round the ankles");
                 }
             }
         }
