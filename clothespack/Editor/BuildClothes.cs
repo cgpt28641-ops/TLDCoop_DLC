@@ -1219,7 +1219,9 @@ public static class BuildClothes {
             float heel = P(i => shoeP[i].z, 0.01f), toe = P(i => shoeP[i].z, 0.99f);
             float cx = foot.Average(i => shoeP[i].x);
             float half = (P(i => shoeP[i].x, 0.97f) - P(i => shoeP[i].x, 0.03f)) / 2 - 0.006f;
-            float ankleZ = heel + 0.05f, soleY = y0 + 0.035f, top = y1 + 0.05f, bend = 0.045f;
+            // the ankle on the shin's line: the middle of the shoe's opening (its top 3 cm), not behind it
+            var collarZ = foot.Where(i => shoeP[i].y > y1 - 0.03f).Select(i => shoeP[i].z).DefaultIfEmpty(heel + 0.05f);
+            float ankleZ = Mathf.Max(heel + 0.035f, (collarZ.Min() + collarZ.Max()) / 2), soleY = y0 + 0.035f, top = y1 + 0.05f, bend = 0.045f;
             // the centre line: down the ankle, a quarter circle round the heel, forward to the toe
             var path = new List<(Vector3 p, Vector3 t, float a, float b)>();
             for (int k = 0; k <= 8; k++) {
