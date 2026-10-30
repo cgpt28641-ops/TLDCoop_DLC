@@ -1,4 +1,4 @@
-# TLDCoop_DLC: handoff for the next assistant (30.10.2026)
+# TLDCoop_DLC: handoff for the next assistant (30.10.2026, updated 17:35)
 
 ## The user
 - Karol, Polish (in-game name "Kerel_007_"). Write to him in Polish, short and simple. If he writes "krótko", answer in a few lines.
@@ -50,88 +50,41 @@
   - 17: no ring when breaking things down.
   - Minimap and players drifting out of place: cause unknown. Needs screenshots plus coop.log.
 
-## Current work: clothes on the avatars
-**Goal:** the other players see your hat and coat.
+## Current work: clothes on the avatars (state at 30.10, 17:35)
+**Goal:** other players see what you wear, and it has to look realistic and professional ("perfekcyjnie"). Karol judges from the preview images and screenshots; he wants every item kept ("nic nie usuwamy") and made right.
 
-**Input:**
-- Karol's catalog `TLD_Odziez_Pelny_Katalog`: 23 characters × 70 glTF items.
-- Each item is skinned to the NPC rig of a given character (`*_jnt` bones, root `Body_<char>`).
+**Decisions so far**
+- Only 3 bodies get clothes and are choosable in the mod: **mackenzie_indoor, astrid, molly** (default mackenzie_indoor). Done in the mod: `avatar::choosable_body_ids`, coop menu + death screen, ini fallback (CI run 41043842291 OK).
+- **The mod itself is NOT changed for clothes yet** (Karol chose "1": work only in the tool, integrate later when he says so).
+- Base body: the character's own clothes hidden + a base layer (charcoal thermal top `TLDCoop_BaseTop` from FleeceSweater, LongUnderwear, WoolSocks). Nude bodies are impossible (no skin under the game's clothes).
+- Balaclava: whole head and neck covered, only eyes and mouth visible (his reference: tube mask with eye/mouth holes).
 
-**Assets:** these are Hinterland's assets. Give them only to friends who own the game, never publish them, and do not put them in the repo.
+**Assets:** Hinterland's art – only for friends who own the game; never publish, never in the repo. `.bodycut` files (game meshes) live only on Karol's PC (`D:\TLDCoop_Ubrania\bodycut`) and in the scratchpad.
 
-**Tool:** `clothespack/` in the repo, copied to `D:\TLDCoop_Ubrania` on Karol's PC.
-- `build_clothes.cmd` runs Unity 6000.0.60f1 (`C:\Program Files\Unity\Hub\Editor\6000.0.60f1\Editor\Unity.exe`) in batchmode.
-  - `TLDCoop.BuildClothes.Build` produces the `tldcoop_clothes` bundle (about 82 MB).
-  - `TLDCoop.BuildClothes.Preview` produces preview PNGs and `preview.log`.
-- `Editor/BuildClothes.cs`:
-  - Has its own glTF parser.
-  - Converts right-handed to Unity: mirrors x, flips triangle winding, turns UV v into 1−v, bind poses become S·IBM·S.
-  - Item edits: `lift`, `inflate` (along the normal), `shorten` (raises the hem).
-  - Dress(): a SkinnedMeshRenderer whose bones are mapped by name to the body's bones.
-  - Hiding the body's own clothes: the whole submesh gets the `TLDCoop/Hidden` material, because body meshes are not readable.
-- `clothes.json`:
-  - 22 items: hats, coats and vests.
-  - lift/inflate/shorten values, `hide_under`, `hide_words`.
-  - Preview characters: mackenzie, astrid, heller, molly, jeremiah, jane.
-- **Workflow:**
-  1. Change the repo and push it to Karol's PC with `device_commit_files` (from `/mnt/user-data/outputs`).
-  2. **Always confirm the write by staging the file back.** It once reported success without writing anything.
-  3. Karol runs the cmd and writes "gotowe".
-  4. Read `preview.log`, `build.log` and the PNGs from `D:\TLDCoop_Ubrania` with `device_stage_files`.
-- **Folder access granted:** `D:\TLDCoop_Ubrania` and `D:\SteamLibrary\steamapps\common\TheLongDark`.
+**Tool:** `clothespack/` in the repo = `D:\TLDCoop_Ubrania` on Karol's PC.
+- `build_clothes.cmd` → Unity 6000.0.60f1 batchmode: `TLDCoop.BuildClothes.Build` (bundle `tldcoop_clothes`, ~87 MB, 3 chars × ~67 items) and `TLDCoop.BuildClothes.Preview` (`previews/sheet_<char>.jpg` full body, `close_<char>.jpg` head+shoulders; 21 outfit columns from `preview_outfits`, rows front/side/back, cell 400×600; logs `build.log`, `preview.log`).
+- Input: catalog `TLD_Odziez_Pelny_Katalog/characters/<char>/GEAR_*.gltf` (skinned to each NPC rig); Molly uses Astrid's fits (`fit_from molly:astrid`).
+- `tools/bodycut/` (own UnityFS/LZ4/typetree parser) splits each body by bone region → `.bodycut`; Unity builds `<char>/BodyCut.asset` + `BodyCut.txt` (parts `sub:region`, incl. eyes, mouth, bands, and `hairtop` split at the hat rim).
+- `Editor/BuildClothes.cs` (~121 KB) main steps per item: read glTF (mirror x) → reshape / SkinMask (balaclava) / Scarf / Beanie / SockSweep → collar, shorten → SliceFit + Radial (vests) → Wrap ×2 + ClampLayer (layer min/max over the base surface) → baked AO → mesh + txt (bones, materials, cut regions). Shader `Shaders/TLDCoopCloth.shader` (two-sided, normal from colour, AO, depth offset by layer).
+- `clothes.json` holds all settings (layers, collar, hide_rules, base_hide incl. `neck@Mackenzie_Ep5_Body`, reshape for EarMuffs, sock_items/sock_from/boot_items, beanie_items, scarf_items, slice_fit_items, skin_mask_items…).
 
-**Status after the last run (commit c06223e):**
-- **OK:** Mackenzie, Astrid and Molly. Their own sweaters and jackets are hidden, and hats sit correctly.
-- Only 5 out of 23 bodies have clothes as separate submeshes: mackenzie, mackenzie_indoor, astrid, astrid_outdoor and molly. The other 18 (heller, jeremiah, jane, methuselah, convicts, patrons, millworker, terry, atwood…) are one piece, so their own clothes show through the coat.
+**Workflow**
+1. Edit in `/home/claude/tldcoop_dlc`, commit + push (append to this file each time), copy changed files to `/mnt/user-data/outputs/clothes_vNN/` and write them to `D:\TLDCoop_Ubrania\…` with `device_commit_files`.
+2. **Verify the write** (`device_list_dir` size/mtime; if the size is the same, stage the file back and grep it – once an old cached copy was written; a fresh staging folder fixed it).
+3. Karol runs `build_clothes.cmd` and writes "gotowe" (or "błąd" → read `build.log`, look for `error CS`).
+4. Stage previews/logs with `device_stage_files`, crop with PIL, look, fix.
+- Git: repo remote URL is lowercase `tldcoop_dlc` (GitHub redirects; pushes occasionally fail with a server error – just retry, check `git status -sb`). Commit identity set to Claude/noreply.
+- Offline helper: `scratchpad/ana/vsim.py` (base + tee + vest simulation with a software rasterizer).
 
-**Problems Karol reported (latest screenshot, 30.10):**
-1. **Coat collars sit too high and reach the eyes on some characters.** Very visible on the BasicWinterCoat (green) and on Heller and Jeremiah. Likely causes:
-   - the item was skinned to another character's proportions (neck and head height);
-   - `inflate` along the normals pushes the collar up and out.
-
-   Ideas to try:
-   - per-character lowering of the collar or lift for coats;
-   - weaker inflate in the neck area (scale it by the weight of the Neck/Head bones);
-   - trimming collar vertices whose height is above the neck bone.
-2. Jeremiah in outfit 2 (RabbitskinHat + BearSkinCoat) renders as a white fluffy blob, so check the materials or alpha of the BearSkinCoat.
-3. DownParka and BearSkinCoat sleeves are 12–15 cm too long past the wrist (Mackenzie, Molly).
-4. Single-piece bodies show their own clothes through.
-
-**My proposal to Karol (he has not chosen yet):**
-- (1) Clothes only on the 5 split bodies for now. Recommended.
-- (2) Stronger inflate for the other 18.
-- (3) Draw the coat so it covers the body (a stencil or depth trick). Experimental.
-
-**Karol's latest request:** "make it much better than it is now". Quality matters to him: the clothes and animations are supposed to look really good.
-
-**DECISION (30.10, Karol: "nie wiem który wariant, chcę żeby wyglądało bardzo dobrze"):** go with variant 1, for quality.
-- Visible clothes are dressed only onto the bodies with separate parts: **Mackenzie, Astrid (indoor/outdoor) and Molly**. Mackenzie and Astrid are the game's own player characters anyway.
-- Other bodies keep their original outfit and no clothes are added onto them. No stronger inflate.
-- Variant 3 (covering the body with a stencil) is an optional later experiment, only if they want more characters.
-- **30.10 later: Karol limited it further to the indoor variants: mackenzie_indoor, astrid, molly** (default body mackenzie_indoor). Outdoor variants have their own hats/coats baked in.
-- **DONE (commit afbbb33):** the co-op setup and death screen offer only these 5 (`avatar::choosable_body_ids`); coop.ini default `body=mackenzie`; an unchoosable ini body falls back to mackenzie. Bodies from older builds are still accepted from the network.
-- Effort now goes into polishing those 3 characters: collars, sleeves, hem lengths, and checking all 22 items on each of them from several angles.
+**Current look (after v45/v46)**
+- OK: coats, shirts, sweaters, trousers, boots, cap, rabbit hat, ear warmer (on the ears, round the back), scarves (flat bands round the neck over the collar), beanies (fitted to the skull, hair inside hidden, nape/ponytail visible), balaclava (whole head, beard flattened under it), vests on Astrid/Molly, no socks drawn under footwear, socks as clean knitted tubes.
+- Open: v46 sock ankle position (not seen yet); Mackenzie DownVest dark collar shards, Mackenzie InsulatedVest tee patch on the shoulder, small dark points at DownVest armholes from behind; bear coat / wolf cape grey gaps between fur pieces; scarf hanging end straight/stiff.
 
 ## Next steps
-1. Fix the collars (point 1 above), Jeremiah's coat and the sleeves. Do another build_clothes iteration and check the previews.
-2. Get Karol's decision on (1)/(2)/(3) for the single-piece bodies.
-3. **Mod integration (protocol v35):**
-   - Load `tldcoop_clothes.bundle` next to the DLL.
-   - Send each player's worn clothing, either in State or as a separate message.
-   - Dress the avatar: a SkinnedMeshRenderer with bones mapped by name, rootBone `Hips_jnt`, materials TLDCoop/Body.
-   - Hide the body's submeshes listed in `rules.txt`.
-   - Add tests in `tests/` and update the README and INSTALL_DLC.txt.
-4. Give the friends the bundle privately (not on GitHub).
-5. Test everything from v32–v34 together in co-op, then update the list of changes.
-6. Later:
-   - Iron Road (train and unique items).
-   - Proper gesture animations (Unity clips).
-   - The minimap mismatch (needs screenshots).
-
-## Clothes status (30.10, ~11:50)
-- clothes.json: characters mackenzie_indoor/astrid/molly; collars brought down (Collar()); wool hat, toque and improvised hat are generated fitted beanies (Beanie(); catalog only has their folded ground models); balaclava + ear warmer re-oriented (reshape); hair hidden under full hats (hide_rules); rules.txt format: one line per rule "hide <items> : <words>".
-- Previews (previews/sheet_<character>.jpg, columns = outfits, rows front/side/back) look good on all three. Karol approved cap and rabbit hat as OK.
-- Next: mod integration (v35) — load bundle, send worn clothes, dress avatars, apply rules.txt.
+1. Check v46 previews (socks from the side), then the open items above.
+2. When Karol approves: **mod integration (protocol v35)** – load `tldcoop_clothes.bundle` next to the DLL; send each player's worn items; dress the avatar on the cut body (BodyCut parts, bones by name, rootBone `Hips_jnt`); apply `rules.txt` (hide words / cut regions), `base_hide` (incl. `region@material` syntax), the `hairtop` split, and "no socks under boot_items"; tests in `tests/`, README/INSTALL_DLC.txt.
+3. Give friends the bundle privately (not on GitHub).
+4. Test v32–v34 features in co-op; later Iron Road, gesture animations, minimap mismatch.
 
 ## Standing rule (Karol, 30.10 15:16)
 **After every change, append a dated entry to this file** (what changed, why, status: tested on preview or not), and commit it with the change.
@@ -148,7 +101,6 @@ Pipeline recap: base body = character's own clothes hidden (base_hide regions) +
 - **v39** – vest cause: raw vests (yoke + standing collar) were left inside the torso above the armpits, so the shirt covered them → shredded look. SliceFit now also fits front/back depth above the armpits (cap ×1.45) and keeps the width factor of the last slice below the armpits. **Not yet seen on preview.**
 - **v40** – EarMuffs is really a ring-shaped ear warmer band; it covered the face. Reshape got `tilt`, `back_only`, `cut_front`: rotate_x 90, scale 0.85, centre (0, 0.075, −0.012), tilt 0.35 (back lower), front part beyond centre z+0.025 removed → on the ears and round the back of the head. **Not yet seen on preview.**
 
-Open items: check v39 vests and v40 ear warmer; Molly's nape under beanies; bear coat / wolf cape grey gaps between fur pieces; scarf hanging end is straight/stiff (could angle + fold); later mod integration (v35 protocol) – Karol has not approved it yet.
 - **v40 result (15:21)** – ear warmer: on the ears and round the back – OK. Vests: better on Astrid, still shredded yoke/collar on Mackenzie and yellow shards on InsulatedVest. Hiding all hair under beanies showed holes in the scalp (eye backs visible from behind).
 - **v41** – BodyCut splits hair-material triangles of the head at a hat rim (2.5 cm above the eyes at the front → 0.5 cm under them at the back) into a new part region `hairtop`; beanie hide rule now hides only `hairtop` (fringe, nape, ponytail stay). Vests taken out of `collar_items` (the collar squeeze crumpled their standing collar/yoke) – experiment. **Not yet seen on preview.** Mod integration: the `hairtop` part comes from BodyCut, so the runtime must use the same split.
 - **v41 result (15:36)** – hair split at the beanie rim works (nape/ponytail stay, no scalp holes). Vests still bad above the armpits.
