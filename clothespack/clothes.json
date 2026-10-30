@@ -20,9 +20,7 @@
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
-    "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest"
+    "GEAR_WolfSkinCape"
   ],
   "lift_items": [
     "GEAR_BaseballCap",
@@ -46,9 +44,8 @@
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
     "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest",
-    "GEAR_BaseballCap"
+    "GEAR_BaseballCap",
+    "GEAR_RabbitskinHat"
   ],
   "inflate_metres": [
     0.005,
@@ -64,9 +61,8 @@
     0.005,
     0.005,
     0.02,
-    0.005,
-    0.005,
-    0.02
+    0.02,
+    0.012
   ],
   "shorten_items": [
     "GEAR_DownParka"
@@ -92,13 +88,9 @@
     "GEAR_PremiumWinterCoat",
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
-    "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest"
+    "GEAR_WolfSkinCape"
   ],
   "collar_metres": [
-    -0.01,
-    -0.01,
     -0.01,
     -0.01,
     -0.01,
@@ -170,14 +162,6 @@
     [
       "GEAR_Balaclava",
       "GEAR_WolfSkinCape"
-    ],
-    [
-      "GEAR_ImprovisedHat",
-      "GEAR_DownVest"
-    ],
-    [
-      "GEAR_RabbitskinHat",
-      "GEAR_InsulatedVest"
     ]
   ],
   "hide_rules": [
@@ -214,7 +198,6 @@
       "under": [
         "GEAR_BasicWoolHat",
         "GEAR_Toque",
-        "GEAR_RabbitskinHat",
         "GEAR_ImprovisedHat",
         "GEAR_Balaclava"
       ],
@@ -228,22 +211,13 @@
     {
       "under": [
         "GEAR_BaseballCap",
-        "GEAR_EarMuffs"
+        "GEAR_EarMuffs",
+        "GEAR_RabbitskinHat"
       ],
       "words": [
         "Toque",
         "Beanie",
         "Hat"
-      ]
-    },
-    {
-      "under": [
-        "GEAR_DownVest",
-        "GEAR_InsulatedVest"
-      ],
-      "words": [],
-      "regions": [
-        "torso"
       ]
     }
   ],
