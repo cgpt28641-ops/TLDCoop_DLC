@@ -17,7 +17,8 @@ struct Picture {
     const char* atlas;   // TLD's texture name
     int size;            // the size we build our copy of the atlas at (square)
     int x, y, w, h;      // where ours goes, in that size, top-left origin
-    const unsigned char* rgb;  // w*h RGB, rows top-down
+    const unsigned char* rgb;  // w*h pixels, rows top-down
+    int channels;              // 3 RGB, or 4 RGBA (alpha blends it over TLD's: its frame's brushed edge stays)
 };
 #include "pictures_data.inc"
 
@@ -113,9 +114,11 @@ Il2CppObject* build(Il2CppObject* tld, const std::string& atlas) {
             for (int i = 0; i < p.w; ++i) {
                 const int col = p.x + i;
                 if (col < 0 || col >= size) continue;
-                const unsigned char* src = p.rgb + (static_cast<size_t>(j) * p.w + i) * 3;
+                const unsigned char* src = p.rgb + (static_cast<size_t>(j) * p.w + i) * p.channels;
                 uint8_t* dst = px + (static_cast<size_t>(row) * size + col) * 4;
-                dst[0] = src[0], dst[1] = src[1], dst[2] = src[2], dst[3] = 255;
+                const int a = p.channels == 4 ? src[3] : 255;
+                for (int k = 0; k < 3; ++k) dst[k] = static_cast<uint8_t>((src[k] * a + dst[k] * (255 - a) + 127) / 255);
+                dst[3] = 255;
             }
         }
         ++painted;
