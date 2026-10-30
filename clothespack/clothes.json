@@ -357,17 +357,6 @@
   ],
   "reshape": [
     {
-      "item": "GEAR_Balaclava",
-      "rotate_x": 180,
-      "scale": 0.95,
-      "centre": [
-        0,
-        0.035,
-        0.02
-      ],
-      "weights": "headneck"
-    },
-    {
       "item": "GEAR_EarMuffs",
       "rotate_x": 90,
       "scale": 1.0,
@@ -562,5 +551,11 @@
     "GEAR_DownVest",
     "GEAR_InsulatedVest",
     "GEAR_BallisticVest"
+  ],
+  "fit_from": [
+    "molly:astrid"
+  ],
+  "skin_mask_items": [
+    "GEAR_Balaclava"
   ]
 }
