@@ -415,7 +415,10 @@ public static class BuildClothes {
         mesh.bindposes = bind;
         mesh.RecalculateTangents();
         mesh.RecalculateBounds();
-        mesh.colors = BakeOcclusion(verts, normals, submeshes, character);
+        var ao = BakeOcclusion(verts, normals, submeshes, character);
+        if (skinMask || scarf || beanie)  // knitted pieces sit over hair the game hides: only a light shade, no dark blotches
+            for (int i = 0; i < ao.Length; i++) { float o = 0.8f + 0.2f * ao[i].r; ao[i] = new Color(o, o, o, 1); }
+        mesh.colors = ao;
         AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/{item}.asset");
 
         string bones = string.Join(",", skin.joints.Select(j => g.nodes[j].name));
