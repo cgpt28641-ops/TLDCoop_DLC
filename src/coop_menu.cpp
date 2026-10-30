@@ -84,6 +84,8 @@ constexpr int kHighlightWidth = 440, kHighlightHeight = 110;
 
 // The CO-OP setup screen.
 // The last three are the HUD's switches (milestone 12), on the setup only: the lobby uses the rows up to the code.
+// TLDCoop_DLC: TLD's menu has 8 rows and all are taken, so on the setup the NAME row (only ever the Steam name; the
+// lobby still lists everyone's) is AMBIENT LIGHTS: the host's choice for everyone (ambient_lights.h).
 enum Row { kMode, kCharacter, kVoice, kName, kCode, kNames, kRadar, kChart, kRowCount };
 constexpr int kLobbyRows = kCode + 1;
 constexpr int kSwitchRows[] = {kNames, kRadar, kChart};
@@ -279,6 +281,7 @@ struct Menu {
     int mode = kHost;
     int voice = 0;  // VoicePersona: 0 male, 1 female
     bool hud[3] = {true, true, true};  // NAMES, RADAR, AUTO MAP (kSwitchRows' order)
+    bool ambient = true;    // TLDCoop_DLC: AMBIENT LIGHTS (hosting; a friend follows the host's)
     std::string join_code;  // being typed
     std::string notice;     // one-off message shown instead of the row help ("Copied!")
     std::vector<std::string> bodies;
@@ -1080,7 +1083,12 @@ std::string row_help(int row) {
             return "Your survivor's voice (and first-person hands), the Male / Female choice TLD normally asks for. "
                    "Your look is the CHARACTER above.";
         case kName:
-            return "What your friends see you as: your Steam name.";
+            if (g.mode == kJoin)
+                return "Ambient Lights: daylight through every building's windows that follows the time of day and "
+                       "the weather. The host decides for everyone; you'll have whatever they chose.";
+            return "Ambient Lights: daylight through every building's windows that follows the time of day and the "
+                   "weather, TLD's indoor lighting toned to match. You decide for everyone in your game. (Built in, "
+                   "after the mod by Xpazeman and Thekillergreece; levels in coop.ini [ambient].)";
         case kNames:
             return "A small dot over each friend's head; their name and how far away they are when you look at them or "
                    "they're close. Out of sight, an arrow at the edge of the screen points the way.";
@@ -1173,7 +1181,8 @@ void refresh() {
     set_text(target(g.row_labels[kMode]), std::string("MODE: ") + kModeNames[g.mode]);
     set_text(target(g.row_labels[kCharacter]), "CHARACTER: " + upper(display_name(g.bodies[g.body])));
     set_text(target(g.row_labels[kVoice]), std::string("VOICE: ") + kVoiceNames[g.voice]);
-    set_text(target(g.row_labels[kName]), "NAME: " + g.settings.name);
+    set_text(target(g.row_labels[kName]), std::string("AMBIENT LIGHTS: ") +
+                                              (g.mode == kJoin ? "HOST'S" : g.ambient ? "ON" : "OFF"));
     set_text(target(g.row_labels[kCode]),
              g.mode == kHost ? "YOUR CODE: " + g.settings.code
                              : "JOIN CODE: " + g.join_code + std::string(kCodeLength - g.join_code.size(), '_'));
@@ -1185,6 +1194,9 @@ void refresh() {
     place_arrows(kMode);
     place_arrows(kCharacter);
     place_arrows(kVoice);
+    place_arrows(kName);
+    for (const Arrow& a : g.arrows)  // a friend can't change AMBIENT LIGHTS: the host's
+        if (a.row == kName) set_active(target(a.go), g.mode == kHost);
     for (int row : kSwitchRows) place_arrows(row);
     move_highlight(g.highlight, g.rows[g.selected]);
     fit_highlight(g.highlight, g.row_labels[g.selected]);
@@ -1206,6 +1218,7 @@ void change(int row, int step) {
     if (row == kMode) g.mode = 1 - g.mode;
     if (row == kCharacter) g.body = (g.body + g.bodies.size() + step) % g.bodies.size();
     if (row == kVoice) g.voice = (g.voice + 2 + step) % 2;
+    if (row == kName && g.mode == kHost) g.ambient = !g.ambient;
     for (int i = 0; i < 3; ++i)
         if (row == kSwitchRows[i]) g.hud[i] = !g.hud[i];
     refresh();
@@ -1267,6 +1280,7 @@ void load_choices() {
     g.hud[0] = g.settings.hud_names;
     g.hud[1] = g.settings.hud_radar;
     g.hud[2] = g.settings.hud_chart;
+    g.ambient = g.settings.ambient_lights;
     // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
     std::string ids = avatar::choosable_body_ids();
@@ -1383,7 +1397,7 @@ bool open_menu(Il2CppObject* screen_panel) {
                g.normal_color.b);
     if (!g.with_voice) set_active(target(g.rows[kVoice]), false);
     Il2CppObject* arrow_template = part(clone, m, kArrowTemplate);
-    for (int row : {kMode, kCharacter, kVoice, kNames, kRadar, kChart}) {
+    for (int row : {kMode, kCharacter, kVoice, kName, kNames, kRadar, kChart}) {
         add_arrow(arrow_template, row, -1);
         add_arrow(arrow_template, row, +1);
     }
@@ -1449,6 +1463,7 @@ void close_menu(bool confirmed) {
         g.settings.hud_names = g.hud[0];
         g.settings.hud_radar = g.hud[1];
         g.settings.hud_chart = g.hud[2];
+        if (g.mode == kHost) g.settings.ambient_lights = g.ambient;
         if (by_code) g.settings.transport = "steam";  // codes run through Steam
         if (g.mode == kJoin) g.settings.join_code = g.join_code;
         config::save(g.settings);
@@ -1495,7 +1510,7 @@ bool setup_click(Il2CppObject* go) {
         change(a.row, a.step);
     } else if (row >= 0) {
         select(row);
-        if (row == kMode || row == kCharacter || row == kVoice || row >= kNames) change(row, +1);
+        if (row == kMode || row == kCharacter || row == kVoice || row == kName || row >= kNames) change(row, +1);
         if (row == kCode) copy_code();
     } else {
         close_menu(is_confirm);

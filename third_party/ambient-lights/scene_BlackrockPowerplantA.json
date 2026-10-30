@@ -1,0 +1,77 @@
+{
+	"emitters": [
+		{
+			"description":"Window by main console",
+			"position":"8.47, 1.21, -16.23"
+			"orientation":"west",
+			"size": 2,
+			"cover": 0
+		},
+		{
+			"description":"Left big window",
+			"position":"17.13, 1.51, -2.44"
+			"orientation":"south",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Mid big window",
+			"position":"17.13, 1.45, -7.07"
+			"orientation":"south",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Right big window",
+			"position":"17.13, 1.45, -11.63"
+			"orientation":"south",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Small window door frame",
+			"position":"1.9814,1.5421,-13.9039"
+			"orientation":"west",
+			"size": 0.5,
+			"cover": 0
+		},
+		{
+			"description":"Exit left window frame",
+			"position":"0.7501,1.5773,2.6639"
+			"orientation":"north",
+			"size": 0.7,
+			"cover": 0
+		},
+		{
+			"description":"Exit right window frame",
+			"position":"0.7838,1.5864,3.7278"
+			"orientation":"north",
+			"size": 0.7,
+			"cover": 0
+		}
+		{
+			"description":"Left Roof Window",
+			"position":"16.27, 4.43, -2.07"
+			"orientation":"south",
+			"size": 2,
+			"cover": 0
+		},
+		{
+			"description":"Right Roof Window",
+			"position":"16.28, 4.42, -11.85"
+			"orientation":"south",
+			"size": 2,
+			"cover": 0
+		}
+	],
+	"periods":{
+		
+	},
+	"options":{
+		"override_shadows":"",
+		"intensity_multiplier": 1,
+		"range_multiplier": 1.1,
+		"aurora_intensity_multiplier": 0.8,
+		"aurora_range_multiplier": 3.5,
+	}
+}

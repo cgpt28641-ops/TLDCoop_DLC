@@ -862,7 +862,8 @@ struct Session::Impl {
             case Msg::ObjectList:
             case Msg::FireList:
             case Msg::WaterList:
-            case Msg::GameMode: {
+            case Msg::GameMode:
+            case Msg::Features: {
                 if (hosting() || !linked) return;
                 keep_packet(*l, type, data, size, now);
                 break;

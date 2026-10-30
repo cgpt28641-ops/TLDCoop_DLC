@@ -77,6 +77,22 @@ constexpr const char* kDefaultIni =
     "; grey, black or #RRGGBB, e.g.\n"
     "; Shatsca=blue\n"
     "\n"
+    "[ambient]\n"
+    "; Ambient Lights (built in, after the mod by Xpazeman / Thekillergreece, MIT): daylight through each interior's\n"
+    "; windows that follows the time of day and the weather. In co-op the HOST decides for everyone (the CO-OP setup\n"
+    "; screen's AMBIENT LIGHTS row); playing alone, enabled= below. The levels are your own (1 = as the mod made them).\n"
+    "enabled=1\n"
+    "intensity=1.1\n"
+    "range=1\n"
+    "; night: 0 = the game's dark nights, 1 = the mod's, 2 = brighter nights, 3 = endless day\n"
+    "night=1\n"
+    "; TLD's own indoor lighting: ambience (overall glow), fill lights, how coloured its coloured fill lights stay\n"
+    "ambience=0.8\n"
+    "fill=0.7\n"
+    "fill_color=0.5\n"
+    "aurora_intensity=0.8\n"
+    "aurora_saturation=1.4\n"
+    "\n"
     "[emotes]\n"
     "; Gestures the others see you make (a line on your HUD says which). Keys: F1..F12, A..Z, 0..9, NUM0..NUM9, off\n"
     "wave=F5\n"
@@ -140,6 +156,7 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"names", s.hud_names ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"hud", L"radar", s.hud_radar ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
+    WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
     logx::info("settings saved: mode=%s transport=%s code=%s join_code=%s name=%s body=%s", s.mode.c_str(),
                s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.name.c_str(), s.body.c_str());
 }
@@ -173,6 +190,19 @@ Settings load() {
     s.hud_radar = GetPrivateProfileIntW(L"hud", L"radar", 1, ini.c_str()) != 0;
     s.hud_chart = GetPrivateProfileIntW(L"hud", L"chart", 1, ini.c_str()) != 0;
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
+    s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
+    auto level = [&](const wchar_t* key, float& v) {
+        const std::string t = read(ini, key, "", L"ambient");
+        if (!t.empty()) v = static_cast<float>(atof(t.c_str()));
+    };
+    level(L"intensity", s.ambient_intensity);
+    level(L"range", s.ambient_range);
+    s.ambient_night = static_cast<int>(GetPrivateProfileIntW(L"ambient", L"night", 1, ini.c_str()));
+    level(L"ambience", s.ambient_ambience);
+    level(L"fill", s.ambient_fill);
+    level(L"fill_color", s.ambient_fill_color);
+    level(L"aurora_intensity", s.ambient_aurora_intensity);
+    level(L"aurora_saturation", s.ambient_aurora_saturation);
     s.emote_keys = read_section(ini, L"emotes");
     s.test_resume = read(ini, L"resume", "", L"test");
     s.test_nosave = GetPrivateProfileIntW(L"test", L"nosave", 0, ini.c_str()) != 0;

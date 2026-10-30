@@ -1,0 +1,37 @@
+{
+	"emitters": [
+		{
+			"position":"1.7, 1.9, -1.8",
+			"orientation":"east",
+			"size": 0.6,
+			"cover": 0
+		},
+		{
+			"position":"-2.4, 1.9, -1.8",
+			"orientation":"east",
+			"size": 0.6,
+			"cover": 0
+		},
+		{
+			"position":"-0.1, 1.9, 1.8",
+			"orientation":"west",
+			"size": 0.6,
+			"cover": 0
+		},
+		{
+			"position":"-2.4, 1.9, 1.8",
+			"orientation":"west",
+			"size": 0.6,
+			"cover": 0
+		}
+	],
+	"periods":{
+		
+	},
+	"options":{
+		"override_shadows":"",
+		"intensity_multiplier": 1,
+		"aurora_intensity_multiplier": 1.4,
+		"aurora_range_multiplier": 2.2
+	}
+}

@@ -35,6 +35,7 @@ target_link_libraries(tldnet PUBLIC ws2_32)
 # The mod. The game loads it as winhttp.dll.
 add_library(tldcoop SHARED
   src/dllmain.cpp
+  src/ambient_lights.cpp
   src/avatar.cpp
   src/config.cpp
   src/coop_death.cpp
@@ -119,3 +120,5 @@ add_executable(blood_test tests/blood_test.cpp)
 target_link_libraries(blood_test PRIVATE tldnet)
 add_executable(afflictions_test tests/afflictions_test.cpp)
 target_link_libraries(afflictions_test PRIVATE tldnet)
+add_executable(ambient_test tests/ambient_test.cpp)
+target_link_libraries(ambient_test PRIVATE tldnet)

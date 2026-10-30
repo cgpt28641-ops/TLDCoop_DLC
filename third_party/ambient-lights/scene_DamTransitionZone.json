@@ -1,0 +1,69 @@
+{
+	"emitters": [
+		{
+			"description":"Offices S",
+			"position":"5.2, 4.7, -6.9",
+			"orientation":"south",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Ceiling Stairs",
+			"position":"-7.1, 4.6, 2.6",
+			"orientation":"east",
+			"size": 1.5,
+			"cover": 0
+		},
+		{
+			"description":"Ceiling Stairs",
+			"position":"-7.1, 4.6, 6.9",
+			"orientation":"east",
+			"size": 1.5,
+			"cover": 0
+		},
+		{
+			"description":"Door to winding river",
+			"position":"-74.6, -5.9, -16.8",
+			"orientation":"west",
+			"size": 0.6,
+			"cover": 0.7
+		},
+		{
+			"description":"Offices NW",
+			"position":"-8.5, 4.7, -10.4",
+			"orientation":"west",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Offices NW",
+			"position":"-11.8, 4.7, -10.4",
+			"orientation":"west",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Offices SW",
+			"position":"-1.8, 4.7, -10.4",
+			"orientation":"west",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Offices SW",
+			"position":"1.5, 4.7, -10.4",
+			"orientation":"west",
+			"size": 1,
+			"cover": 0
+		}
+	],
+	"periods":{
+		
+	},
+	"options":{
+		"override_shadows":"",
+		"intensity_multiplier": 1,
+		"aurora_intensity_multiplier": 0.85,
+		"aurora_range_multiplier": 1.5
+	}
+}

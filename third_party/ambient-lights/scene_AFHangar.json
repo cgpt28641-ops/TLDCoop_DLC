@@ -1,0 +1,63 @@
+{
+	"emitters": [
+		{
+			"description":"Window",
+			"position":"-26.56, 2.46, 13.12"
+			"orientation":"east",
+			"size": 0.8,
+			"cover": 0
+		},
+		{
+			"description":"Window",
+			"position":"-26.65, 6.73, -15.72"
+			"orientation":"east",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Window",
+			"position":"-26.66, 6.78, -12.69"
+			"orientation":"east",
+			"size": 1,
+			"cover": 0
+		},
+		{
+			"description":"Window",
+			"position":"26.84, 1.99, 12.89"
+			"orientation":"west",
+			"size": 0.8,
+			"cover": 0
+		},
+		{
+			"description":"Big Window",
+			"position":"-19.30, 10.57, -9.09"
+			"orientation":"east",
+			"size": 3,
+			"cover": 0
+		},
+		{
+			"description":"Big Window",
+			"position":"-19.45, 10.52, 3.51"
+			"orientation":"east",
+			"size": 3,
+			"cover": 0
+		},
+		{
+			"description":"Big Window",
+			"position":"19.51, 10.80, 2.58"
+			"orientation":"west",
+			"size": 3,
+			"cover": 0
+		},
+	],
+	"periods":{
+		
+	},
+	"options":{
+		"override_shadows":"",
+		"intensity_multiplier": 1,
+		"range_multiplier": 1.1,
+		"aurora_intensity_multiplier": 1,
+		"aurora_range_multiplier": 3.2,
+	}
+}

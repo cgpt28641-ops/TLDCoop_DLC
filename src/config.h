@@ -31,6 +31,18 @@ struct Settings {
     std::vector<std::pair<std::string, std::string>> hud_colours;
     // TLDCoop_DLC: [emotes] a key for each gesture (wave, point, come, stop, yes, no)
     std::vector<std::pair<std::string, std::string>> emote_keys;
+    // TLDCoop_DLC: [ambient] Ambient Lights (built in, after the MelonLoader mod by Xpazeman / Thekillergreece):
+    // light through each interior's windows that follows the time of day and the weather. In co-op the host's
+    // `enabled` counts for everyone (the CO-OP setup screen's AMBIENT LIGHTS row); the levels are each player's own.
+    bool ambient_lights = true;
+    float ambient_intensity = 1.1f;    // the window lights' brightness (0 = off, 1 = the mod's own)
+    float ambient_range = 1.0f;        // how far they reach
+    int ambient_night = 1;             // 0 game default, 1 the mod's, 2 brighter nights, 3 endless day
+    float ambient_ambience = 0.8f;     // TLD's own indoor ambient light (1 = TLD's)
+    float ambient_fill = 0.7f;         // TLD's fill lights (1 = TLD's)
+    float ambient_fill_color = 0.5f;   // how coloured TLD's coloured fill lights stay (1 = TLD's)
+    float ambient_aurora_intensity = 0.8f;
+    float ambient_aurora_saturation = 1.4f;
     // [test] section, for automated runs only (no menu clicks):
     std::string test_resume;           // load this save slot (e.g. sandbox5) as soon as the main menu is up
     bool test_nosave = false;          // never save: a second copy of the game playing the same save

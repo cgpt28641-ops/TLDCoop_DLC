@@ -1,0 +1,42 @@
+{
+	"emitters": [
+		{
+			"description":"Left window",
+			"position":"2.94, 2.80, -2.08"
+			"orientation":"north",
+			"size": 0.5,
+			"cover": 0
+		},
+		{
+			"description":"Right window",
+			"position":"-2.72, 1.64, -2.27"
+			"orientation":"north",
+			"size": 0.5,
+			"cover": 0
+		},
+		{
+			"description":"Opposite Right window",
+			"position":"-0.47, 1.71, 2.16"
+			"orientation":"east",
+			"size": 0.5,
+			"cover": 0
+		},
+		{
+			"description":"Opposite Left window",
+			"position":"-2.02, 1.78, 2.16"
+			"orientation":"east",
+			"size": 0.5,
+			"cover": 0
+		}
+	],
+	"periods":{
+		
+	},
+	"options":{
+		"override_shadows":"",
+		"intensity_multiplier": 1,
+		"range_multiplier": 1.1,
+		"aurora_intensity_multiplier": 0.8,
+		"aurora_range_multiplier": 3.5,
+	}
+}

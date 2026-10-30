@@ -3,7 +3,7 @@ TLDCoop_DLC - co-op do The Long Dark (przerobka TLDCoop v0.13.1 pod gre 2.58 i D
 
 Wymagania
 - The Long Dark 2.59 189140 S na Steam (Windows), Steam wlaczony.
-- Kazdy gracz instaluje TEN SAM zip (protokol v34; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
+- Kazdy gracz instaluje TEN SAM zip (protokol v35; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
 - Gracz dolaczajacy musi miec zainstalowane wszystkie DLC, ktore ma host
   (np. Tales from the Far Territory, Iron Road). Wiecej DLC niz host - w porzadku.
 
@@ -26,6 +26,13 @@ Gesty i kolory
 - Gesty: F5 machanie, F6 wskazywanie, F7 "chodz tu", F8 "stoj", F3 tak, F4 nie (TLDCoop\coop.ini, [emotes]).
 - Kolory graczy na radarze, mapie i nad glowa: TLDCoop\coop.ini, [colors], np. Shatsca=blue.
   (Stary coop.ini nie ma tych sekcji: mozna je dopisac na koncu pliku albo usunac coop.ini, zrobi sie nowy.)
+
+Ambient Lights (wbudowane, bez MelonLoadera)
+- Swiatlo z okien w budynkach zmienia sie z pora dnia i pogoda. Wlacza/wylacza HOST na ekranie co-opa (wiersz
+  AMBIENT LIGHTS) dla wszystkich graczy. W solo: TLDCoop\coop.ini, [ambient] enabled=1 albo 0.
+- Jasnosc itp. kazdy u siebie: [ambient] intensity, range, night, ambience, fill, fill_color.
+- Jesli masz mod AmbientLights w MelonLoaderze (Mods\AmbientLights.dll), usun go: dopoki jest, TLDCoop mu ustepuje.
+- Wszyscy gracze musza miec te sama wersje TLDCoop (protokol v35).
 
 Kopia zapasowa zapisow
 - Przed kazda gra w co-op mod kopiuje zapisy do TLDCoop\backups\<data_godzina> (5 ostatnich, coop.ini [net] backups=).

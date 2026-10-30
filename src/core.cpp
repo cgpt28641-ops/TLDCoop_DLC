@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 
+#include "ambient_lights.h"
 #include "avatar.h"
 #include "config.h"
 #include "dumper.h"
@@ -158,6 +159,7 @@ void coop_off(const char* why) {
 
 // Start, restart or stop co-op to match the settings. Used at startup and by the co-op menu.
 void apply_net_settings(const config::Settings& s, bool startup) {
+    ambient_lights::set_settings(s);
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
     coop_hud::set_colours(s.hud_colours);
     coop_emotes::set_keys(s.emote_keys);
@@ -205,6 +207,7 @@ void start_networking() {
     g_get_run_in_background = il2::find_method(application, "get_runInBackground", 0);
     config::Settings s = config::load();
     if (!s.autostart) {
+        ambient_lights::set_settings(s);
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
         coop_hud::set_colours(s.hud_colours);
         coop_emotes::set_keys(s.emote_keys);
@@ -497,6 +500,7 @@ void on_frame() {
     world_water::on_frame(in_game);
     world_blood::on_frame(in_game);
     world_spray::on_frame(in_game);
+    ambient_lights::on_frame(scene, in_game);
     coop_backup::on_frame(game::active_scene(), g_net_enabled);
     world_join::on_frame(scene, in_game);
     coop_death::on_frame(scene, in_game);
@@ -622,6 +626,7 @@ void on_runtime_ready() {
     world_blood::init();
     coop_backup::init();
     world_spray::init();
+    ambient_lights::init();
     world_join::init();
     coop_death::init();
     coop_lapse::init();
