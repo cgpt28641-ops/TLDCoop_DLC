@@ -3,7 +3,7 @@
 import struct,sys,re,json,os
 import numpy as np
 from sf import SF
-REGIONS=['head','neck','torso','arms','hands','hips','legs','feet']+['band%d'%k for k in range(15)]+['eyes']
+REGIONS=['head','neck','torso','arms','hands','hips','legs','feet']+['band%d'%k for k in range(15)]+['eyes','mouth']
 # The torso's lower part in 3 cm bands from BAND_TOP down, so a coat hides only what its hem reaches.
 BAND_TOP=1.25; BAND_STEP=0.03
 def region_of(b):
@@ -11,6 +11,7 @@ def region_of(b):
     if b.startswith('Spine') or 'Shoulder' in b: return 'torso'
     if b.startswith('Neck'): return 'neck'
     if 'eye' in b.lower(): return 'eyes'  # the eyes and their lids: what a balaclava leaves showing
+    if re.search('lip|teeth|tongue',b.lower()): return 'mouth'  # and the lips, through its mouth hole
     if b=='Head_jnt' or not b[0].isupper(): return 'head'
     if re.search('UpArm|Bicep|Elbow|Forearm',b): return 'arms'
     if re.search('Hand|Pinky|Ring|Middle|Index|Thumb',b): return 'hands'
