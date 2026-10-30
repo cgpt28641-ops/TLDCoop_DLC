@@ -1,5 +1,5 @@
 {
-  "comment": "What goes into tldcoop_clothes: these items, for every character folder in the catalog. Start: hats and outer layers. Hats: lifted to the forehead; the body's hair hidden under full hats, its own hat under any.",
+  "comment": "The worn clothing pack. Every character wears a base (grey long-sleeved top from base_top_from, long johns, socks) over a body whose own clothes are hidden (base_hide); the clothes stack over it in layers (layers: min/max distance from the skin).",
   "items": [
     "GEAR_BasicWoolHat",
     "GEAR_BaseballCap",
@@ -8,6 +8,24 @@
     "GEAR_ImprovisedHat",
     "GEAR_EarMuffs",
     "GEAR_Balaclava",
+    "GEAR_WoolWrapCap",
+    "GEAR_BasicWoolScarf",
+    "GEAR_CottonScarf",
+    "GEAR_WoolWrap",
+    "GEAR_CottonHoodie",
+    "GEAR_CottonShirt",
+    "GEAR_CowichanSweater",
+    "GEAR_FishermanSweater",
+    "GEAR_FleeceSweater",
+    "GEAR_HeavyWoolSweater",
+    "GEAR_PlaidShirt",
+    "GEAR_SweaterChristmasA",
+    "GEAR_TeeShirt",
+    "GEAR_WoolShirt",
+    "GEAR_WoolSweater",
+    "GEAR_DownVest",
+    "GEAR_InsulatedVest",
+    "GEAR_BallisticVest",
     "GEAR_BasicWinterCoat",
     "GEAR_BearSkinCoat",
     "GEAR_DownParka",
@@ -21,8 +39,34 @@
     "GEAR_QualityWinterCoat",
     "GEAR_SkiJacket",
     "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest"
+    "GEAR_LongUnderwear",
+    "GEAR_LongUnderwearWool",
+    "GEAR_CargoPants",
+    "GEAR_CombatPants",
+    "GEAR_DeerSkinPants",
+    "GEAR_InsulatedPants",
+    "GEAR_Jeans",
+    "GEAR_WorkPants",
+    "GEAR_ClimbingSocks",
+    "GEAR_CottonSocks",
+    "GEAR_WoolSocks",
+    "GEAR_BasicBoots",
+    "GEAR_BasicShoes",
+    "GEAR_CombatBoots",
+    "GEAR_DeerSkinBoots",
+    "GEAR_InsulatedBoots",
+    "GEAR_LeatherShoes",
+    "GEAR_MuklukBoots",
+    "GEAR_SkiBoots",
+    "GEAR_WorkBoots",
+    "GEAR_BasicGloves",
+    "GEAR_FleeceMittens",
+    "GEAR_Gauntlets",
+    "GEAR_ImprovisedMittens",
+    "GEAR_Mittens",
+    "GEAR_RabbitSkinMittens",
+    "GEAR_SkiGloves",
+    "GEAR_WorkGloves"
   ],
   "lift_items": [
     "GEAR_BaseballCap",
@@ -33,48 +77,10 @@
     0.05
   ],
   "inflate_items": [
-    "GEAR_BasicWinterCoat",
-    "GEAR_BearSkinCoat",
-    "GEAR_DownParka",
-    "GEAR_DownSkiJacket",
-    "GEAR_HeavyParka",
-    "GEAR_LightParka",
-    "GEAR_MackinawJacket",
-    "GEAR_MilitaryParka",
-    "GEAR_MooseHideCloak",
-    "GEAR_PremiumWinterCoat",
-    "GEAR_QualityWinterCoat",
-    "GEAR_SkiJacket",
-    "GEAR_BaseballCap",
-    "GEAR_RabbitskinHat",
-    "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest"
+    "GEAR_RabbitskinHat"
   ],
   "inflate_metres": [
-    0.005,
-    0.005,
-    0.005,
-    0.005,
-    0.005,
-    0.005,
-    0.005,
-    0.005,
-    0.02,
-    0.005,
-    0.005,
-    0.005,
-    0.02,
-    0.012,
-    0.005,
-    0.005,
-    0.005
-  ],
-  "shorten_items": [
-    "GEAR_DownParka"
-  ],
-  "shorten_to": [
-    0.45
+    0.012
   ],
   "characters": [
     "mackenzie_indoor",
@@ -96,9 +102,31 @@
     "GEAR_SkiJacket",
     "GEAR_WolfSkinCape",
     "GEAR_DownVest",
-    "GEAR_InsulatedVest"
+    "GEAR_InsulatedVest",
+    "GEAR_BallisticVest",
+    "GEAR_CottonHoodie",
+    "GEAR_CottonShirt",
+    "GEAR_CowichanSweater",
+    "GEAR_FishermanSweater",
+    "GEAR_FleeceSweater",
+    "GEAR_HeavyWoolSweater",
+    "GEAR_PlaidShirt",
+    "GEAR_SweaterChristmasA",
+    "GEAR_WoolShirt",
+    "GEAR_WoolSweater"
   ],
   "collar_metres": [
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
+    -0.01,
     -0.01,
     -0.01,
     -0.01,
@@ -121,102 +149,150 @@
     "molly"
   ],
   "preview_outfits": [
+    [],
     [
-      "GEAR_RabbitskinHat",
+      "GEAR_CottonShirt",
+      "GEAR_Jeans",
+      "GEAR_BasicBoots",
+      "GEAR_BasicWoolHat"
+    ],
+    [
+      "GEAR_PlaidShirt",
+      "GEAR_CargoPants",
+      "GEAR_WorkBoots",
+      "GEAR_BaseballCap",
+      "GEAR_WorkGloves"
+    ],
+    [
+      "GEAR_WoolSweater",
+      "GEAR_WorkPants",
+      "GEAR_CombatBoots",
+      "GEAR_Toque",
       "GEAR_BasicWinterCoat"
     ],
     [
-      "GEAR_BasicWoolHat",
-      "GEAR_BearSkinCoat"
-    ],
-    [
-      "GEAR_Toque",
+      "GEAR_CowichanSweater",
+      "GEAR_CombatPants",
+      "GEAR_InsulatedBoots",
+      "GEAR_RabbitskinHat",
+      "GEAR_Mittens",
       "GEAR_DownParka"
     ],
     [
-      "GEAR_BaseballCap",
-      "GEAR_DownSkiJacket"
-    ],
-    [
-      "GEAR_EarMuffs",
+      "GEAR_FishermanSweater",
+      "GEAR_InsulatedPants",
+      "GEAR_MuklukBoots",
+      "GEAR_BasicWoolScarf",
+      "GEAR_FleeceMittens",
       "GEAR_HeavyParka"
     ],
     [
-      "GEAR_Balaclava",
-      "GEAR_LightParka"
-    ],
-    [
+      "GEAR_CottonHoodie",
+      "GEAR_DeerSkinPants",
+      "GEAR_DeerSkinBoots",
       "GEAR_ImprovisedHat",
-      "GEAR_MackinawJacket"
+      "GEAR_ImprovisedMittens",
+      "GEAR_BearSkinCoat"
     ],
     [
-      "GEAR_RabbitskinHat",
-      "GEAR_MilitaryParka"
-    ],
-    [
-      "GEAR_BasicWoolHat",
-      "GEAR_MooseHideCloak"
-    ],
-    [
-      "GEAR_Toque",
-      "GEAR_PremiumWinterCoat"
-    ],
-    [
-      "GEAR_BaseballCap",
-      "GEAR_QualityWinterCoat"
-    ],
-    [
+      "GEAR_HeavyWoolSweater",
+      "GEAR_Jeans",
+      "GEAR_SkiBoots",
       "GEAR_EarMuffs",
+      "GEAR_SkiGloves",
       "GEAR_SkiJacket"
     ],
     [
-      "GEAR_Balaclava",
-      "GEAR_WolfSkinCape"
+      "GEAR_SweaterChristmasA",
+      "GEAR_CargoPants",
+      "GEAR_LeatherShoes",
+      "GEAR_CottonScarf",
+      "GEAR_MackinawJacket"
     ],
     [
-      "GEAR_ImprovisedHat",
+      "GEAR_TeeShirt",
+      "GEAR_LongUnderwearWool",
+      "GEAR_BasicShoes",
+      "GEAR_Balaclava",
       "GEAR_DownVest"
     ],
     [
+      "GEAR_WoolShirt",
+      "GEAR_WorkPants",
+      "GEAR_WorkBoots",
+      "GEAR_WoolWrapCap",
+      "GEAR_Gauntlets",
+      "GEAR_MilitaryParka"
+    ],
+    [
+      "GEAR_FleeceSweater",
+      "GEAR_CombatPants",
+      "GEAR_CombatBoots",
+      "GEAR_WoolWrap",
+      "GEAR_RabbitSkinMittens",
+      "GEAR_WolfSkinCape"
+    ],
+    [
+      "GEAR_CottonShirt",
+      "GEAR_InsulatedPants",
+      "GEAR_InsulatedBoots",
+      "GEAR_BasicGloves",
+      "GEAR_BallisticVest",
+      "GEAR_Toque"
+    ],
+    [
+      "GEAR_PlaidShirt",
+      "GEAR_DeerSkinPants",
+      "GEAR_MuklukBoots",
       "GEAR_RabbitskinHat",
+      "GEAR_MooseHideCloak"
+    ],
+    [
+      "GEAR_WoolSweater",
+      "GEAR_Jeans",
+      "GEAR_BasicBoots",
+      "GEAR_BaseballCap",
+      "GEAR_LightParka"
+    ],
+    [
+      "GEAR_CottonHoodie",
+      "GEAR_CargoPants",
+      "GEAR_WorkBoots",
+      "GEAR_Toque",
+      "GEAR_QualityWinterCoat"
+    ],
+    [
+      "GEAR_FleeceSweater",
+      "GEAR_InsulatedPants",
+      "GEAR_SkiBoots",
+      "GEAR_EarMuffs",
+      "GEAR_PremiumWinterCoat"
+    ],
+    [
+      "GEAR_TeeShirt",
+      "GEAR_Jeans",
+      "GEAR_BasicShoes",
+      "GEAR_BasicWoolHat",
       "GEAR_InsulatedVest"
+    ],
+    [
+      "GEAR_CottonShirt",
+      "GEAR_WorkPants",
+      "GEAR_WorkBoots",
+      "GEAR_DownSkiJacket"
+    ],
+    [
+      "GEAR_ClimbingSocks"
+    ],
+    [
+      "GEAR_CottonSocks"
     ]
   ],
   "hide_rules": [
     {
       "under": [
-        "GEAR_BasicWinterCoat",
-        "GEAR_BearSkinCoat",
-        "GEAR_DownParka",
-        "GEAR_DownSkiJacket",
-        "GEAR_HeavyParka",
-        "GEAR_LightParka",
-        "GEAR_MackinawJacket",
-        "GEAR_MilitaryParka",
-        "GEAR_PremiumWinterCoat",
-        "GEAR_QualityWinterCoat",
-        "GEAR_SkiJacket",
-        "GEAR_WolfSkinCape",
-        "GEAR_MooseHideCloak"
-      ],
-      "words": [
-        "Jacket",
-        "Sweater",
-        "Coat",
-        "Parka",
-        "Hoodie",
-        "Shirt",
-        "Vest",
-        "Top"
-      ],
-      "regions": [
-        "torso",
-        "arms"
-      ]
-    },
-    {
-      "under": [
-        "GEAR_Balaclava"
+        "GEAR_Balaclava",
+        "GEAR_WoolWrapCap"
       ],
       "words": [
         "Hair",
@@ -227,12 +303,12 @@
     },
     {
       "under": [
-        "GEAR_BaseballCap",
-        "GEAR_EarMuffs",
-        "GEAR_RabbitskinHat",
         "GEAR_BasicWoolHat",
+        "GEAR_BaseballCap",
         "GEAR_Toque",
-        "GEAR_ImprovisedHat"
+        "GEAR_RabbitskinHat",
+        "GEAR_ImprovisedHat",
+        "GEAR_EarMuffs"
       ],
       "words": [
         "Toque",
@@ -242,12 +318,18 @@
     },
     {
       "under": [
-        "GEAR_DownVest",
-        "GEAR_InsulatedVest"
+        "GEAR_BasicGloves",
+        "GEAR_FleeceMittens",
+        "GEAR_Gauntlets",
+        "GEAR_ImprovisedMittens",
+        "GEAR_Mittens",
+        "GEAR_RabbitSkinMittens",
+        "GEAR_SkiGloves",
+        "GEAR_WorkGloves"
       ],
       "words": [],
       "regions": [
-        "torso"
+        "hands"
       ]
     }
   ],
@@ -296,31 +378,163 @@
     "astrid:Astrid_Ep5",
     "molly:MESH_MOLLY"
   ],
-  "wrap_items": [
-    "GEAR_BasicWinterCoat",
-    "GEAR_BearSkinCoat",
-    "GEAR_DownParka",
-    "GEAR_DownSkiJacket",
-    "GEAR_HeavyParka",
-    "GEAR_LightParka",
-    "GEAR_MackinawJacket",
-    "GEAR_MilitaryParka",
-    "GEAR_MooseHideCloak",
-    "GEAR_PremiumWinterCoat",
-    "GEAR_QualityWinterCoat",
-    "GEAR_SkiJacket",
-    "GEAR_WolfSkinCape",
-    "GEAR_DownVest",
-    "GEAR_InsulatedVest"
-  ],
+  "wrap_items": [],
   "wrap_clearance": 0.012,
   "hat_wrap_items": [
     "GEAR_BasicWoolHat",
-    "GEAR_Toque",
-    "GEAR_ImprovisedHat",
-    "GEAR_RabbitskinHat",
     "GEAR_BaseballCap",
-    "GEAR_EarMuffs"
+    "GEAR_Toque",
+    "GEAR_RabbitskinHat",
+    "GEAR_ImprovisedHat",
+    "GEAR_EarMuffs",
+    "GEAR_WoolWrapCap"
   ],
-  "hat_wrap_clearance": 0.006
+  "hat_wrap_clearance": 0.006,
+  "layers": [
+    {
+      "items": [
+        "TLDCoop_BaseTop",
+        "GEAR_LongUnderwear",
+        "GEAR_LongUnderwearWool",
+        "GEAR_ClimbingSocks",
+        "GEAR_CottonSocks",
+        "GEAR_WoolSocks"
+      ],
+      "min": 0.003,
+      "max": 0.007
+    },
+    {
+      "items": [
+        "GEAR_CottonHoodie",
+        "GEAR_CottonShirt",
+        "GEAR_CowichanSweater",
+        "GEAR_FishermanSweater",
+        "GEAR_FleeceSweater",
+        "GEAR_HeavyWoolSweater",
+        "GEAR_PlaidShirt",
+        "GEAR_SweaterChristmasA",
+        "GEAR_TeeShirt",
+        "GEAR_WoolShirt",
+        "GEAR_WoolSweater"
+      ],
+      "min": 0.009,
+      "max": 0.018
+    },
+    {
+      "items": [
+        "GEAR_CargoPants",
+        "GEAR_CombatPants",
+        "GEAR_DeerSkinPants",
+        "GEAR_InsulatedPants",
+        "GEAR_Jeans",
+        "GEAR_WorkPants"
+      ],
+      "min": 0.009,
+      "max": 0.02
+    },
+    {
+      "items": [
+        "GEAR_DownVest",
+        "GEAR_InsulatedVest",
+        "GEAR_BallisticVest"
+      ],
+      "min": 0.02,
+      "max": 0.026
+    },
+    {
+      "items": [
+        "GEAR_BasicWinterCoat",
+        "GEAR_BearSkinCoat",
+        "GEAR_DownParka",
+        "GEAR_DownSkiJacket",
+        "GEAR_HeavyParka",
+        "GEAR_LightParka",
+        "GEAR_MackinawJacket",
+        "GEAR_MilitaryParka",
+        "GEAR_MooseHideCloak",
+        "GEAR_PremiumWinterCoat",
+        "GEAR_QualityWinterCoat",
+        "GEAR_SkiJacket",
+        "GEAR_WolfSkinCape"
+      ],
+      "min": 0.03,
+      "max": 0
+    },
+    {
+      "items": [
+        "GEAR_BasicBoots",
+        "GEAR_BasicShoes",
+        "GEAR_CombatBoots",
+        "GEAR_DeerSkinBoots",
+        "GEAR_InsulatedBoots",
+        "GEAR_LeatherShoes",
+        "GEAR_MuklukBoots",
+        "GEAR_SkiBoots",
+        "GEAR_WorkBoots"
+      ],
+      "min": 0.024,
+      "max": 0
+    },
+    {
+      "items": [
+        "GEAR_BasicGloves",
+        "GEAR_FleeceMittens",
+        "GEAR_Gauntlets",
+        "GEAR_ImprovisedMittens",
+        "GEAR_Mittens",
+        "GEAR_RabbitSkinMittens",
+        "GEAR_SkiGloves",
+        "GEAR_WorkGloves"
+      ],
+      "min": 0.003,
+      "max": 0
+    },
+    {
+      "items": [
+        "GEAR_BasicWoolScarf",
+        "GEAR_CottonScarf",
+        "GEAR_WoolWrap"
+      ],
+      "min": 0.04,
+      "max": 0
+    }
+  ],
+  "mirror_items": [
+    "GEAR_ClimbingSocks",
+    "GEAR_CottonSocks",
+    "GEAR_WoolSocks"
+  ],
+  "base_items": [
+    "GEAR_LongUnderwear",
+    "GEAR_WoolSocks"
+  ],
+  "base_top_from": "GEAR_FleeceSweater",
+  "base_hide": [
+    "torso",
+    "arms",
+    "hips",
+    "legs",
+    "feet",
+    "band0",
+    "band1",
+    "band2",
+    "band3",
+    "band4",
+    "band5",
+    "band6",
+    "band7",
+    "band8",
+    "band9",
+    "band10",
+    "band11",
+    "band12",
+    "band13",
+    "band14"
+  ],
+  "shorten_items": [
+    "GEAR_DownParka"
+  ],
+  "shorten_to": [
+    0.45
+  ]
 }

@@ -29,6 +29,10 @@ namespace TLDCoop {
 // the head's size), and skinned anew: to the head ("head") or the head above the neck ("headneck").
 [Serializable] class Reshape { public string item; public float rotate_x; public float scale = 1; public float[] centre; public string weights; }
 
+// How far from the skin a kind of clothing lies: at least min (pushed out), at most max (pulled in below the
+// shoulders; 0: no limit), so the layers stack (base layer, shirt or sweater, trousers, vest, coat) without crossing.
+[Serializable] class Layer { public string[] items; public float min; public float max; }
+
 [Serializable] class HideRule { public string[] under; public string[] words; public string[] regions; }
 
 [Serializable] class ClothesList {
@@ -64,6 +68,12 @@ namespace TLDCoop {
     public string[] wrap_items; public float wrap_clearance = 0.012f;
     // Hats kept off the head and its hair the same way (the fringe never through a beanie).
     public string[] hat_wrap_items; public float hat_wrap_clearance = 0.006f;
+    public Layer[] layers;
+    // One sock in the catalog: made a pair (mirrored to the other foot, its bones swapped Left/Right).
+    public string[] mirror_items;
+    // The base every character wears under everything (their own clothes hidden): these items, and a long-sleeved top
+    // made from base_top_from in undyed grey (TLDCoop_BaseTop). base_hide: the body's regions never drawn.
+    public string[] base_items; public string base_top_from; public string[] base_hide;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -215,15 +225,28 @@ public static class BuildClothes {
                         if (list.beanie_grow_characters[i] == character) grow = list.beanie_grow[i];
                 var cutRegions = (list.hide_rules ?? new HideRule[0]).Where(r => r.under != null && r.regions != null && r.under.Contains(item))
                     .SelectMany(r => r.regions).Distinct().ToArray();
-                float wrap = list.wrap_items != null && list.wrap_items.Contains(item) ? list.wrap_clearance : -1;
+                float wrap = list.wrap_items != null && list.wrap_items.Contains(item) ? list.wrap_clearance : -1, wrapMax = 0;
+                var layer = list.layers?.FirstOrDefault(x => x.items != null && x.items.Contains(item));
+                if (layer != null) { wrap = layer.min; wrapMax = layer.max; }
                 bool onHead = list.hat_wrap_items != null && list.hat_wrap_items.Contains(item);
-                if (onHead) wrap = list.hat_wrap_clearance;
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead);
+                if (onHead) { wrap = list.hat_wrap_clearance; wrapMax = 0; }
+                bool mirror = list.mirror_items != null && list.mirror_items.Contains(item);
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions, wrap, onHead, wrapMax, mirror, false);
                 triangles += result;
                 meshes++;
             }
         }
-        Skins.Clear();
+        // The base layer's top: base_top_from again, in undyed grey, as TLDCoop_BaseTop.
+        if (!string.IsNullOrEmpty(list.base_top_from))
+            foreach (string character in Characters(list, chars).OrderBy(s => s)) {
+                string file = Path.Combine(chars, character, list.base_top_from + ".gltf");
+                if (!File.Exists(file)) continue;
+                var layer = list.layers?.FirstOrDefault(x => x.items != null && x.items.Contains("TLDCoop_BaseTop"));
+                triangles += Convert(file, character, "TLDCoop_BaseTop", materials, opaque, twoSided, 0, 0, -1, float.NaN, false, false,
+                                     null, 0, new string[0], layer != null ? layer.min : 0.003f, false, layer != null ? layer.max : 0, false, true);
+                meshes++;
+            }
+        Skins.Clear();  // after the base top too
         foreach (var b in OcclusionBodies.Values) if (b) UnityEngine.Object.DestroyImmediate(b);
         OcclusionBodies.Clear();
         // What the mod hides under which items: one TextAsset for the whole pack.
@@ -257,7 +280,7 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead = false) {
+                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions, float wrap, bool onHead, float wrapMax, bool mirror, bool grey) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -301,8 +324,9 @@ public static class BuildClothes {
                 tris[i + 2] = baseIndex + (int)I[i + 1];
             }
             submeshes.Add(tris);
-            matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided));
+            matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided, grey));
         }
+        if (mirror) MirrorPair(g, skin, verts, normals, uvs, weights, submeshes, $"{character}/{item}");
 
         if (reshape != null) DoReshape(g, bin, skin, reshape, verts, normals, weights, $"{character}/{item}");
         if (beanie) Beanie(g, bin, skin, file, item, grow, verts, normals, uvs, weights, submeshes, matNames, twoSided);
@@ -319,7 +343,10 @@ public static class BuildClothes {
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
         if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 
-        if (wrap > 0) Wrap(verts, submeshes, character, wrap, $"{character}/{item}", onHead);
+        if (wrap > 0) {
+            float neckY = JointPos(g, bin, skin, "Neck_jnt").y;
+            Wrap(verts, submeshes, character, wrap, $"{character}/{item}", onHead, wrapMax, float.IsNaN(neckY) ? 1.5f : neckY - 0.06f);
+        }
         var mesh = new Mesh { name = $"{character}_{item}" };
         if (verts.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
         mesh.SetVertices(verts);
@@ -516,7 +543,10 @@ public static class BuildClothes {
             if (!r.sharedMesh || r.sharedMesh.name != meshName) continue;
             var own = r.sharedMaterials;
             r.sharedMesh = mesh;
-            r.sharedMaterials = parts.Select(p => own[Math.Min(int.Parse(p.Split(':')[0]), own.Length - 1)]).ToArray();
+            var baseHide = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json")).base_hide ?? new string[0];
+            var hiddenMat = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
+            r.sharedMaterials = parts.Select(p => baseHide.Contains(p.Split(':')[1]) ? hiddenMat
+                                                  : own[Math.Min(int.Parse(p.Split(':')[0]), own.Length - 1)]).ToArray();
             CutParts[body.GetInstanceID()] = parts;
             Debug.Log($"[Clothes] preview {character}: on the cut body ({parts.Length} parts)");
             return;
@@ -602,6 +632,62 @@ public static class BuildClothes {
         Debug.Log($"[Clothes] {item}: a fitted beanie (colour {colour}) instead of the catalog's folded model");
     }
 
+    // An undyed grey copy of a colour texture (a heather grey from its brightness): Textures/<name>_grey.png.
+    static string GreyCopy(string texName) {
+        string src = $"{OutDir}/Textures/{texName}.png", name = texName + "_grey", dst = $"{OutDir}/Textures/{name}.png";
+        if (AssetDatabase.LoadAssetAtPath<Texture2D>(dst)) return name;
+        var t = new Texture2D(2, 2);
+        if (!File.Exists(src) || !t.LoadImage(File.ReadAllBytes(src))) { UnityEngine.Object.DestroyImmediate(t); return texName; }
+        var px = t.GetPixels32();
+        for (int i = 0; i < px.Length; i++) {
+            float lum = (0.3f * px[i].r + 0.59f * px[i].g + 0.11f * px[i].b) / 255f;
+            byte v = (byte)Mathf.Clamp(255 * (0.38f + 0.5f * lum), 0, 255);
+            px[i] = new Color32(v, v, (byte)Mathf.Min(255, v + 4), 255);
+        }
+        t.SetPixels32(px);
+        File.WriteAllBytes(dst, t.EncodeToPNG());
+        UnityEngine.Object.DestroyImmediate(t);
+        AssetDatabase.ImportAsset(dst);
+        if (AssetImporter.GetAtPath(dst) is TextureImporter imp) { imp.maxTextureSize = 1024; imp.SaveAndReimport(); }
+        return name;
+    }
+
+    // One sock made a pair: every vertex copied to the other side (x mirrored, the winding turned), skinned to the
+    // matching bones (Left_ for Right_).
+    static void MirrorPair(Gltf g, GSkin skin, List<Vector3> verts, List<Vector3> normals, List<Vector2> uvs,
+                           List<BoneWeight> weights, List<int[]> submeshes, string what) {
+        var names = skin.joints.Select(j => g.nodes[j].name).ToArray();
+        int Other(int b) {
+            string n = names[b], o = n.StartsWith("Left") ? "Right" + n.Substring(4) : n.StartsWith("Right") ? "Left" + n.Substring(5) : n;
+            int k = Array.IndexOf(names, o);
+            return k >= 0 ? k : b;
+        }
+        int count = verts.Count;
+        float side = verts.Average(v => v.x);
+        for (int i = 0; i < count; i++) {
+            verts.Add(new Vector3(-verts[i].x, verts[i].y, verts[i].z));
+            normals.Add(new Vector3(-normals[i].x, normals[i].y, normals[i].z));
+            uvs.Add(uvs[i]);
+            var w = weights[i];
+            weights.Add(new BoneWeight {
+                boneIndex0 = Other(w.boneIndex0), boneIndex1 = Other(w.boneIndex1), boneIndex2 = Other(w.boneIndex2), boneIndex3 = Other(w.boneIndex3),
+                weight0 = w.weight0, weight1 = w.weight1, weight2 = w.weight2, weight3 = w.weight3,
+            });
+        }
+        for (int s = 0; s < submeshes.Count; s++) {
+            var t = submeshes[s];
+            var both = new int[t.Length * 2];
+            Array.Copy(t, both, t.Length);
+            for (int i = 0; i + 2 < t.Length; i += 3) {
+                both[t.Length + i] = t[i] + count;
+                both[t.Length + i + 1] = t[i + 2] + count;
+                both[t.Length + i + 2] = t[i + 1] + count;
+            }
+            submeshes[s] = both;
+        }
+        Debug.Log($"[Clothes] {what}: one piece (at x {side:F2}) made a pair");
+    }
+
     // A tangent-space normal map from a colour texture: its brightness taken as height (dark seams and folds lie lower),
     // softened, sloped into normals. Cached: made once per texture.
     static Texture2D NormalFromColour(string colourPath, string normalPath, float strength = 2.5f) {
@@ -667,7 +753,7 @@ public static class BuildClothes {
             var use = new HashSet<int>();
             for (int i = 0; i < parts.Length && i < mesh.subMeshCount; i++) {
                 string region = parts[i].Split(':')[1];
-                if (head ? region != "head" : region == "head" || region == "hands" || region == "feet") continue;
+                if (head ? region != "head" : region == "head") continue;
                 foreach (int v in mesh.GetTriangles(i)) use.Add(v);
             }
             var all = mesh.vertices; var normals = mesh.normals;
@@ -683,15 +769,17 @@ public static class BuildClothes {
 
     // Every vertex pushed out to at least `clearance` above the nearest skin (along the skin's normal there), the pushes
     // then smoothed over the piece's own triangles so it bends round the body instead of denting.
-    static void Wrap(List<Vector3> verts, List<int[]> submeshes, string character, float clearance, string what, bool onHead) {
+    static void Wrap(List<Vector3> verts, List<int[]> submeshes, string character, float clearance, string what, bool onHead,
+                     float most, float pullBelow) {
         var skin = SkinOf(character, onHead);
         if (skin == null) return;
         var push = new Vector3[verts.Count];
-        int moved = 0;
+        var pull = new Vector3[verts.Count];
+        int moved = 0, pulled = 0, reachCells = most > 0 ? 2 : 1;
         for (int i = 0; i < verts.Count; i++) {
             var c = Cell(verts[i]);
             int best = -1; float bestD = float.MaxValue;
-            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -reachCells; dx <= reachCells; dx++) for (int dy = -reachCells; dy <= reachCells; dy++) for (int dz = -reachCells; dz <= reachCells; dz++)
                 if (skin.grid.TryGetValue(new Vector3Int(c.x + dx, c.y + dy, c.z + dz), out var l))
                     foreach (int k in l) {
                         float d = (skin.p[k] - verts[i]).sqrMagnitude;
@@ -700,6 +788,7 @@ public static class BuildClothes {
             if (best < 0) continue;
             float above = Vector3.Dot(verts[i] - skin.p[best], skin.n[best]);
             if (above < clearance) { push[i] = skin.n[best] * (clearance - above); moved++; }
+            else if (most > 0 && above > most && verts[i].y < pullBelow) { pull[i] = -skin.n[best] * (above - most); pulled++; }
         }
         // Layers move together: a coat's lining lies a few millimetres inside its shell, and pushing only the lining would
         // send it through the shell. Each vertex takes the biggest push within 2.5 cm (pointing its way).
@@ -747,10 +836,27 @@ public static class BuildClothes {
             }
             push = next;
         }
-        float most = 0, total = 0;
-        for (int i = 0; i < verts.Count; i++) { verts[i] += push[i]; most = Mathf.Max(most, push[i].magnitude); total += push[i].magnitude; }
+        // Pulled in (too loose under a layer that goes over it): the pulls smoothed over the piece's edges, two passes.
+        if (pulled > 0)
+            for (int pass = 0; pass < 2; pass++) {
+                var next = new Vector3[pull.Length];
+                for (int i = 0; i < pull.Length; i++) {
+                    if (neighbours[i] == null) { next[i] = pull[i]; continue; }
+                    var acc = pull[i];
+                    foreach (int k in neighbours[i]) acc += pull[k];
+                    next[i] = acc / (neighbours[i].Count + 1);
+                }
+                pull = next;
+            }
+        float farthest = 0, total = 0;
+        for (int i = 0; i < verts.Count; i++) {
+            verts[i] += push[i] + pull[i];
+            farthest = Mathf.Max(farthest, push[i].magnitude);
+            total += push[i].magnitude;
+        }
         Debug.Log($"[Clothes] QA {what}: kept {clearance * 100:F1} cm off the body; {moved} of {verts.Count} vertices were too close " +
-                  $"or under the skin, pushed out by {total / Mathf.Max(1, verts.Count) * 100:F1} cm on average, {most * 100:F1} cm at most");
+                  $"or under the skin, pushed out by {total / Mathf.Max(1, verts.Count) * 100:F1} cm on average, {farthest * 100:F1} cm at most; " +
+                  $"{pulled} pulled in to {most * 100:F1} cm");
     }
 
     // Ambient occlusion per vertex, into the vertex colour: rays over the half of the sky its normal faces, blocked by
@@ -808,7 +914,8 @@ public static class BuildClothes {
         return s * m * s;
     }
 
-    static string MaterialFor(Gltf g, string file, int index, Dictionary<string, Material> materials, Shader opaque, Shader twoSided) {
+    static string MaterialFor(Gltf g, string file, int index, Dictionary<string, Material> materials, Shader opaque, Shader twoSided,
+                              bool grey = false) {
         if (index < 0 || g.materials == null || index >= g.materials.Length) return "";
         var gm = g.materials[index];
         string texName = "";
@@ -817,11 +924,12 @@ public static class BuildClothes {
             var img = g.images[g.textures[pbr.baseColorTexture.index].source];
             texName = Path.GetFileNameWithoutExtension(Uri.UnescapeDataString(img.uri));
         }
-        string name = (gm.name ?? "mat") + (gm.doubleSided ? "_2s" : "") + "_" + texName.GetHashCode().ToString("x8");
+        string name = (gm.name ?? "mat") + (gm.doubleSided ? "_2s" : "") + "_" + texName.GetHashCode().ToString("x8") + (grey ? "_grey" : "");
         foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
         if (materials.ContainsKey(name)) return name;
         var mat = new Material(gm.doubleSided ? twoSided : opaque) { name = name };
         if (texName.Length > 0) {
+            if (grey) texName = GreyCopy(texName);
             var tex = AssetDatabase.LoadAssetAtPath<Texture2D>($"{OutDir}/Textures/{texName}.png");
             if (tex) mat.SetTexture("_MainTex", tex);
             var normal = NormalFromColour($"{OutDir}/Textures/{texName}.png", $"{OutDir}/Textures/{texName}_N.png");
@@ -964,7 +1072,12 @@ public static class BuildClothes {
                                       string.Join("/", r.sharedMaterials.Select(x => x ? x.name : "-")));
                         }
                     var dressed = new List<string>();
-                    foreach (string item in outfits[o])
+                    // the base layer under every outfit (TLDCoop_BaseTop first: the long johns' waist goes over it)
+                    // (a base sock or long johns left off when the outfit has its own)
+                    bool Same(string sx, string sy) => (list.mirror_items != null && list.mirror_items.Contains(sx) && list.mirror_items.Contains(sy)) ||
+                                                       (sx.StartsWith("GEAR_LongUnderwear") && sy.StartsWith("GEAR_LongUnderwear"));
+                    var under = (list.base_items ?? new string[0]).Where(bi => !outfits[o].Any(ox => Same(ox, bi)));
+                    foreach (string item in new[] { "TLDCoop_BaseTop" }.Concat(under).Concat(outfits[o]))
                         if (Dress(body, character, item)) dressed.Add(item);
                     var headPos = body.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == "Head_jnt");
                     float headY = headPos ? headPos.position.y + 0.08f : 1.65f;
