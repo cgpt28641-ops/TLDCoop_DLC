@@ -1263,24 +1263,31 @@ public static class BuildClothes {
             float half = (P(i => shoeP[i].x, 0.97f) - P(i => shoeP[i].x, 0.03f)) / 2 - 0.006f;
             // the ankle on the shin's line: the middle of the shoe's opening (its top 3 cm), not behind it
             var collarZ = foot.Where(i => shoeP[i].y > y1 - 0.03f).Select(i => shoeP[i].z).DefaultIfEmpty(heel + 0.05f);
-            float ankleZ = Mathf.Max(heel + 0.035f, (collarZ.Min() + collarZ.Max()) / 2), soleY = y0 + 0.035f, top = y1 + 0.05f, bend = 0.045f;
+            float ankleZ = Mathf.Max(heel + 0.035f, (collarZ.Min() + collarZ.Max()) / 2);
+            // better: the middle of the long johns' leg just under the sock's top (the shoe's opening sits further back)
+            var legPts = under.Where(q => Mathf.Sign(q.x) == side && q.y > y1 && q.y < y1 + 0.08f && Mathf.Abs(q.x - foot.Average(i => shoeP[i].x)) < 0.09f).ToList();
+            if (legPts.Count > 8) {
+                float lz = (legPts.Min(q => q.z) + legPts.Max(q => q.z)) / 2;
+                ankleZ = Mathf.Clamp(lz, heel + 0.035f, heel + 0.14f);
+            }
+            float soleY = y0 + 0.035f, top = y1 + 0.05f, bend = 0.045f;
             // the centre line: down the ankle, a quarter circle round the heel, forward to the toe
             var path = new List<(Vector3 p, Vector3 t, float a, float b)>();
             for (int k = 0; k <= 8; k++) {
                 float y = Mathf.Lerp(top, soleY + bend, k / 8f);
-                float r = Mathf.Lerp(0.053f, 0.044f, k / 8f);
-                var ring = new Vector3(cx, y, ankleZ - 0.004f * (1 - k / 8f));
+                float r = Mathf.Lerp(0.057f, 0.045f, k / 8f);
+                var ring = new Vector3(cx, y, ankleZ - 0.03f * (k / 8f) * (k / 8f));  // the heel sits behind the shin
                 float ra = r, rb = r;
                 path.Add((ring, Vector3.down, ra, rb));
             }
             for (int k = 1; k <= 6; k++) {
                 float an = k / 6f * Mathf.PI / 2;
-                var p = new Vector3(cx, soleY + bend - Mathf.Sin(an) * bend, ankleZ + (1 - Mathf.Cos(an)) * bend);
+                var p = new Vector3(cx, soleY + bend - Mathf.Sin(an) * bend, ankleZ - 0.03f + (1 - Mathf.Cos(an)) * bend);
                 var t = new Vector3(0, -Mathf.Cos(an), Mathf.Sin(an));
                 float u = k / 6f;
                 path.Add((p, t, Mathf.Lerp(0.044f, half, u), Mathf.Lerp(0.044f, 0.034f, u)));
             }
-            float start = ankleZ + bend, end = toe - 0.012f;
+            float start = ankleZ - 0.03f + bend, end = toe - 0.012f;
             for (int k = 1; k <= 10; k++) {
                 float u = k / 10f, z = Mathf.Lerp(start, end, u);
                 float shrink = u < 0.7f ? 1 : Mathf.Sqrt(Mathf.Max(0.05f, 1 - Mathf.Pow((u - 0.7f) / 0.3f, 2)));  // the round toe
