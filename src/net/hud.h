@@ -7,7 +7,9 @@
 // units, y up); indoors (no map) the radar uses the world's x and z instead.
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <string>
 
@@ -159,6 +161,57 @@ inline V2 yaw_forward(float yaw_deg) {
 inline bool chart_here(bool charted_before, V3 last, V3 now, float step_m) {
     if (!charted_before) return true;
     return std::hypot(now.x - last.x, now.z - last.z) >= step_m;
+}
+
+// --- players' colours (TLDCoop_DLC) -------------------------------------------------------------------------------
+
+struct Rgb {
+    float r = 0, g = 0, b = 0;
+};
+
+// Each player's colour on the radar, TLD's map and over their head, by their player number (the same in every game:
+// the host is 0), muted to sit with TLD's charcoal-and-paper look.
+inline Rgb player_colour(int player) {
+    static const Rgb kPalette[] = {
+        {0.60f, 0.20f, 0.13f},  // rust red
+        {0.16f, 0.50f, 0.56f},  // teal
+        {0.78f, 0.58f, 0.16f},  // ochre
+        {0.48f, 0.32f, 0.64f},  // violet
+        {0.32f, 0.56f, 0.22f},  // moss green
+        {0.22f, 0.36f, 0.72f},  // blue
+        {0.75f, 0.36f, 0.52f},  // rose
+        {0.55f, 0.55f, 0.55f},  // grey
+    };
+    const int n = static_cast<int>(sizeof(kPalette) / sizeof(kPalette[0]));
+    return kPalette[((player % n) + n) % n];
+}
+
+// A colour as coop.ini gives it: a name (red, orange, yellow, green, teal, blue, purple, pink, white, grey, black) or
+// #RRGGBB / RRGGBB. False for anything else.
+inline bool parse_colour(std::string text, Rgb& out) {
+    std::string t;
+    for (char c : text)
+        if (!std::isspace(static_cast<unsigned char>(c))) t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    struct Named {
+        const char* name;
+        Rgb rgb;
+    };
+    static const Named kNamed[] = {
+        {"red", {0.80f, 0.18f, 0.14f}},  {"orange", {0.90f, 0.48f, 0.12f}}, {"yellow", {0.92f, 0.80f, 0.20f}},
+        {"green", {0.30f, 0.66f, 0.24f}}, {"teal", {0.16f, 0.58f, 0.62f}},   {"blue", {0.22f, 0.42f, 0.86f}},
+        {"purple", {0.56f, 0.32f, 0.76f}}, {"pink", {0.90f, 0.45f, 0.65f}},  {"white", {0.95f, 0.95f, 0.95f}},
+        {"grey", {0.55f, 0.55f, 0.55f}},  {"gray", {0.55f, 0.55f, 0.55f}},  {"black", {0.08f, 0.08f, 0.08f}},
+    };
+    for (const Named& n : kNamed)
+        if (t == n.name) {
+            out = n.rgb;
+            return true;
+        }
+    if (!t.empty() && t[0] == '#') t.erase(0, 1);
+    if (t.size() != 6 || t.find_first_not_of("0123456789abcdef") != std::string::npos) return false;
+    const unsigned long v = std::strtoul(t.c_str(), nullptr, 16);
+    out = {((v >> 16) & 0xFF) / 255.0f, ((v >> 8) & 0xFF) / 255.0f, (v & 0xFF) / 255.0f};
+    return true;
 }
 
 }  // namespace net::hud

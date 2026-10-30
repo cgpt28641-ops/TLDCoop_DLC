@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace config {
 
@@ -24,6 +26,8 @@ struct Settings {
     bool hud_names = true;             // friends' names over their heads, an arrow at the edge for those out of sight
     bool hud_radar = true;             // the round map of the area around us, friends on it
     bool hud_chart = true;             // our own map charts itself where we walk
+    // TLDCoop_DLC: [colors] a friend's colour by their name (else each player's own by their number)
+    std::vector<std::pair<std::string, std::string>> hud_colours;
     // [test] section, for automated runs only (no menu clicks):
     std::string test_resume;           // load this save slot (e.g. sandbox5) as soon as the main menu is up
     bool test_nosave = false;          // never save: a second copy of the game playing the same save

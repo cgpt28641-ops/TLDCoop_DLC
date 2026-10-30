@@ -109,6 +109,17 @@ int main() {
         expect("30 m on: chart", chart_here(true, {0, 0, 0}, {18, 0, 24}, 25));
         expect("climbing in place: nothing new", !chart_here(true, {0, 0, 0}, {1, 40, 1}, 25));
     }
+    {  // Players' colours.
+        Rgb c;
+        expect("a named colour", parse_colour(" Blue ", c) && near(c.b, 0.86f, 1e-4f));
+        expect("a hex colour", parse_colour("#FF8000", c) && near(c.r, 1, 1e-4f) && near(c.g, 128 / 255.0f, 1e-4f) &&
+                                   near(c.b, 0, 1e-4f));
+        expect("hex without #", parse_colour("00ff00", c) && near(c.g, 1, 1e-4f));
+        expect("nonsense isn't a colour", !parse_colour("blurple", c) && !parse_colour("#12345", c) && !parse_colour("", c));
+        const Rgb host = player_colour(0), friend1 = player_colour(1);
+        expect("the host and the first friend differ", !(near(host.r, friend1.r, 1e-3f) && near(host.g, friend1.g, 1e-3f)));
+        expect("the palette wraps round", near(player_colour(8).r, host.r, 1e-6f) && near(player_colour(-8).r, host.r, 1e-6f));
+    }
     std::printf("%s\n", g_failed ? "SOME CHECKS FAILED" : "ALL CHECKS PASSED");
     return g_failed ? 1 : 0;
 }

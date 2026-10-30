@@ -98,6 +98,11 @@ struct Api {
     const MethodInfo* widget_width = nullptr;       // UIWidget.get_width()
     const MethodInfo* widget_height = nullptr;
     const MethodInfo* get_local_scale = nullptr;    // Transform.get_localScale()
+    // TLDCoop_DLC: where the region map's texture really is in MapElements' space
+    const MethodInfo* get_world_position = nullptr;  // Transform.get_position()
+    const MethodInfo* inverse_point = nullptr;       // Transform.InverseTransformPoint(Vector3)
+    const MethodInfo* lossy_scale = nullptr;         // Transform.get_lossyScale()
+    const MethodInfo* pivot_offset = nullptr;        // UIWidget.get_pivotOffset(): (0, 0) bottom left, (0.5, 0.5) centre
     const MethodInfo* pixel_adjustment = nullptr;   // static UIRoot.GetPixelSizeAdjustment(GameObject): UI units a pixel
     // the radar
     Il2CppObject* texture_type = nullptr;           // typeof(UITexture)
@@ -483,7 +488,7 @@ void show_tag(uint8_t player, const avatar::Seen& who, const game::PlayerState& 
     set_active(go_of(arrow), !at.on_screen);
     set_active(go_of(live(t.name)), t.name_fade > 0);
     set_active(go_of(live(t.distance)), t.name_fade > 0);
-    Color c = g_text_color;
+    Color c = colour_for(player, who.name);  // TLDCoop_DLC: their colour (the name stays in TLD's text colour)
     if (at.on_screen) {
         const float near_far = hud::tag_alpha(metres);  // out of the way up close, fainter far off
         c.a = kDotAlpha * near_far;
@@ -769,6 +774,23 @@ const Color kUnchartedColor{0.13f, 0.12f, 0.11f, 0.85f};  // TLD's whiteSquare u
 const Color kRimColor{0.06f, 0.055f, 0.05f, 0.95f};       // TLD's outerGlow_circle round it: a charcoal smudge
 const Color kFriendColor{0.6f, 0.2f, 0.13f, 1};
 
+// TLDCoop_DLC: each player's colour (net::hud::player_colour by their number), or the one coop.ini [colors] gives
+// their name.
+std::vector<std::pair<std::string, hud::Rgb>> g_colours;
+
+std::string lower(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+Color colour_for(uint8_t player, const std::string& name) {
+    const std::string key = lower(name);
+    for (const auto& [n, c] : g_colours)
+        if (!key.empty() && n == key) return {c.r, c.g, c.b, 1};
+    const hud::Rgb c = hud::player_colour(player);
+    return {c.r, c.g, c.b, 1};
+}
+
 struct RadarBlip {
     uintptr_t dot = 0, arrow = 0;
     std::string state;  // for the log
@@ -861,6 +883,29 @@ bool make_fog(Il2CppObject* map, const std::string& region) {
     if (il2::invoke_value(api.widget_height, texture, h) && h > 0) g_fog.height = static_cast<float>(h);
     il2::invoke_value(api.get_local_position, go_transform(original_go), g_fog.at);
     il2::invoke_value(api.get_local_scale, go_transform(original_go), g_fog.scale);
+    // TLDCoop_DLC: its centre and scale in MapElements' own space, whatever lies between them (a parent of its own,
+    // its pivot): with its local position alone the map under the radar could sit off from where the arrows are.
+    Il2CppObject* elements = get<Il2CppObject*>(map, api.map_elements);
+    Vector3 world{}, local{}, tex_scale{}, el_scale{};
+    Vector2 pivot{0.5f, 0.5f};
+    void* point_args[] = {&world};
+    if (alive(elements) && api.get_world_position && api.inverse_point && api.lossy_scale &&
+        il2::invoke_value(api.get_world_position, go_transform(original_go), world) &&
+        il2::invoke_value(api.inverse_point, elements, local, point_args) &&
+        il2::invoke_value(api.lossy_scale, go_transform(original_go), tex_scale) &&
+        il2::invoke_value(api.lossy_scale, elements, el_scale) && std::fabs(el_scale.x) > 1e-6f &&
+        std::fabs(el_scale.y) > 1e-6f) {
+        if (api.pivot_offset) il2::invoke_value(api.pivot_offset, texture, pivot);
+        const Vector3 scale{tex_scale.x / el_scale.x, tex_scale.y / el_scale.y, 1};
+        const Vector3 centre{local.x + (0.5f - pivot.x) * g_fog.width * scale.x,
+                             local.y + (0.5f - pivot.y) * g_fog.height * scale.y, 0};
+        logx::info("hud: radar: the region map's centre in the map's space (%.1f, %.1f), scale %.3f x %.3f (its local "
+                   "position said (%.1f, %.1f), scale %.3f x %.3f; pivot %.2f, %.2f)",
+                   centre.x, centre.y, scale.x, scale.y, g_fog.at.x, g_fog.at.y, g_fog.scale.x, g_fog.scale.y, pivot.x,
+                   pivot.y);
+        g_fog.at = centre;
+        g_fog.scale = scale;
+    }
     g_fog.scene_radius = scene_radius(map, region);
     g_fog.region = region;
     set_active(copy, true);
@@ -1071,6 +1116,9 @@ float show_radar(const std::vector<avatar::Seen>& all, const game::PlayerState& 
         const hud::Blip at =
             hud::radar_blip({there.x - here.x, there.y - here.y}, forward, range, static_cast<float>(kRadarRadius));
         RadarBlip& b = blip_for(who.player);
+        const Color colour = colour_for(who.player, who.name);
+        set_color(live(b.dot), colour);
+        set_color(live(b.arrow), colour);
         const float metres = at.distance / (per_m > 0 ? per_m : 1.0f);
         if (at.inside) {
             Il2CppObject* dot = live(b.dot);
@@ -1127,12 +1175,35 @@ void hide_marks() {
     }
 }
 
+// TLDCoop_DLC: TLD's open map draws what's charted when it opens; what friends (and we) chart while it's open is
+// drawn on it as it comes (TLD's FogOfWar.ProcessList again, as opening it does).
+int g_open_map_spots = -1;  // charted spots of our region the open map shows (-1: closed)
+
+void refresh_open_map(Il2CppObject* map, const std::string& shown) {
+    const Region& region = region_now();
+    if (shown.empty() || !region.mappable || region.name != shown || !api.fog_process) return;
+    Il2CppObject* fog = region_fog(map);
+    Il2CppObject* spots = alive(fog) ? region_spots(map) : nullptr;
+    if (!spots) return;
+    const int count = list_size(spots);
+    if (g_open_map_spots >= 0 && count != g_open_map_spots) {
+        Il2CppObject* vistas = dict_get(get<Il2CppObject*>(map, api.map_vistas), region_key());
+        float scene = scene_radius(map, region.name), map_radius = 900;  // as Panel_Map.LoadMapElementsForScene
+        void* args[] = {spots, vistas, &scene, &map_radius};
+        il2::invoke(api.fog_process, fog, args);
+        logx::info("hud: the open map shows %d charted spot(s) now (%+d)", count, count - g_open_map_spots);
+    }
+    g_open_map_spots = count;
+}
+
 void show_map_marks(const std::vector<avatar::Seen>& all) {
     Il2CppObject* map = g_map_ready ? live(g_map) : nullptr;  // loaded already (it is, once the map has opened)
     if (!map_open(map)) {
         hide_marks();
+        g_open_map_spots = -1;
         return;
     }
+    refresh_open_map(map, shown_region(map));
     Il2CppObject* elements = get<Il2CppObject*>(map, api.map_elements);
     Il2CppObject* player_icon = get<Il2CppObject*>(map, api.map_player_icon);
     void* sprite_args[] = {api.sprite_type};
@@ -1168,6 +1239,7 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
         }
         Il2CppObject* icon = live(m.icon);
         Il2CppObject* label = live(m.label);
+        set_color(icon, colour_for(who.player, who.name));
         Il2CppObject* key = reinterpret_cast<Il2CppObject*>(il2::il2cpp_string_new(shown.c_str()));
         const hud::V2 f = hud::yaw_forward(who.yaw);
         Vector3 at{who.x, who.y, who.z}, ahead{who.x + f.x * 10, who.y, who.z + f.y * 10}, mp{}, mp_ahead{};
@@ -1264,6 +1336,10 @@ bool init() {
     api.widget_width = il2::find_method(widget, "get_width", 0);
     api.widget_height = il2::find_method(widget, "get_height", 0);
     api.get_local_scale = il2::find_method(transform, "get_localScale", 0);
+    api.get_world_position = il2::find_method(transform, "get_position", 0);
+    api.inverse_point = il2::find_method_params(transform, "InverseTransformPoint", {"UnityEngine.Vector3"});
+    api.lossy_scale = il2::find_method(transform, "get_lossyScale", 0);
+    api.pivot_offset = il2::find_method(widget, "get_pivotOffset", 0);
     api.pixel_adjustment =
         il2::find_method_params(il2::find_class(kGame, "", "UIRoot"), "GetPixelSizeAdjustment", {"UnityEngine.GameObject"});
 
@@ -1350,6 +1426,18 @@ bool init() {
               api.ui_camera && api.hud_nonessential >= 0 && api.hud_label >= 0 && api.hud_label_back >= 0;
     if (!g_ready) logx::warn("hud: some of TLD's HUD parts weren't found; no names, radar or charting");
     return g_ready;
+}
+
+void set_colours(const std::vector<std::pair<std::string, std::string>>& by_name) {
+    g_colours.clear();
+    for (const auto& [name, text] : by_name) {
+        hud::Rgb c;
+        if (hud::parse_colour(text, c))
+            g_colours.emplace_back(lower(name), c);
+        else
+            logx::warn("hud: [colors] %s=%s isn't a colour (a name like blue, or #RRGGBB)", name.c_str(), text.c_str());
+    }
+    if (!g_colours.empty()) logx::info("hud: %zu friend colour(s) from coop.ini", g_colours.size());
 }
 
 void set_switches(bool names, bool radar, bool chart) {

@@ -1,4 +1,7 @@
 #pragma once
+#include <string>
+#include <utility>
+#include <vector>
 // Finding each other (milestone 12). Each part is the player's own and can be switched off ([hud] in coop.ini, the
 // co-op setup screen, dev `hud`):
 //   names - each friend's name over their head with how far they are, in TLD's hover text look on its HUD; out of
@@ -19,6 +22,9 @@ bool init();
 
 // The switches (coop.ini [hud], the co-op setup screen).
 void set_switches(bool names, bool radar, bool chart);
+
+// TLDCoop_DLC: coop.ini [colors]: a friend's colour by their name (else each player's own, net::hud::player_colour).
+void set_colours(const std::vector<std::pair<std::string, std::string>>& by_name);
 
 // Every frame: charting as we walk, friends on the map screen.
 void on_frame(const std::string& scene, bool in_game);

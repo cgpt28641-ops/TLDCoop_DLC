@@ -68,7 +68,13 @@ constexpr const char* kDefaultIni =
     "; chart = your map charts itself where you walk, as charcoal mapping does (your own map only)\n"
     "names=1\n"
     "radar=1\n"
-    "chart=1\n";
+    "chart=1\n"
+    "\n"
+    "[colors]\n"
+    "; Each player has a colour on the radar, on TLD's map and over their head (by their number: the same in every\n"
+    "; game). Your own pick for a friend, by their name: red, orange, yellow, green, teal, blue, purple, pink, white,\n"
+    "; grey, black or #RRGGBB, e.g.\n"
+    "; Shatsca=blue\n";
 
 std::string read(const std::filesystem::path& ini, const wchar_t* key, const std::string& fallback,
                  const wchar_t* section = L"net") {
@@ -134,6 +140,23 @@ Settings load() {
     s.hud_names = GetPrivateProfileIntW(L"hud", L"names", 1, ini.c_str()) != 0;
     s.hud_radar = GetPrivateProfileIntW(L"hud", L"radar", 1, ini.c_str()) != 0;
     s.hud_chart = GetPrivateProfileIntW(L"hud", L"chart", 1, ini.c_str()) != 0;
+    {  // TLDCoop_DLC: [colors] name=colour lines
+        std::wstring section(8192, L'\0');
+        const DWORD n = GetPrivateProfileSectionW(L"colors", section.data(), static_cast<DWORD>(section.size()), ini.c_str());
+        for (size_t i = 0; i < n && section[i];) {
+            const std::wstring line(section.c_str() + i);
+            i += line.size() + 1;
+            const size_t eq = line.find(L'=');
+            if (eq == std::wstring::npos || line[0] == L';') continue;
+            auto utf8 = [](const std::wstring& w) {
+                const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+                std::string out(static_cast<size_t>(len > 0 ? len - 1 : 0), '\0');
+                if (len > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, out.data(), len, nullptr, nullptr);
+                return out;
+            };
+            s.hud_colours.emplace_back(utf8(line.substr(0, eq)), utf8(line.substr(eq + 1)));
+        }
+    }
     s.test_resume = read(ini, L"resume", "", L"test");
     s.test_nosave = GetPrivateProfileIntW(L"test", L"nosave", 0, ini.c_str()) != 0;
     s.test_god = GetPrivateProfileIntW(L"test", L"god", 0, ini.c_str()) != 0;

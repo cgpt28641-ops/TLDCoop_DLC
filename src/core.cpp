@@ -148,6 +148,7 @@ void coop_off(const char* why) {
 // Start, restart or stop co-op to match the settings. Used at startup and by the co-op menu.
 void apply_net_settings(const config::Settings& s, bool startup) {
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
+    coop_hud::set_colours(s.hud_colours);
     if (s.mode == "off") return coop_off("solo");
     if (s.mode != "host" && s.mode != "join") {
         logx::warn("net: unknown mode '%s' (use off, host or join)", s.mode.c_str());
@@ -192,6 +193,7 @@ void start_networking() {
     config::Settings s = config::load();
     if (!s.autostart) {
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
+        coop_hud::set_colours(s.hud_colours);
         logx::info("net: offline until CO-OP is picked (NEW, RESUME or LOAD in the Survival menu)");
         return;
     }
