@@ -1,0 +1,3 @@
+Adaptive Arsenal by Deaadman — https://github.com/Deaadman/adaptive-arsenal (GPL-3.0, see LICENSE).
+TLDCoop_DLC carries a C++ port of it (src/adaptive_arsenal.cpp, src/arsenal_math.h), built in with the
+author's permission (given to Karol, 2026-10-30). No MelonLoader and no files of the mod are needed.

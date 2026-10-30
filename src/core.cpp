@@ -10,6 +10,7 @@
 
 #include "ambient_lights.h"
 #include "coop_features.h"
+#include "adaptive_arsenal.h"
 #include "custom_pictures.h"
 #include "dynamic_trees.h"
 #include "avatar.h"
@@ -164,6 +165,7 @@ void coop_off(const char* why) {
 void apply_net_settings(const config::Settings& s, bool startup) {
     ambient_lights::set_settings(s);
     dynamic_trees::set_settings(s);
+    adaptive_arsenal::set_settings(s);
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
     coop_hud::set_colours(s.hud_colours);
     coop_emotes::set_keys(s.emote_keys);
@@ -213,6 +215,7 @@ void start_networking() {
     if (!s.autostart) {
         ambient_lights::set_settings(s);
         dynamic_trees::set_settings(s);
+        adaptive_arsenal::set_settings(s);
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
         coop_hud::set_colours(s.hud_colours);
         coop_emotes::set_keys(s.emote_keys);
@@ -509,6 +512,7 @@ void on_frame() {
     ambient_lights::on_frame(scene, in_game);
     dynamic_trees::on_frame(scene, in_game);
     custom_pictures::on_frame(scene, in_game);
+    adaptive_arsenal::on_frame(scene, in_game);
     coop_backup::on_frame(game::active_scene(), g_net_enabled);
     world_join::on_frame(scene, in_game);
     coop_death::on_frame(scene, in_game);
@@ -637,6 +641,7 @@ void on_runtime_ready() {
     ambient_lights::init();
     dynamic_trees::init();
     custom_pictures::init();
+    adaptive_arsenal::init();
     world_join::init();
     coop_death::init();
     coop_lapse::init();

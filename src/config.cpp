@@ -98,6 +98,11 @@ constexpr const char* kDefaultIni =
     "; in snowy, windy weather and goes in clear, windy weather. In co-op the HOST decides for everyone (MODS).\n"
     "enabled=1\n"
     "\n"
+    "[arsenal]\n"
+    "; Adaptive Arsenal (built in, by Deaadman, with his permission): rifle and revolver bullets fly, with drop,\n"
+    "; spread and damage drop-off; the revolver can be aimed on the move. In co-op the HOST decides (MODS).\n"
+    "enabled=1\n"
+    "\n"
     "[emotes]\n"
     "; Gestures the others see you make (a line on your HUD says which). Keys: F1..F12, A..Z, 0..9, NUM0..NUM9, off\n"
     "wave=F5\n"
@@ -163,6 +168,7 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
+    WritePrivateProfileStringW(L"arsenal", L"enabled", s.adaptive_arsenal ? L"1" : L"0", ini.c_str());
     logx::info("settings saved: mode=%s transport=%s code=%s join_code=%s name=%s body=%s", s.mode.c_str(),
                s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.name.c_str(), s.body.c_str());
 }
@@ -198,6 +204,7 @@ Settings load() {
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
+    s.adaptive_arsenal = GetPrivateProfileIntW(L"arsenal", L"enabled", 1, ini.c_str()) != 0;
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
         if (!t.empty()) v = static_cast<float>(atof(t.c_str()));

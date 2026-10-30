@@ -12,10 +12,15 @@
 
 #include <string>
 
+struct Il2CppObject;
+
 namespace wildlife_hits {
 
 bool init();
 void on_frame();
+
+// TLDCoop_DLC: TLD's own vp_Bullet.Start for this bullet, past our hook (Adaptive Arsenal's bullet where it lands).
+void start_bullet(Il2CppObject* bullet);
 
 // Test helpers (dev commands), client only: stand some metres from the nearest host animal; aim at one of its hit
 // colliders (e.g. capsule_chest) and fire the weapon in our hands through TLD's own vp_FPSShooter.Fire.

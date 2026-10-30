@@ -75,6 +75,11 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   pogodzie; sosny i cedry zmieniają się od zielonych do białych. To mod DynamicTrees (Fuar, The Illusion, Jods),
   wbudowany za zgodą autorów, **bez MelonLoadera** (tekstury w paczce: `TLDCoop\tldcoop_trees.bundle`). Włącza go
   **host** (MODS → DYNAMIC TREES), a drzewa znajomych mają śnieg hosta; w solo `coop.ini` `[trees] enabled=`.
+- **Adaptive Arsenal (wbudowane):** kule z karabinu i rewolweru lecą (każda broń ma swoją prędkość, kula opada i
+  zostawia smugę) zamiast trafiać od razu; celność zależy od umiejętności, kucania, ruchu i strzału z biodra, a
+  obrażenia maleją z odległością (pełne przy lufie, 10% na 500 m). Rewolwerem można celować w ruchu, a HUD pokazuje
+  wylatującą łuskę. To mod AdaptiveArsenal (Deaadman), wbudowany za zgodą autora, **bez MelonLoadera**. Włącza go
+  **host** (MODS → ADAPTIVE ARSENAL); w solo `coop.ini` `[arsenal] enabled=`. Usuń kopię z MelonLoadera, jeśli ją masz.
 - **Własne obrazy:** w ramkach na obrazy w grze mogą wisieć nasze obrazy (`assets/pictures`, wbudowane w DLL).
   Na razie jeden: obrazek nr 6 z atlasu `OBJ_PictureFrame_GM_A` (ten ze wspinaczem). Plik TLD zostaje bez zmian:
   mod kopiuje atlas w grze i wkleja nasz obrazek. Ikona przedmiotu w ekwipunku zostaje stara.
@@ -306,5 +311,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
   wbudowane w TLDCoop, a logika przeniesiona do C++.
 - Dynamic Trees: mod [DynamicTrees](https://github.com/Fuar11/DynamicTrees) autorstwa **Fuara**, **The Illusion** i
   **Jods** (tekstury); wbudowany za zgodą autorów (`third_party/dynamictrees/NOTICE.txt`).
+- Adaptive Arsenal: mod [AdaptiveArsenal](https://github.com/Deaadman/adaptive-arsenal) autorstwa **Deaadmana**
+  (GPL-3.0); przeniesiony do C++ i wbudowany za zgodą autora (`third_party/adaptive-arsenal/NOTICE.txt`).
 - **The Long Dark** i jego postacie należą do **Hinterland Studio**. To nieoficjalny mod fanowski, niewykonany ani
   niepopierany przez Hinterland. Do gry potrzebna jest własna kopia gry.

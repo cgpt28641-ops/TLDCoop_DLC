@@ -46,6 +46,9 @@ struct Settings {
     // TLDCoop_DLC: [trees] Dynamic Trees (built in, with its authors' permission): snow on the trees that builds up
     // in snowy, windy weather and goes in clear, windy weather. In co-op the host's choice and the host's snow.
     bool dynamic_trees = true;
+    // TLDCoop_DLC: [arsenal] Adaptive Arsenal (built in, with its author's permission): bullets that fly, accuracy,
+    // damage drop-off, the revolver aimed on the move. In co-op the host's choice.
+    bool adaptive_arsenal = true;
     // [test] section, for automated runs only (no menu clicks):
     std::string test_resume;           // load this save slot (e.g. sandbox5) as soon as the main menu is up
     bool test_nosave = false;          // never save: a second copy of the game playing the same save

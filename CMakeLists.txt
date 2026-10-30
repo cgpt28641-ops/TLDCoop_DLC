@@ -39,6 +39,7 @@ add_library(tldcoop SHARED
   src/coop_features.cpp
   src/dynamic_trees.cpp
   src/custom_pictures.cpp
+  src/adaptive_arsenal.cpp
   src/avatar.cpp
   src/config.cpp
   src/coop_death.cpp
@@ -127,3 +128,5 @@ add_executable(ambient_test tests/ambient_test.cpp)
 target_link_libraries(ambient_test PRIVATE tldnet)
 add_executable(trees_test tests/trees_test.cpp)
 target_link_libraries(trees_test PRIVATE tldnet)
+add_executable(arsenal_test tests/arsenal_test.cpp)
+target_link_libraries(arsenal_test PRIVATE tldnet)

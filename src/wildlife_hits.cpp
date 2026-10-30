@@ -8,6 +8,7 @@
 #include <limits>
 #include <vector>
 
+#include "adaptive_arsenal.h"
 #include "game_state.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
@@ -519,8 +520,11 @@ void round_fire_detour(Il2CppObject* self, const MethodInfo* method) {
 
 using BulletStartFn = void (*)(Il2CppObject* self, const MethodInfo* method);
 BulletStartFn g_bullet_start = nullptr;
+const MethodInfo* g_bullet_start_mi = nullptr;
 
 void bullet_start_detour(Il2CppObject* self, const MethodInfo* method) {
+    // TLDCoop_DLC: Adaptive Arsenal takes the player's bullet and flies it; it starts it here again where it lands.
+    if (!g_bullet_target && adaptive_arsenal::take_bullet(self)) return;
     if (g_bullet_target) {
         Il2CppObject* target = il2::il2cpp_gchandle_get_target(g_bullet_target);
         Il2CppObject* tf = il2::invoke(api.component_transform, self);
@@ -742,6 +746,10 @@ void run_shot() {
 
 }  // namespace
 
+void start_bullet(Il2CppObject* bullet) {
+    if (g_bullet_start && bullet) g_bullet_start(bullet, g_bullet_start_mi);
+}
+
 bool approach(float metres) {
     if (!is_client()) {
         logx::warn("dev: approach: only the friend's game has copies of the host's animals");
@@ -910,6 +918,7 @@ bool init() {
     const MethodInfo* round_damage = il2::find_method(round, "InflictDamage", 4);
     const MethodInfo* thrown = il2::find_method(base_ai, "MaybeFleeFromThrownItem", 2);
     const MethodInfo* bullet_start = il2::find_method(bullet, "Start", 0);
+    g_bullet_start_mi = bullet_start;
     g_ready = api.component_transform && api.component_get && api.go_transform && api.get_position && api.find_child &&
               api.to_world && api.to_local && api.object_name && api.collider_by_id && api.localized_damage_type &&
               api.damage_scale && api.bleed_minutes && api.roll_kill && api.body_part >= 0 && api.bullet_damage >= 0 &&
