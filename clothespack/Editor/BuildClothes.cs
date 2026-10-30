@@ -821,7 +821,7 @@ public static class BuildClothes {
         }
         // the turns: a tube along a ring (rx, rz) round the neck, its centre line dipping at the front
         const int along = 48, round = 10;
-        float tall = 0.024f * s, thick = 0.011f * s;  // a flat knitted band, not a round sausage
+        float tall = 0.024f * s, depth = 0.011f * s;  // a flat knitted band, not a round sausage
         for (int turn = 0; turn < 2; turn++) {
             int start = verts.Count;
             for (int i = 0; i <= along; i++) {
@@ -836,8 +836,8 @@ public static class BuildClothes {
                     float cr = Mathf.Cos(ph), sr = Mathf.Sin(ph);
                     // rounded-rectangle section: flat faces in and out, soft top and bottom edges
                     float fr = Mathf.Sign(cr) * Mathf.Pow(Mathf.Abs(cr), 0.45f), fu = Mathf.Sign(sr) * Mathf.Pow(Mathf.Abs(sr), 0.45f);
-                    var n = (radial * cr * tall + Vector3.up * sr * thick).normalized;
-                    verts.Add(centre + radial * fr * thick + Vector3.up * fu * tall);
+                    var n = (radial * cr * tall + Vector3.up * sr * depth).normalized;
+                    verts.Add(centre + radial * fr * depth + Vector3.up * fu * tall);
                     normals.Add(n);
                     uvs.Add(new Vector2(j / (float)round * 2f, i / (float)along * 10f));
                     weights.Add(new BoneWeight { boneIndex0 = ni, weight0 = 0.7f, boneIndex1 = si, weight1 = 0.3f });
