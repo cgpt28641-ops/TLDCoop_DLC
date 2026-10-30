@@ -194,6 +194,8 @@ struct Api {
     const MethodInfo* light_range = nullptr;         // Light.get_range()
     const MethodInfo* light_color = nullptr;         // Light.get_color()
     const MethodInfo* light_shadows = nullptr;       // Light.get_shadows()
+    const MethodInfo* light_get_mode = nullptr, *light_set_mode = nullptr;  // Light.get/set_renderMode
+    const MethodInfo* light_get_mask = nullptr;      // Light.get_cullingMask()
     Il2CppObject* light_type = nullptr;              // Light
 } api;
 
@@ -308,6 +310,7 @@ struct HeldCopy {
     float half = 0.1f;
     int lit_shown = -1;  // what is on: -1 not set yet, 0 nothing, 1 lit, 2 high beam
     bool indoors_shown = false;
+    double lit_at = 0;   // TLDCoop_DLC: when it was lit (its lights are looked at in the log a moment later)
 };
 
 // The bones of the body pack's rig (TLD's generic NPC rig) we pose: the arms (shoulder joint, elbow, wrist), and for
@@ -462,7 +465,7 @@ void tint(Il2CppObject* go, Color c) {
 
 // "avatar: ... (whose)" for the log.
 void say(const Avatar& a, const char* fmt, ...) {
-    char text[400];
+    char text[900];
     va_list args;
     va_start(args, fmt);
     vsnprintf(text, sizeof(text), fmt, args);
@@ -1086,7 +1089,43 @@ void set_light(uintptr_t handle, bool on) {
     if (!is_alive(light)) return;
     void* args[] = {&on};
     il2::invoke(api.set_enabled, light, args);
-    if (Il2CppObject* go = il2::invoke(pv.component_go, light)) set_active(go, on);
+    Il2CppObject* go = il2::invoke(pv.component_go, light);
+    if (go) set_active(go, on);
+    if (!on) return;
+    // TLDCoop_DLC: a friend's light is as important as our own (not left a per-vertex light by Unity's light count:
+    // a friend's flare didn't light anything), and TLD's lighting knows it (LightTracking, if its model had none).
+    if (api.light_set_mode) {
+        int32_t force_pixel = 1;  // LightRenderMode.ForcePixel
+        void* mode_args[] = {&force_pixel};
+        il2::invoke(api.light_set_mode, light, mode_args);
+    }
+    if (go && parts.light_tracking_type && api.get_component && api.add_component) {
+        void* type_arg[] = {parts.light_tracking_type};
+        if (!il2::invoke(api.get_component, go, type_arg)) il2::invoke(api.add_component, go, type_arg);
+    }
+}
+
+// TLDCoop_DLC: what its lights are doing a moment after it was lit, for the log.
+std::string describe_lights(const HeldCopy& h) {
+    std::string out;
+    for (const auto* list : {&h.lights_in, &h.lights_out, &h.lights_in_high, &h.lights_out_high})
+        for (uintptr_t l : *list) {
+            Il2CppObject* light = target(l);
+            if (!is_alive(light)) continue;
+            bool on = false;
+            float intensity = -1, range = -1;
+            int32_t mode = -1, mask = 0;
+            il2::invoke_value(api.active_and_enabled, light, on);
+            il2::invoke_value(api.light_intensity, light, intensity);
+            il2::invoke_value(api.light_range, light, range);
+            if (api.light_get_mode) il2::invoke_value(api.light_get_mode, light, mode);
+            if (api.light_get_mask) il2::invoke_value(api.light_get_mask, light, mask);
+            char buf[200];
+            snprintf(buf, sizeof(buf), "%s%s %s, intensity %.2f, range %.1f m, mode %d, mask %08x", out.empty() ? "" : "; ",
+                     name_of(light).c_str(), on ? "on" : "off", intensity, range, mode, static_cast<uint32_t>(mask));
+            out += buf;
+        }
+    return out.empty() ? "no lights" : out;
 }
 
 // level: 0 unlit, 1 lit, 2 a flashlight's high beam. TLD has one light for indoors and one for outdoors; a list it
@@ -1354,7 +1393,15 @@ void sync_held(Avatar& a, const net::StateMsg& s, bool indoors) {
     }
     if (!a.held.go) return;
     const int level = !net::gives_light(kind, s.held_flags) ? 0 : (s.held_flags & net::kHeldHigh) ? 2 : 1;
-    if (level != a.held.lit_shown || indoors != a.held.indoors_shown) light_up(a.held, level, indoors);
+    if (level != a.held.lit_shown || indoors != a.held.indoors_shown) {
+        if (level >= 1 && a.held.lit_shown < 1) a.held.lit_at = net::now_ms();
+        light_up(a.held, level, indoors);
+    }
+    if (a.held.lit_at > 0 && net::now_ms() - a.held.lit_at > 2000) {  // TLDCoop_DLC
+        a.held.lit_at = 0;
+        if (a.held.lit_shown >= 1)
+            say(a, "%s lit, %s: %s", a.held.gear.c_str(), indoors ? "indoors" : "outdoors", describe_lights(a.held).c_str());
+    }
     if (!a.held.emitters.empty()) emit_flame(a.held);  // TLDCoop_DLC
 }
 
@@ -2253,6 +2300,9 @@ bool init() {
     api.light_intensity = il2::find_method(light, "get_intensity", 0);
     api.light_range = il2::find_method(light, "get_range", 0);
     api.light_color = il2::find_method(light, "get_color", 0);
+    api.light_get_mode = il2::find_method_quiet(light, "get_renderMode", 0);
+    api.light_set_mode = il2::find_method_quiet(light, "set_renderMode", 1);
+    api.light_get_mask = il2::find_method_quiet(light, "get_cullingMask", 0);
     api.light_shadows = il2::find_method(light, "get_shadows", 0);
     {
         constexpr const char* kGame = "Assembly-CSharp.dll";
