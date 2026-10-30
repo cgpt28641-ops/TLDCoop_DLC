@@ -488,8 +488,9 @@ public static class BuildClothes {
             verts[i] = to + rot * (verts[i] - mid) * r.scale * s;
             normals[i] = rot * normals[i];
             float y = verts[i].y;
-            float w = r.weights == "headneck" ? Mathf.Clamp01((y - neck.y) / Mathf.Max(0.01f, head.y - neck.y)) : 1;
+            float w = r.weights == "headneck" ? Mathf.Clamp01((y - neck.y) / Mathf.Max(0.01f, head.y - neck.y)) : r.weights == "neck" ? 0 : 1;
             weights[i] = w >= 0.999f ? new BoneWeight { boneIndex0 = hi, weight0 = 1 }
+                       : w <= 0.001f ? new BoneWeight { boneIndex0 = ni, weight0 = 1 }
                                      : new BoneWeight { boneIndex0 = hi, weight0 = w, boneIndex1 = ni, weight1 = 1 - w };
         }
         Debug.Log($"[Clothes] {what}: turned {r.rotate_x} degrees, scaled {r.scale * s:F2}, put at the head");

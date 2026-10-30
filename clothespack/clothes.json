@@ -363,6 +363,39 @@
         -0.005
       ],
       "weights": "head"
+    },
+    {
+      "item": "GEAR_BasicWoolScarf",
+      "rotate_x": 90,
+      "scale": 0.95,
+      "centre": [
+        0,
+        -0.1,
+        0.015
+      ],
+      "weights": "neck"
+    },
+    {
+      "item": "GEAR_CottonScarf",
+      "rotate_x": 90,
+      "scale": 0.95,
+      "centre": [
+        0,
+        -0.1,
+        0.015
+      ],
+      "weights": "neck"
+    },
+    {
+      "item": "GEAR_WoolWrap",
+      "rotate_x": 90,
+      "scale": 0.8,
+      "centre": [
+        0,
+        -0.09,
+        0.015
+      ],
+      "weights": "neck"
     }
   ],
   "beanie_grow_characters": [
@@ -441,7 +474,7 @@
         "GEAR_BallisticVest"
       ],
       "min": 0.014,
-      "max": 0.02
+      "max": 0
     },
     {
       "items": [
