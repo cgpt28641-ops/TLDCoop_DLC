@@ -23,6 +23,8 @@ bool init();
 void on_frame(const std::string& scene, bool in_game);
 // In through co-op's screen (in bed or waiting; in real time, or in the shared skip): State's kStateInBed.
 bool in_bed();
+// TLDCoop_DLC: after a death (a new survivor): TLD's sleep or passing time and ours ended; what was ended ("" none).
+std::string wake_after_death();
 // In to pass time, not in bed: State's kStateWaiting.
 bool waiting();
 // Our vote while in (net::SleepChoice), else 0.

@@ -15,6 +15,7 @@
 #include "config.h"
 #include "coop_menu.h"
 #include "coop_notices.h"
+#include "coop_sleep.h"
 #include "game_state.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
@@ -146,6 +147,18 @@ struct Api {
     FieldInfo* ignore_input = nullptr;               // static InputManager.s_IgnoreInput
     const MethodInfo* pop_context = nullptr;         // static InputManager.PopContext(MonoBehaviour)
     const MethodInfo* controls_locked = nullptr;     // static GameManager.ControlsLocked()
+    // TLDCoop_DLC: the camera's own animation and the arms' (a struggle's or a death's left playing: the view tilted)
+    const MethodInfo* camera_anim_idle = nullptr;    // PlayerCameraAnim.PlayingIdle()
+    ptrdiff_t camera_anim_animator = -1, camera_idle_main = -1, camera_idle_hip = -1;  // m_Animator, idle state hashes
+    const MethodInfo* animator_play = nullptr;       // Animator.Play(int stateNameHash, int layer, float normalizedTime)
+    const MethodInfo* player_anim = nullptr;         // static GameManager.GetPlayerAnimationComponent()
+    const MethodInfo* struggle_end_anim = nullptr;   // PlayerAnimation.Trigger_Struggle_End()
+    const MethodInfo* struggle_reset_anim = nullptr; // PlayerAnimation.ResetStruggleStartEnd()
+    const MethodInfo* aiming_reset = nullptr;        // PlayerAnimation.FullResetAimingModes()
+    const MethodInfo* hands_restore = nullptr;       // PlayerAnimation.RestoreCameraBasedHandPositioning()
+    const MethodInfo* fade_alpha = nullptr;          // static CameraFade.get_CurrentAlpha()
+    const MethodInfo* main_camera = nullptr;         // static GameManager.GetMainCamera()
+    const MethodInfo* local_euler = nullptr;         // Transform.get_localEulerAngles()
     FieldInfo* block_input = nullptr;               // static GameManager.m_BlockNonMovementInput
     FieldInfo* lock_timer = nullptr;                // static GameManager.m_LockControlsTimer
     FieldInfo* block_move = nullptr;                // static GameManager.m_BlockMoveInputUntilReleased
@@ -812,11 +825,49 @@ void controls_back(Il2CppObject* pm) {
             note("the camera's script (was off)");
         }
     }
+    // TLDCoop_DLC: the camera's animation (a struggle's, a death's) back to its idle: it kept going and the view stayed
+    // tilted (the state alone, set back, was set again by it a moment later).
     if (Il2CppObject* ca = api.camera_anim ? il2::invoke(api.camera_anim, nullptr) : nullptr) {
-        if (api.camera_anim_state >= 0 && get<int32_t>(ca, api.camera_anim_state) != 0) {
+        bool idle = true;
+        if (api.camera_anim_idle) il2::invoke_value(api.camera_anim_idle, ca, idle);
+        const int32_t state = api.camera_anim_state >= 0 ? get<int32_t>(ca, api.camera_anim_state) : 0;
+        if (!idle || state != 0) {
+            Il2CppObject* animator = api.camera_anim_animator >= 0 ? get<Il2CppObject*>(ca, api.camera_anim_animator) : nullptr;
+            if (animator && api.animator_play) {
+                for (auto [layer, off] : {std::pair{0, api.camera_idle_main}, std::pair{1, api.camera_idle_hip}}) {
+                    if (off < 0) continue;
+                    int32_t hash = get<int32_t>(ca, off), l = layer;
+                    float t = 0;
+                    void* a[] = {&hash, &l, &t};
+                    il2::invoke(api.animator_play, animator, a);
+                }
+            }
             if (api.camera_anim_restore) il2::invoke(api.camera_anim_restore, ca);
-            put<int32_t>(ca, api.camera_anim_state, 0);
-            note("the camera's animation");
+            if (api.camera_anim_state >= 0) put<int32_t>(ca, api.camera_anim_state, 0);
+            char b[96];
+            snprintf(b, sizeof(b), "the camera's animation (state %d, %s) to its idle", state, idle ? "idle" : "not idle");
+            note(b);
+        }
+    }
+    // The arms' rig: the struggle's end and their usual hold (TLD does these when a struggle ends in play).
+    if (Il2CppObject* pa = api.player_anim ? il2::invoke(api.player_anim, nullptr) : nullptr) {
+        if (api.struggle_end_anim) il2::invoke(api.struggle_end_anim, pa);
+        if (api.struggle_reset_anim) il2::invoke(api.struggle_reset_anim, pa);
+        if (api.aiming_reset) il2::invoke(api.aiming_reset, pa);
+        if (api.hands_restore) il2::invoke(api.hands_restore, pa);
+    }
+    // TLD's sleep, if we died in it (black screen, time racing)
+    if (const std::string slept = coop_sleep::wake_after_death(); !slept.empty()) note(slept.c_str());
+    // The screen faded to black (a death, a sleep) and left so: fade back in.
+    if (api.fade_alpha && api.fade_in) {
+        float alpha = 0;
+        if (il2::invoke_value(api.fade_alpha, nullptr, alpha) && alpha > 0.05f) {
+            float seconds = 1.0f, delay = 0.0f;
+            void* a[] = {&seconds, &delay, nullptr};
+            il2::invoke(api.fade_in, nullptr, a);
+            char b[64];
+            snprintf(b, sizeof(b), "the screen's fade (%.2f black)", alpha);
+            note(b);
         }
     }
     if (Il2CppObject* st = api.get_struggle ? il2::invoke(api.get_struggle, nullptr) : nullptr; st && api.struggle_reset) {
@@ -865,8 +916,19 @@ void controls_back(Il2CppObject* pm) {
     bool locked = false;
     if (api.controls_locked) il2::invoke_value(api.controls_locked, nullptr, locked);
     int32_t mode = pm && api.control_mode >= 0 ? get<int32_t>(pm, api.control_mode) : -1;
-    logx::info("death: input now: contexts [%s], current %s; controls locked %s; control mode %d", ctxs.c_str(),
-               cur ? il2::class_name_of(cur).c_str() : "none", locked ? "yes" : "no", mode);
+    // TLDCoop_DLC: and what the view is doing: the camera's turn (a tilt is its z), its animation, the fade, TLD's sleep
+    Vector3 euler{};
+    Il2CppObject* cam = api.main_camera ? il2::invoke(api.main_camera, nullptr) : nullptr;
+    if (cam && api.local_euler) il2::invoke_value(api.local_euler, transform_of(cam), euler);
+    bool cam_idle = true;
+    if (Il2CppObject* ca = api.camera_anim ? il2::invoke(api.camera_anim, nullptr) : nullptr; ca && api.camera_anim_idle)
+        il2::invoke_value(api.camera_anim_idle, ca, cam_idle);
+    float alpha = -1;
+    if (api.fade_alpha) il2::invoke_value(api.fade_alpha, nullptr, alpha);
+    logx::info("death: input now: contexts [%s], current %s; controls locked %s; control mode %d; camera turned (%.0f, %.0f, "
+               "%.0f), its animation %s; screen %.2f black; %s",
+               ctxs.c_str(), cur ? il2::class_name_of(cur).c_str() : "none", locked ? "yes" : "no", mode, euler.x, euler.y,
+               euler.z, cam_idle ? "idle" : "NOT idle", alpha, coop_sleep::in_bed() ? "in co-op's sleep" : "awake");
 }
 
 // Beside another living player in our scene; a friend with nobody here goes to the host; otherwise where we died.
@@ -1106,8 +1168,11 @@ void on_frame(const std::string& scene, bool in_game) {
         g_others_dead.clear();
         return;
     }
-    if (g_controls_again_at && now_ms() >= g_controls_again_at) {  // TLDCoop_DLC
-        g_controls_again_at = 0;
+    if (g_controls_again_at && now_ms() >= g_controls_again_at) {  // TLDCoop_DLC: 1.5, 4 and 8 s after
+        static int round = 0;
+        round = round >= 3 ? 1 : round + 1;
+        g_controls_again_at = round == 1 ? now_ms() + 2500 : round == 2 ? now_ms() + 4000 : 0;
+        if (round >= 3) round = 0;
         if (Il2CppObject* pm = il2::invoke(api.player_manager, nullptr)) controls_back(pm);
     }
     if (g_save_at && now_ms() >= g_save_at) {
@@ -1267,6 +1332,25 @@ bool init() {
         api.pop_context = il2::find_method_quiet(im, "PopContext", 1);
     }
     api.controls_locked = il2::find_method_quiet(game_manager, "ControlsLocked", 0);
+    if (Il2CppClass* ca = il2::find_class(kGame, "", "PlayerCameraAnim")) {
+        api.camera_anim_idle = il2::find_method_quiet(ca, "PlayingIdle", 0);
+        api.camera_anim_animator = il2::field_offset_quiet(ca, "m_Animator");
+        api.camera_idle_main = il2::field_offset_quiet(ca, "m_MainLayer_AnimState_Idle");
+        api.camera_idle_hip = il2::field_offset_quiet(ca, "m_HipLayer_AnimState_Idle");
+    }
+    if (Il2CppClass* animator = il2::find_class("UnityEngine.AnimationModule.dll", "UnityEngine", "Animator"))
+        api.animator_play = il2::find_method_params_quiet(animator, "Play", {"System.Int32", "System.Int32", "System.Single"});
+    api.player_anim = il2::find_method_quiet(game_manager, "GetPlayerAnimationComponent", 0);
+    if (Il2CppClass* pa = il2::find_class(kGame, "", "PlayerAnimation")) {
+        api.struggle_end_anim = il2::find_method_quiet(pa, "Trigger_Struggle_End", 0);
+        api.struggle_reset_anim = il2::find_method_quiet(pa, "ResetStruggleStartEnd", 0);
+        api.aiming_reset = il2::find_method_quiet(pa, "FullResetAimingModes", 0);
+        api.hands_restore = il2::find_method_quiet(pa, "RestoreCameraBasedHandPositioning", 0);
+    }
+    if (Il2CppClass* fade = il2::find_class(kGame, "", "CameraFade")) api.fade_alpha = il2::find_method_quiet(fade, "get_CurrentAlpha", 0);
+    api.main_camera = il2::find_method_quiet(game_manager, "GetMainCamera", 0);
+    if (Il2CppClass* tfc = il2::find_class(kCore, "UnityEngine", "Transform"))
+        api.local_euler = il2::find_method_quiet(tfc, "get_localEulerAngles", 0);
     api.get_struggle = il2::find_method_quiet(game_manager, "GetPlayerStruggleComponent", 0);
     if (Il2CppClass* st = il2::find_class(kGame, "", "PlayerStruggle")) {
         api.in_struggle = il2::find_method_quiet(st, "InStruggle", 0);

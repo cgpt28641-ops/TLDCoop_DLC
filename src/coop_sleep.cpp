@@ -1293,6 +1293,27 @@ net::SleepChoice choice_named(const std::string& name) {
 }  // namespace
 
 bool in_bed() { return g_mode != Mode::Awake; }
+
+// TLDCoop_DLC: after a death mid-sleep (TLD: "you sink into eternal darkness") nothing ended TLD's sleep: the new
+// survivor's screen stayed black, time kept racing and the clock jumped back to the host's. Every way in, ended.
+std::string wake_after_death() {
+    std::string done;
+    if (Il2CppObject* r = rest(); r && api.sleeping >= 0 && get<bool>(r, api.sleeping)) {
+        get_up();
+        done += "TLD's sleep ended";
+        if (get<bool>(r, api.sleeping)) {  // still: by hand
+            put<bool>(r, api.sleeping, false);
+            done += " (by hand)";
+        }
+    }
+    if (g_mode != Mode::Awake) {
+        if (g_kind != Kind::Bed)
+            if (Il2CppObject* pass = pass_time()) il2::invoke(api.pass_end, pass);
+        g_mode = Mode::Awake;
+        done += std::string(done.empty() ? "" : ", ") + "co-op's sleep/wait ended";
+    }
+    return done;
+}
 bool resting() { return resting_now(); }
 
 bool bed_pose(float out[7]) {
