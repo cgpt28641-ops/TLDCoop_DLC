@@ -196,9 +196,6 @@
     },
     {
       "under": [
-        "GEAR_BasicWoolHat",
-        "GEAR_Toque",
-        "GEAR_ImprovisedHat",
         "GEAR_Balaclava"
       ],
       "words": [
@@ -212,7 +209,10 @@
       "under": [
         "GEAR_BaseballCap",
         "GEAR_EarMuffs",
-        "GEAR_RabbitskinHat"
+        "GEAR_RabbitskinHat",
+        "GEAR_BasicWoolHat",
+        "GEAR_Toque",
+        "GEAR_ImprovisedHat"
       ],
       "words": [
         "Toque",
@@ -251,8 +251,16 @@
       "weights": "head"
     }
   ],
-  "beanie_grow_characters": [],
-  "beanie_grow": [],
+  "beanie_grow_characters": [
+    "mackenzie_indoor",
+    "astrid",
+    "molly"
+  ],
+  "beanie_grow": [
+    0.06,
+    0.06,
+    0.06
+  ],
   "body_meshes": [
     "mackenzie_indoor:Mackenzie_noJacket_LO",
     "astrid:Astrid_Ep5",
