@@ -135,6 +135,7 @@ struct Api {
     // TLDCoop_DLC: more of what a death (in a wolf's struggle) can leave: the camera's script off, the camera driven
     // by an animation, the struggle's settings, the cursor, input contexts (a screen still holding the input)
     const MethodInfo* behaviour_enabled = nullptr;   // Behaviour.get_enabled()
+    const MethodInfo* behaviour_set_enabled = nullptr;  // Behaviour.set_enabled(bool)
     const MethodInfo* struggle_reset = nullptr;      // PlayerStruggle.ResetGameSettingsToNormal()
     const MethodInfo* camera_anim = nullptr;         // static GameManager.GetNewPlayerCameraAnim()
     ptrdiff_t camera_anim_state = -1;                // PlayerCameraAnim.m_State (0 Idle)
@@ -805,10 +806,10 @@ void controls_back(Il2CppObject* pm) {
     // TLDCoop_DLC: the camera's own script back on (vp_FPSCamera: turning with the mouse), not driven by an animation
     if (Il2CppObject* cam = api.get_camera ? il2::invoke(api.get_camera, nullptr) : nullptr) {
         bool on = true;
-        if (api.behaviour_enabled && il2::invoke_value(api.behaviour_enabled, cam, on) && !on) {
+        if (api.behaviour_enabled && api.behaviour_set_enabled && il2::invoke_value(api.behaviour_enabled, cam, on) && !on) {
             bool yes = true;
             void* a[] = {&yes};
-            il2::invoke(api.set_enabled, cam, a);
+            il2::invoke(api.behaviour_set_enabled, cam, a);
             note("the camera's script (was off)");
         }
     }
@@ -1251,7 +1252,7 @@ bool init() {
         api.cam_lock_flag = il2::field_offset_quiet(cam, "m_LockRotationLimit");
     }
     if (Il2CppClass* beh = il2::find_class(kCore, "UnityEngine", "Behaviour"))
-        api.behaviour_enabled = il2::find_method_quiet(beh, "get_enabled", 0);
+        api.behaviour_enabled = il2::find_method_quiet(beh, "get_enabled", 0), api.behaviour_set_enabled = il2::find_method_quiet(beh, "set_enabled", 1);
     api.camera_anim = il2::find_method_quiet(game_manager, "GetNewPlayerCameraAnim", 0);
     if (Il2CppClass* ca = il2::find_class(kGame, "", "PlayerCameraAnim")) {
         api.camera_anim_state = il2::field_offset_quiet(ca, "m_State");
