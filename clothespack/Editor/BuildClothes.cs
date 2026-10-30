@@ -44,6 +44,8 @@ namespace TLDCoop {
     // Collars that rose up the face: the top brought down to this many metres from Head_jnt (the jaw's height), the
     // front a little lower, and kept off the neck.
     public string[] collar_items; public float[] collar_metres;
+    // Items that came in back to front (the balaclava's face on the back of the head): turned half round the head.
+    public string[] turn_items;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -177,7 +179,8 @@ public static class BuildClothes {
                 if (list.collar_items != null)
                     for (int i = 0; i < list.collar_items.Length && i < list.collar_metres.Length; i++)
                         if (list.collar_items[i] == item) collar = list.collar_metres[i];
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar);
+                bool turn = list.turn_items != null && list.turn_items.Contains(item);
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn);
                 triangles += result;
                 meshes++;
             }
@@ -207,7 +210,8 @@ public static class BuildClothes {
     // --- one glTF -> Mesh + TextAsset -----------------------------------------------------------------------------
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
-                        Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar) {
+                        Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
+                        bool turn) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -254,6 +258,16 @@ public static class BuildClothes {
             matNames.Add(MaterialFor(g, file, p.material, materials, opaque, twoSided));
         }
 
+        if (turn) {  // half round the head's vertical axis
+            Vector3 head = JointPos(g, bin, skin, "Head_jnt");
+            if (!float.IsNaN(head.x)) {
+                for (int i = 0; i < verts.Count; i++) {
+                    verts[i] = new Vector3(2 * head.x - verts[i].x, verts[i].y, 2 * head.z - verts[i].z);
+                    normals[i] = new Vector3(-normals[i].x, normals[i].y, -normals[i].z);
+                }
+                Debug.Log($"[Clothes] {character}/{item}: turned round to face forward");
+            }
+        }
         if (shorten >= 0) Shorten(g, bin, skin, verts, shorten, $"{character}/{item}");
         if (!float.IsNaN(collar)) Collar(g, bin, skin, verts, collar, $"{character}/{item}");
 

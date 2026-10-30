@@ -28,13 +28,15 @@
     "GEAR_BasicWoolHat",
     "GEAR_Toque",
     "GEAR_BaseballCap",
-    "GEAR_RabbitskinHat"
+    "GEAR_RabbitskinHat",
+    "GEAR_Balaclava"
   ],
   "lift_metres": [
     -0.02,
     -0.02,
     -0.02,
-    0.05
+    0.05,
+    0.04
   ],
   "inflate_items": [
     "GEAR_BasicWinterCoat",
@@ -246,5 +248,8 @@
         "Hat"
       ]
     }
+  ],
+  "turn_items": [
+    "GEAR_Balaclava"
   ]
 }
