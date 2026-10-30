@@ -1118,9 +1118,15 @@ public static class BuildClothes {
             for (int a = 0; a < 3; a++)
                 // only the body of the piece, below the armpits (the straps and armholes above keep their shape), and at
                 // most a quarter wider
-                factor[e.Key][a] = e.Key * bin < armpitY && e.Value[a] > 0.01f && b[a] > 0
-                    ? Mathf.Clamp((b[a] + clearance) / e.Value[a], 1, 1.25f) : 1;
+                factor[e.Key][a] = e.Value[a] > 0.01f && b[a] > 0
+                    ? Mathf.Clamp((b[a] + clearance) / e.Value[a], 1, e.Key * bin < armpitY ? 1.25f : 1.45f) : 1;
         }
+        // Above the armpits the base's width is its shoulders running into the arms, no measure for a yoke: there the
+        // width keeps the factor of the last slice under the armpits; front and back (chest, shoulder blades) still
+        // come out to the base, so the yoke and collar lie over the shirt instead of under it.
+        int top = factor.Keys.Where(k => k * bin < armpitY).DefaultIfEmpty(int.MinValue).Max();
+        if (top != int.MinValue)
+            foreach (var k in factor.Keys.Where(k => k * bin >= armpitY).ToList()) factor[k][0] = factor[top][0];
         // smooth over the neighbouring slices
         var smooth = new Dictionary<int, float[]>();
         foreach (var key in factor.Keys) {
