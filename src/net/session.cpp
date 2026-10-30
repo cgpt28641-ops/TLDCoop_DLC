@@ -131,7 +131,16 @@ struct Session::Impl {
     mutable std::mutex mu;  // guards everything below
     std::vector<Link> links;  // client: [0] the host, once the transport knows it; host: the friends
     std::vector<Asking> asking;           // host
-    std::vector<PeerId> let_in, kept_out;  // host: addresses admitted / turned away while this session runs
+    std::vector<PeerId> let_in;            // host: addresses admitted while this session runs
+    // TLDCoop_DLC: turned away only for a while (it was for the whole session: a friend declined once could never ask
+    // again, and the host never saw them ask): an ask declined for kDeclinedMs, a kick for kKickedMs.
+    std::vector<std::pair<PeerId, double>> kept_out;  // address -> until when
+    static constexpr double kDeclinedMs = 15000, kKickedMs = 60000;
+    bool kept_out_now(PeerId addr, double now) const {
+        for (const auto& [a, until] : kept_out)
+            if (a == addr && now < until) return true;
+        return false;
+    }
     double last_wait = -1e18;              // client: the host's last Wait (we're waiting to be let in)
     bool turned_away = false;              // client
     std::map<uint8_t, Other> others;  // client
@@ -324,7 +333,9 @@ struct Session::Impl {
         const auto it = std::find_if(asking.begin(), asking.end(), [&](const Asking& a) { return a.ticket == ticket; });
         PeerId addr = 0;
         std::string name;
+        bool kicked = true;
         if (it != asking.end()) {
+            kicked = false;
             addr = it->addr;
             name = it->name;
             asking.erase(it);
@@ -338,9 +349,12 @@ struct Session::Impl {
             send_reject(addr, RejectReason::TurnedAway, "kicked");
             on_disconnected(*l, "kicked by the host");
         }
-        if (!has(kept_out, addr)) kept_out.push_back(addr);
+        const double until = now_ms() + (kicked ? kKickedMs : kDeclinedMs);
+        kept_out.erase(std::remove_if(kept_out.begin(), kept_out.end(), [&](const auto& k) { return k.first == addr; }),
+                       kept_out.end());
+        kept_out.emplace_back(addr, until);
         let_in.erase(std::remove(let_in.begin(), let_in.end(), addr), let_in.end());
-        logf("turned '%s' away; they can't come back while this session runs", name.c_str());
+        logf("turned '%s' away; they can ask again in %.0f s", name.c_str(), (kicked ? kKickedMs : kDeclinedMs) / 1000);
         return true;
     }
 
@@ -604,7 +618,7 @@ struct Session::Impl {
                     return;
                 }
                 if (!content_ok(from, name, their_content, linked)) return;
-                if (has(kept_out, from)) {
+                if (kept_out_now(from, now)) {
                     send_reject(from, RejectReason::TurnedAway, "");
                     return;
                 }

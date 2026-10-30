@@ -1811,7 +1811,7 @@ std::string lobby_help(const net::Status& st) {
         return "Everyone is READY. Press START to load the world together." + ask;
     }
     const std::string host = host_name(st);
-    if (st.turned_away) return host + " didn't let you in.\n\nPress BACK to join someone else.";
+    if (st.turned_away) return host + " didn't let you in.\n\nPress BACK, then you can ask again in a moment (15 s), or join someone else.";
     if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::MissingContent)) {
         if (st.reject_detail == net::kContentUnknown)
             return "Couldn't join: your game couldn't tell which DLC it has installed, and " + host +
