@@ -74,7 +74,16 @@ constexpr const char* kDefaultIni =
     "; Each player has a colour on the radar, on TLD's map and over their head (by their number: the same in every\n"
     "; game). Your own pick for a friend, by their name: red, orange, yellow, green, teal, blue, purple, pink, white,\n"
     "; grey, black or #RRGGBB, e.g.\n"
-    "; Shatsca=blue\n";
+    "; Shatsca=blue\n"
+    "\n"
+    "[emotes]\n"
+    "; Gestures the others see you make (a line on your HUD says which). Keys: F1..F12, A..Z, 0..9, NUM0..NUM9, off\n"
+    "wave=F5\n"
+    "point=F6\n"
+    "come=F7\n"
+    "stop=F8\n"
+    "yes=F3\n"
+    "no=F4\n";
 
 std::string read(const std::filesystem::path& ini, const wchar_t* key, const std::string& fallback,
                  const wchar_t* section = L"net") {
@@ -85,6 +94,27 @@ std::string read(const std::filesystem::path& ini, const wchar_t* key, const std
     int n = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
     std::string out(static_cast<size_t>(n > 0 ? n - 1 : 0), '\0');
     if (n > 1) WideCharToMultiByte(CP_UTF8, 0, value, -1, out.data(), n, nullptr, nullptr);
+    return out;
+}
+
+// TLDCoop_DLC: a section's name=value lines (comments left out), in UTF-8.
+std::vector<std::pair<std::string, std::string>> read_section(const std::filesystem::path& ini, const wchar_t* section) {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::wstring text(16384, L'\0');
+    const DWORD n = GetPrivateProfileSectionW(section, text.data(), static_cast<DWORD>(text.size()), ini.c_str());
+    auto utf8 = [](const std::wstring& w) {
+        const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string s(static_cast<size_t>(len > 0 ? len - 1 : 0), '\0');
+        if (len > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), len, nullptr, nullptr);
+        return s;
+    };
+    for (size_t i = 0; i < n && text[i];) {
+        const std::wstring line(text.c_str() + i);
+        i += line.size() + 1;
+        const size_t eq = line.find(L'=');
+        if (eq == std::wstring::npos || line[0] == L';' || line[0] == L'#') continue;
+        out.emplace_back(utf8(line.substr(0, eq)), utf8(line.substr(eq + 1)));
+    }
     return out;
 }
 
@@ -140,23 +170,8 @@ Settings load() {
     s.hud_names = GetPrivateProfileIntW(L"hud", L"names", 1, ini.c_str()) != 0;
     s.hud_radar = GetPrivateProfileIntW(L"hud", L"radar", 1, ini.c_str()) != 0;
     s.hud_chart = GetPrivateProfileIntW(L"hud", L"chart", 1, ini.c_str()) != 0;
-    {  // TLDCoop_DLC: [colors] name=colour lines
-        std::wstring section(8192, L'\0');
-        const DWORD n = GetPrivateProfileSectionW(L"colors", section.data(), static_cast<DWORD>(section.size()), ini.c_str());
-        for (size_t i = 0; i < n && section[i];) {
-            const std::wstring line(section.c_str() + i);
-            i += line.size() + 1;
-            const size_t eq = line.find(L'=');
-            if (eq == std::wstring::npos || line[0] == L';') continue;
-            auto utf8 = [](const std::wstring& w) {
-                const int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                std::string out(static_cast<size_t>(len > 0 ? len - 1 : 0), '\0');
-                if (len > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, out.data(), len, nullptr, nullptr);
-                return out;
-            };
-            s.hud_colours.emplace_back(utf8(line.substr(0, eq)), utf8(line.substr(eq + 1)));
-        }
-    }
+    s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
+    s.emote_keys = read_section(ini, L"emotes");
     s.test_resume = read(ini, L"resume", "", L"test");
     s.test_nosave = GetPrivateProfileIntW(L"test", L"nosave", 0, ini.c_str()) != 0;
     s.test_god = GetPrivateProfileIntW(L"test", L"god", 0, ini.c_str()) != 0;

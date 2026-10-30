@@ -28,6 +28,8 @@ struct Settings {
     bool hud_chart = true;             // our own map charts itself where we walk
     // TLDCoop_DLC: [colors] a friend's colour by their name (else each player's own by their number)
     std::vector<std::pair<std::string, std::string>> hud_colours;
+    // TLDCoop_DLC: [emotes] a key for each gesture (wave, point, come, stop, yes, no)
+    std::vector<std::pair<std::string, std::string>> emote_keys;
     // [test] section, for automated runs only (no menu clicks):
     std::string test_resume;           // load this save slot (e.g. sandbox5) as soon as the main menu is up
     bool test_nosave = false;          // never save: a second copy of the game playing the same save

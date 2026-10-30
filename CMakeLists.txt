@@ -40,6 +40,7 @@ add_library(tldcoop SHARED
   src/coop_death.cpp
   src/coop_give.cpp
   src/coop_hud.cpp
+  src/coop_emotes.cpp
   src/coop_lapse.cpp
   src/coop_sleep.cpp
   src/coop_menu.cpp
@@ -109,3 +110,5 @@ add_executable(water_test tests/water_test.cpp)
 target_link_libraries(water_test PRIVATE tldnet)
 add_executable(locks_test tests/locks_test.cpp)
 target_link_libraries(locks_test PRIVATE tldnet)
+add_executable(emotes_test tests/emotes_test.cpp)
+target_link_libraries(emotes_test PRIVATE tldnet)

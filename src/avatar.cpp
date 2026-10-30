@@ -18,6 +18,7 @@
 #include "net/handover.h"
 #include "net/held.h"
 #include "net/held_pose.h"
+#include "net/emotes.h"
 #include "net/interp.h"
 #include "paths.h"
 
@@ -309,14 +310,16 @@ struct HeldCopy {
 // crouching the hips, the spine's base and the legs (thigh joint, knee, ankle).
 enum Bone {
     kRightUpArm, kRightElbow, kRightHand, kLeftUpArm, kLeftElbow, kLeftHand,
-    kHips, kSpine1, kLeftThigh, kLeftKnee, kLeftFoot, kRightThigh, kRightKnee, kRightFoot, kBoneCount
+    kHips, kSpine1, kLeftThigh, kLeftKnee, kLeftFoot, kRightThigh, kRightKnee, kRightFoot,
+    kHead,  // TLDCoop_DLC: nodding and shaking it (gestures)
+    kBoneCount
 };
 constexpr int kArmBones = kLeftHand + 1;
 constexpr const char* kBoneNames[kBoneCount] = {"RightUpArm_jnt", "RightElbow_jnt", "RightHand_jnt",
                                                 "LeftUpArm_jnt",  "LeftElbow_jnt",  "LeftHand_jnt",
                                                 "Hips_jnt",       "Spine1_jnt",     "LeftHip_jnt",
                                                 "LeftKnee_jnt",   "LeftFoot_jnt",   "RightHip_jnt",
-                                                "RightKnee_jnt",  "RightFoot_jnt"};
+                                                "RightKnee_jnt",  "RightFoot_jnt",  "Head_jnt"};
 
 // One other player as seen here. Everything of it lives under one root that survives scene loads; the root is only
 // hidden while they're elsewhere.
@@ -336,6 +339,10 @@ struct Avatar {
     std::string visibility;   // last logged reason for hiding, or "shown"
     bool shown_down = false;  // shown knocked down (in a fight)
     float ground_y = 0;       // TLDCoop_DLC: their feet's height when last on their feet (a fight lifts TLD's player)
+    // TLDCoop_DLC: the gesture they make (net/emotes.h), from when (our clock), and which of theirs it is
+    net::Emote emote = net::Emote::None;
+    double emote_start = 0;
+    uint8_t emote_seq = 0;
     bool has_ground = false;
     uintptr_t ai_target = 0;  // AiTarget on the root: what the host's animals see, hear and hunt (milestone 7c)
     Vector3 last_pos{};
@@ -635,19 +642,20 @@ void drop_bones(Avatar& a) {
 void attach_bones(Avatar& a, Il2CppObject* body) {
     drop_bones(a);
     Il2CppObject* transforms = components_in_children(body, api.transform_type);
-    int arms = 0, others = 0;
+    int arms = 0, others = 0, heads = 0;
     for (size_t i = 0, n = il2::array_length(transforms); i < n; ++i) {
         Il2CppObject* t = il2::array_object_at(transforms, i);
         const std::string name = name_of(t);
         for (int b = 0; b < kBoneCount; ++b)
             if (!a.bones[b] && name == kBoneNames[b]) {
                 a.bones[b] = hold(t);
-                ++(b < kArmBones ? arms : others);
+                ++(b < kArmBones ? arms : b == kHead ? heads : others);
             }
     }
     if (arms != kArmBones) say(a, "only %d of the %d arm bones found: held items sit at the body", arms, kArmBones);
-    if (others != kBoneCount - kArmBones)
-        say(a, "only %d of the %d hip, spine and leg bones found: they won't crouch", others, kBoneCount - kArmBones);
+    if (!heads) say(a, "no head bone found: their nods and head shakes won't show");
+    if (others != kBoneCount - kArmBones - 1)
+        say(a, "only %d of the %d hip, spine and leg bones found: they won't crouch", others, kBoneCount - kArmBones - 1);
 }
 
 // --- what they do (milestone 13) -----------------------------------------------------------------------------------
@@ -1513,6 +1521,52 @@ bool place_action_item(const Avatar& a) {
 
 // After the clip has posed the body (GameManager.LateUpdate): crouching, then the item in the hand (an action's, or
 // the arms as the hold says).
+// TLDCoop_DLC: their gesture over the clip: the right arm reaches where the gesture has it (blended in and out), or
+// the head nods or shakes. Returns false when there's none to show now.
+bool gesture(Avatar& a) {
+    if (a.emote == net::Emote::None || !has_bones(a) || a.shown_down || a.lying) return false;
+    const float t = static_cast<float>((net::now_ms() - a.emote_start) / 1000.0);
+    const float w = net::emote_weight(a.emote, t);
+    if (w <= 0) return false;
+    constexpr float kTau = 6.2831853f;
+    if (a.emote == net::Emote::Yes || a.emote == net::Emote::No) {
+        Il2CppObject* head = bone(a, kHead);
+        if (!head) return false;
+        const net::pose::Frame f = net::pose::frame(position_of(head), a.shown_yaw, 0, true);
+        const bool yes = a.emote == net::Emote::Yes;
+        const float deg = w * (yes ? 14.0f : 24.0f) * std::sin(t * kTau * (yes ? 2.0f : 2.2f));
+        const PVec axis = yes ? f.out : PVec{0, 1, 0};
+        const float h = deg * kDeg * 0.5f;
+        const Quat q{axis.x * std::sin(h), axis.y * std::sin(h), axis.z * std::sin(h), std::cos(h)};
+        set_rotation(head, q * rotation_of(head));
+        return false;  // (the arms and what they hold as ever)
+    }
+    const bool look = a.emote == net::Emote::Point;
+    const net::pose::Frame right =
+        net::pose::frame(position_of(bone(a, kRightUpArm)), a.shown_yaw, look ? g_pitch_sign * a.pitch : 0, true);
+    PVec to{};
+    switch (a.emote) {
+        case net::Emote::Wave:  // up beside the head, side to side
+            to = right.at({0.20f + 0.11f * std::sin(t * kTau * 1.6f), 0.50f, 0.12f});
+            break;
+        case net::Emote::Point:  // straight out where they look
+            to = right.at({0.03f, 0.04f, 0.58f});
+            break;
+        case net::Emote::ComeHere:  // out in front, drawn in and out
+            to = right.at({0.06f, -0.02f, 0.28f + 0.16f * (0.5f + 0.5f * std::sin(t * kTau * 1.4f))});
+            break;
+        case net::Emote::Stop:  // raised out in front
+            to = right.at({0.04f, 0.20f, 0.50f});
+            break;
+        default:
+            return false;
+    }
+    const PVec from = palm(a, kRightArm);
+    reach(a, kRightArm, from + (to - from) * w, pole_for(right));
+    if (a.held.go) place_held(a, hold_of(a.held.kind, a.held_flags), palm(a, kRightArm), right);
+    return true;
+}
+
 void late_one(Avatar& a) {
     if (!a.shown || a.visibility != "shown") return;
     if (has_bones(a)) {
@@ -1523,6 +1577,7 @@ void late_one(Avatar& a) {
         a.clip_hand[2] = d.x * std::sin(yaw) + d.z * std::cos(yaw);
     }
     if (a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch);
+    if (gesture(a)) return;  // TLDCoop_DLC: (it placed what they hold too)
     if (!a.held.go) return;
     if (has_bones(a) && !a.shown_down && place_action_item(a)) return;
     const net::pose::Hold h = hold_of(a.held.kind, a.held_flags);
@@ -1890,6 +1945,13 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
     a.yaw = s.yaw;
     a.pitch = s.pitch;
     sync_held(a, s, g_indoors);
+    if (const net::Emote e = net::emote_of(s.emote); e != net::Emote::None && (s.emote_seq != a.emote_seq || a.emote == net::Emote::None)) {
+        a.emote = e;  // TLDCoop_DLC: a new gesture of theirs
+        a.emote_start = now;
+        a.emote_seq = s.emote_seq;
+        say(a, "makes a gesture: %s", net::emote_key_name(e));
+    }
+    if (a.emote != net::Emote::None && (now - a.emote_start) / 1000.0 >= net::emote_seconds(a.emote)) a.emote = net::Emote::None;
 
     char text[200];
     if (a.lying)

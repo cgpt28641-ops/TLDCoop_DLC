@@ -25,6 +25,7 @@
 #include "coop_menu.h"
 #include "coop_notices.h"
 #include "coop_hud.h"
+#include "coop_emotes.h"
 #include "dev_commands.h"
 #include "paths.h"
 #include "steam_dispatch.h"
@@ -149,6 +150,7 @@ void coop_off(const char* why) {
 void apply_net_settings(const config::Settings& s, bool startup) {
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
     coop_hud::set_colours(s.hud_colours);
+    coop_emotes::set_keys(s.emote_keys);
     if (s.mode == "off") return coop_off("solo");
     if (s.mode != "host" && s.mode != "join") {
         logx::warn("net: unknown mode '%s' (use off, host or join)", s.mode.c_str());
@@ -194,6 +196,7 @@ void start_networking() {
     if (!s.autostart) {
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
         coop_hud::set_colours(s.hud_colours);
+        coop_emotes::set_keys(s.emote_keys);
         logx::info("net: offline until CO-OP is picked (NEW, RESUME or LOAD in the Survival menu)");
         return;
     }
@@ -365,6 +368,7 @@ void push_local_state(const std::string& scene) {
         m.held = held.gear;
         m.held_kind = held.kind;
         m.held_flags = held.flags;
+        coop_emotes::current(m.emote, m.emote_seq);  // TLDCoop_DLC
         if (const std::string food = coop_lapse::eating(); !food.empty()) {  // in hand while it's eaten
             m.flags |= net::kStateEating;
             m.held = food;
@@ -478,6 +482,7 @@ void on_frame() {
     if (g_net_enabled) netrt::set_ready(in_game || coop_menu::lobby_ready());  // the lobby's READY / START
     coop_notices::on_frame(in_game);
     coop_hud::on_frame(scene, in_game);
+    coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed());
     dev_commands::on_frame(in_game);
     test_harness::on_frame(scene);
 

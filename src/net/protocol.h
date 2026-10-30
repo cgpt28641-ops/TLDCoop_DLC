@@ -110,7 +110,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 31;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 32;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -145,6 +145,8 @@ constexpr uint16_t kProtocolVersion = 31;  // v4: World. v5: Animals. v6: sounds
                                            // v30 (TLDCoop_DLC): one player at a time in a container:
                                            // ContainerLock
                                            // v31 (TLDCoop_DLC): sleep votes 1 HOUR and 2 HOURS (waiting)
+                                           // v32 (TLDCoop_DLC): gestures (State's emote, emote_seq); held
+                                           // kind Match, held flag kHeldIgniting
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -189,6 +191,8 @@ struct StateMsg {
     uint8_t held_flags = 0;   // kHeldLit, kHeldAiming, kHeldRaised, kHeldHigh
     float bed[7] = {0, 0, 0, 0, 0, 0, 1};  // kStateBed: where their body lies in bed (TLD's Bed.m_BodyPlacementTransform:
                                            // world x y z, rotation x y z w)
+    uint8_t emote = 0;      // TLDCoop_DLC: the gesture they make right now (net::Emote; net/emotes.h), 0 none
+    uint8_t emote_seq = 0;  // TLDCoop_DLC: changes with each gesture they start
 };
 constexpr uint8_t kStateStruggling = 1;  // in a fight with an animal (TLD's PlayerStruggle)
 constexpr uint8_t kStateDead = 2;        // dead, choosing their next survivor (their body lies where they died)
@@ -489,6 +493,8 @@ inline void write_state(Writer& w, const StateMsg& s) {
     w.put(s.held_kind);
     w.put(s.held_flags);
     for (float v : s.bed) w.put(v);
+    w.put(s.emote);
+    w.put(s.emote_seq);
 }
 
 inline bool read_state(Reader& r, StateMsg& s) {
@@ -510,6 +516,8 @@ inline bool read_state(Reader& r, StateMsg& s) {
     s.held_kind = r.get<uint8_t>();
     s.held_flags = r.get<uint8_t>();
     for (float& v : s.bed) v = r.get<float>();
+    s.emote = r.get<uint8_t>();
+    s.emote_seq = r.get<uint8_t>();
     return r.ok();
 }
 
