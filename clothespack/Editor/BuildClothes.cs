@@ -380,7 +380,7 @@ public static class BuildClothes {
         if (sockColourFrom != null) {
             // A worn sock: the shape of this character's low shoes (file), 4 mm inside them, one knitted material in
             // the sock's own colour, ribs round each foot (the catalog's sock is a single flat ground model).
-            SockSweep(verts, normals, uvs, weights, submeshes, $"{character}/{item}");
+            SockSweep(verts, normals, uvs, weights, submeshes, character, $"{character}/{item}");
             matNames.Clear();
             var gs = JsonUtility.FromJson<Gltf>(File.ReadAllText(sockColourFrom));
             var colour = KnitMaterial(gs, sockColourFrom, item, twoSided, matNames);
@@ -1206,7 +1206,9 @@ public static class BuildClothes {
     // down the ankle, round the heel and forward along the sole to a rounded toe; each ring takes its bones from the
     // nearest point of the shoe; ribs round it.
     static void SockSweep(List<Vector3> verts, List<Vector3> normals, List<Vector2> uvs, List<BoneWeight> weights,
-                          List<int[]> submeshes, string what) {
+                          List<int[]> submeshes, string character, string what) {
+        // what is already on the leg there (the long johns): the sock's leg goes round it
+        var under = BaseSurface.TryGetValue(character, out var bs) ? bs.p : new List<Vector3>();
         var shoeP = verts.ToArray(); var shoeW = weights.ToArray();
         verts.Clear(); normals.Clear(); uvs.Clear(); weights.Clear(); submeshes.Clear();
         var tris = new List<int>();
@@ -1226,8 +1228,21 @@ public static class BuildClothes {
             var path = new List<(Vector3 p, Vector3 t, float a, float b)>();
             for (int k = 0; k <= 8; k++) {
                 float y = Mathf.Lerp(top, soleY + bend, k / 8f);
-                float r = Mathf.Lerp(0.053f, 0.044f, k / 8f);  // wide enough at the top to take the long johns' leg in
-                path.Add((new Vector3(cx, y, ankleZ - 0.004f * (1 - k / 8f)), Vector3.down, r, r));
+                float r = Mathf.Lerp(0.053f, 0.044f, k / 8f);
+                var ring = new Vector3(cx, y, ankleZ - 0.004f * (1 - k / 8f));
+                float ra = r, rb = r;
+                // round the long johns' leg at this height (on this side), 6 mm out, where they reach
+                var leg = under.Where(q => Mathf.Sign(q.x) == side && Mathf.Abs(q.y - y) < 0.012f && Mathf.Abs(q.x - cx) < 0.09f
+                                           && Mathf.Abs(q.z - ankleZ) < 0.12f).ToList();
+                if (leg.Count > 12 && y > soleY + bend * 0.5f) {
+                    float lx = leg.Average(q => q.x), lz = leg.Average(q => q.z);
+                    float Q(IEnumerable<float> xs) { var l = xs.OrderBy(x => x).ToList(); return l[Mathf.Clamp((int)(0.95f * l.Count), 0, l.Count - 1)]; }
+                    float la = Q(leg.Select(q => Mathf.Abs(q.x - lx))), lb = Q(leg.Select(q => Mathf.Abs(q.z - lz)));
+                    float w = Mathf.Clamp01((y - (soleY + bend)) / 0.04f);  // down at the heel's bend: back to the foot's own line
+                    ring = new Vector3(Mathf.Lerp(cx, lx, w), y, Mathf.Lerp(ring.z, lz, w));
+                    ra = Mathf.Lerp(r, Mathf.Max(r, la + 0.006f), w); rb = Mathf.Lerp(r, Mathf.Max(r, lb + 0.006f), w);
+                }
+                path.Add((ring, Vector3.down, ra, rb));
             }
             for (int k = 1; k <= 6; k++) {
                 float an = k / 6f * Mathf.PI / 2;
