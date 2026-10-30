@@ -75,10 +75,8 @@
     0.45
   ],
   "characters": [
-    "mackenzie",
     "mackenzie_indoor",
     "astrid",
-    "astrid_outdoor",
     "molly"
   ],
   "collar_items": [
@@ -116,10 +114,8 @@
     -0.01
   ],
   "preview_characters": [
-    "mackenzie",
     "mackenzie_indoor",
     "astrid",
-    "astrid_outdoor",
     "molly"
   ],
   "preview_outfits": [
@@ -267,10 +263,6 @@
       "weights": "head"
     }
   ],
-  "beanie_grow_characters": [
-    "mackenzie"
-  ],
-  "beanie_grow": [
-    0.1
-  ]
+  "beanie_grow_characters": [],
+  "beanie_grow": []
 }

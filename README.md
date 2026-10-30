@@ -174,7 +174,7 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 |---|---|
 | `dlc_check=1` | **Nowe.** Gracz musi mieć wszystkie DLC hosta. `0` wpuszcza każdego (na własne ryzyko). |
 | `ask_to_join=1` | Każdy znajomy prosi o wejście, a host go wpuszcza. `0` wpuszcza od razu każdego z kodem. |
-| `body=` | Twoja postać (ustawia ją ekran co-opa): mackenzie, mackenzie_indoor, astrid, astrid_outdoor albo molly — tylko te, na których dobrze leżą ubrania. |
+| `body=` | Twoja postać (ustawia ją ekran co-opa): mackenzie_indoor, astrid albo molly — tylko te, na których dobrze leżą ubrania. |
 | `voice=male` / `female` | Głos Twojej postaci. |
 | `[colors] Nick=kolor` | **Nowe.** Kolor znajomego na radarze, mapie i nad głową: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `white`, `grey` albo `#RRGGBB`. |
 | `[emotes] wave=F5 ...` | **Nowe.** Klawisze gestów: `wave`, `point`, `come`, `stop`, `yes`, `no` (F1..F12, A..Z, 0..9, NUM0..NUM9, `off`). |

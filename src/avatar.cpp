@@ -55,7 +55,7 @@ constexpr const char* kBodies[] = {
 // TLDCoop_DLC: the characters a player can pick (the co-op setup and the death screen): the ones whose own jacket
 // and sweater are separate parts, so the worn clothes (clothespack) fit them cleanly. The rest stay accepted from the
 // network, for older builds.
-constexpr const char* kChoosableBodies[] = {"mackenzie", "mackenzie_indoor", "astrid", "astrid_outdoor", "molly"};
+constexpr const char* kChoosableBodies[] = {"mackenzie_indoor", "astrid", "molly"};  // without outdoor hats and coats
 constexpr const char* kBodyPackFile = "tldcoop_bodies.bundle";
 constexpr const char* kFemaleBodies[] = {"astrid", "astrid_outdoor", "molly", "jane", "jane_outdoor"};
 
