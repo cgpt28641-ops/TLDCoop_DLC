@@ -3,7 +3,9 @@
 import struct,sys,re,json,os
 import numpy as np
 from sf import SF
-REGIONS=['head','neck','torso','arms','hands','hips','legs','feet']
+REGIONS=['head','neck','torso','arms','hands','hips','legs','feet']+['band%d'%k for k in range(15)]
+# The torso's lower part in 3 cm bands from BAND_TOP down, so a coat hides only what its hem reaches.
+BAND_TOP=1.25; BAND_STEP=0.03
 def region_of(b):
     if b in('Origin_jnt','Hips_jnt'): return 'hips'
     if b.startswith('Spine') or 'Shoulder' in b: return 'torso'
@@ -60,6 +62,9 @@ def main(cab,outdir,names):
             first=sm['firstByte']//isz; tri=idx[first:first+sm['indexCount']].reshape(-1,3)+sm['baseVertex']
             r=vreg[tri]  # a triangle's region: its vertices' majority (ties: the lowest index, the most central)
             treg=np.array([np.bincount(x,minlength=len(REGIONS)).argmax() for x in r])
+            cy=P[tri][:,:,1].mean(1)
+            low=(treg==2)&(cy<BAND_TOP)
+            treg[low]=8+np.clip(((BAND_TOP-cy[low])/BAND_STEP).astype(int),0,14)
             subs.append((tri,treg))
         bp=np.array([[m['e%d%d'%(i,j)] for i in range(4) for j in range(4)] for m in mesh['m_BindPose']['Array']])
         mats=[R(m['m_PathID'])['m_Name'] for m in d['m_Materials']['Array']]

@@ -199,7 +199,9 @@ public static class BuildClothes {
                 if (list.beanie_grow_characters != null)
                     for (int i = 0; i < list.beanie_grow_characters.Length && i < list.beanie_grow.Length; i++)
                         if (list.beanie_grow_characters[i] == character) grow = list.beanie_grow[i];
-                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow);
+                var cutRegions = (list.hide_rules ?? new HideRule[0]).Where(r => r.under != null && r.regions != null && r.under.Contains(item))
+                    .SelectMany(r => r.regions).Distinct().ToArray();
+                var result = Convert(file, character, item, materials, opaque, twoSided, lift, inflate, shorten, collar, turn, beanie, reshape, grow, cutRegions);
                 triangles += result;
                 meshes++;
             }
@@ -244,7 +246,7 @@ public static class BuildClothes {
 
     static long Convert(string file, string character, string item, Dictionary<string, Material> materials,
                         Shader opaque, Shader twoSided, float lift, float inflate, float shorten, float collar,
-                        bool turn, bool beanie, Reshape reshape, float grow) {
+                        bool turn, bool beanie, Reshape reshape, float grow, string[] cutRegions) {
         var g = JsonUtility.FromJson<Gltf>(File.ReadAllText(file));
         byte[] bin = File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(file), Uri.UnescapeDataString(g.buffers[0].uri)));
         int meshNode = Array.FindIndex(g.nodes, n => n.mesh >= 0);
@@ -329,7 +331,20 @@ public static class BuildClothes {
         AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/{item}.asset");
 
         string bones = string.Join(",", skin.joints.Select(j => g.nodes[j].name));
-        File.WriteAllText($"{OutDir}/{character}/{item}.txt", "bones " + bones + "\nmaterials " + string.Join(",", matNames) + "\n");
+        // The cut body's regions not drawn under it: those of its rules, and of the torso's bands those its hem reaches 3 cm
+        // below (its lowest point near the middle, sleeves left out).
+        string cutLine = "";
+        if (cutRegions.Length > 0) {
+            var mid = verts.Where(p => Mathf.Abs(p.x) < 0.2f).ToList();
+            float hem = mid.Count > 0 ? mid.Min(p => p.y) : float.MaxValue;
+            var cuts = cutRegions.ToList();
+            if (cuts.Contains("torso"))
+                for (int k = 0; k < 15; k++)
+                    if (BandTop - BandStep * (k + 1) >= hem + 0.03f) cuts.Add("band" + k);
+            cutLine = "cut " + string.Join(",", cuts) + "\n";
+            Debug.Log($"[Clothes] {character}/{item}: hem at {hem:F2} m, hides {string.Join(",", cuts)}");
+        }
+        File.WriteAllText($"{OutDir}/{character}/{item}.txt", "bones " + bones + "\nmaterials " + string.Join(",", matNames) + "\n" + cutLine);
         AssetDatabase.ImportAsset($"{OutDir}/{character}/{item}.txt");
         long triangles = 0;
         foreach (var s in submeshes) triangles += s.Length / 3;
@@ -420,7 +435,10 @@ public static class BuildClothes {
         Debug.Log($"[Clothes] {what}: turned {r.rotate_x} degrees, scaled {r.scale * s:F2}, put at the head");
     }
 
-    static readonly string[] Regions = { "head", "neck", "torso", "arms", "hands", "hips", "legs", "feet" };
+    // As tools/bodycut/cut.py names them: the torso's lower part in 3 cm bands from BandTop down.
+    static readonly string[] Regions = new[] { "head", "neck", "torso", "arms", "hands", "hips", "legs", "feet" }
+        .Concat(Enumerable.Range(0, 15).Select(k => "band" + k)).ToArray();
+    const float BandTop = 1.25f, BandStep = 0.03f;
 
     // A body's mesh again, the same vertices and bones, its triangles split by region inside each of its submeshes:
     // <character>/BodyCut.asset, and Body.txt: "mesh <the body's own mesh name>", "parts <submesh>:<region>,..." (one per
@@ -764,15 +782,15 @@ public static class BuildClothes {
         // Under a coat: the body's own torso and arms (cut body), and its jacket / sweater submeshes, aren't drawn.
         var list = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json"));
         EnsureCut(body, character);
-        if (CutParts.TryGetValue(body.GetInstanceID(), out var cutParts))
-            foreach (var rule in list.hide_rules ?? new HideRule[0]) {
-                if (rule.under == null || rule.regions == null || !rule.under.Contains(item)) continue;
+        string cutText = lines.FirstOrDefault(l => l.StartsWith("cut "));
+        if (cutText != null && CutParts.TryGetValue(body.GetInstanceID(), out var cutParts))
+            foreach (var regions in new[] { cutText.Substring(4).Trim().Split(',') }) {
                 var hiddenMat = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
                 foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
                     if (!r.sharedMesh || r.sharedMesh.name != "BodyCut") continue;
                     var mats = r.sharedMaterials;
                     for (int i = 0; i < mats.Length && i < cutParts.Length; i++)
-                        if (rule.regions.Contains(cutParts[i].Split(':')[1])) mats[i] = hiddenMat;
+                        if (regions.Contains(cutParts[i].Split(':')[1])) mats[i] = hiddenMat;
                     r.sharedMaterials = mats;
                 }
             }
