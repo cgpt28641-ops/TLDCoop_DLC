@@ -423,7 +423,7 @@ public static class BuildClothes {
     static readonly string[] Regions = { "head", "neck", "torso", "arms", "hands", "hips", "legs", "feet" };
 
     // A body's mesh again, the same vertices and bones, its triangles split by region inside each of its submeshes:
-    // <character>/Body.asset, and Body.txt: "mesh <the body's own mesh name>", "parts <submesh>:<region>,..." (one per
+    // <character>/BodyCut.asset, and Body.txt: "mesh <the body's own mesh name>", "parts <submesh>:<region>,..." (one per
     // submesh of the cut mesh, in order: which of the body's materials draws it and which region it is).
     static void BodyCut(string file, string character, string meshName) {
         using var br = new BinaryReader(File.OpenRead(file));
@@ -465,9 +465,9 @@ public static class BuildClothes {
         mesh.subMeshCount = tris.Count;
         for (int i = 0; i < tris.Count; i++) mesh.SetTriangles(tris[i], i);
         mesh.RecalculateBounds();
-        AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/Body.asset");
-        File.WriteAllText($"{OutDir}/{character}/Body.txt", $"mesh {meshName}\nparts {string.Join(",", parts)}\n");
-        AssetDatabase.ImportAsset($"{OutDir}/{character}/Body.txt");
+        AssetDatabase.CreateAsset(mesh, $"{OutDir}/{character}/BodyCut.asset");
+        File.WriteAllText($"{OutDir}/{character}/BodyCut.txt", $"mesh {meshName}\nparts {string.Join(",", parts)}\n");
+        AssetDatabase.ImportAsset($"{OutDir}/{character}/BodyCut.txt");
         Debug.Log($"[Clothes] {character}: body {meshName} cut into {parts.Count} parts ({n} vertices, {boneCount} bones)");
     }
 
@@ -475,8 +475,8 @@ public static class BuildClothes {
     static readonly Dictionary<int, string[]> CutParts = new Dictionary<int, string[]>();
     static void EnsureCut(GameObject body, string character) {
         if (CutParts.ContainsKey(body.GetInstanceID())) return;
-        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/Body.asset");
-        var info = AssetDatabase.LoadAssetAtPath<TextAsset>($"{OutDir}/{character}/Body.txt");
+        var mesh = AssetDatabase.LoadAssetAtPath<Mesh>($"{OutDir}/{character}/BodyCut.asset");
+        var info = AssetDatabase.LoadAssetAtPath<TextAsset>($"{OutDir}/{character}/BodyCut.txt");
         if (!mesh || !info) return;
         string[] lines = info.text.Split('\n');
         string meshName = lines[0].Substring("mesh ".Length).Trim();
@@ -769,7 +769,7 @@ public static class BuildClothes {
                 if (rule.under == null || rule.regions == null || !rule.under.Contains(item)) continue;
                 var hiddenMat = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
                 foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
-                    if (!r.sharedMesh || !r.sharedMesh.name.StartsWith("BodyCut_")) continue;
+                    if (!r.sharedMesh || r.sharedMesh.name != "BodyCut") continue;
                     var mats = r.sharedMaterials;
                     for (int i = 0; i < mats.Length && i < cutParts.Length; i++)
                         if (rule.regions.Contains(cutParts[i].Split(':')[1])) mats[i] = hiddenMat;
