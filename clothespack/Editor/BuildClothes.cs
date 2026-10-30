@@ -747,8 +747,10 @@ public static class BuildClothes {
             }
             push = next;
         }
-        for (int i = 0; i < verts.Count; i++) verts[i] += push[i];
-        Debug.Log($"[Clothes] {what}: kept {clearance * 100:F1} cm off the body ({moved} vertices pushed out)");
+        float most = 0, sum = 0;
+        for (int i = 0; i < verts.Count; i++) { verts[i] += push[i]; most = Mathf.Max(most, push[i].magnitude); sum += push[i].magnitude; }
+        Debug.Log($"[Clothes] QA {what}: kept {clearance * 100:F1} cm off the body; {moved} of {verts.Count} vertices were too close " +
+                  $"or under the skin, pushed out by {sum / Mathf.Max(1, verts.Count) * 100:F1} cm on average, {most * 100:F1} cm at most");
     }
 
     // Ambient occlusion per vertex, into the vertex colour: rays over the half of the sky its normal faces, blocked by
