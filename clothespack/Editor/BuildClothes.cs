@@ -34,6 +34,8 @@ namespace TLDCoop {
     public string[] inflate_items; public float[] inflate_metres;
     // Coats too long: the hem raised to this far from the knees (0) to the hips (1), what's under the hips squeezed up.
     public string[] shorten_items; public float[] shorten_to;
+    // Under these items (coats) a body's own submeshes whose material name has one of hide_words are not drawn.
+    public string[] hide_under; public string[] hide_words;
 }
 
 // --- the glTF we read (only what the catalog uses) ---------------------------------------------------------------
@@ -102,6 +104,10 @@ public static class BuildClothes {
         var twoSided = Shader.Find("TLDCoop/Body2Sided");
         if (!opaque || !twoSided) throw new Exception("the TLDCoop body shaders didn't compile");
 
+        var hiddenShader = Shader.Find("TLDCoop/Hidden");
+        if (!hiddenShader) throw new Exception("the TLDCoop hidden shader didn't compile");
+        if (!AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat"))
+            AssetDatabase.CreateAsset(new Material(hiddenShader) { name = "TLDCoop_Hidden" }, OutDir + "/Materials/TLDCoop_Hidden.mat");
         var materials = new Dictionary<string, Material>();
         int meshes = 0, skipped = 0;
         long triangles = 0;
@@ -157,6 +163,11 @@ public static class BuildClothes {
                 meshes++;
             }
         }
+        // What the mod hides under which items: one TextAsset for the whole pack.
+        File.WriteAllText(OutDir + "/rules.txt",
+            "hide_under " + string.Join(",", list.hide_under ?? new string[0]) + "\n" +
+            "hide_words " + string.Join(",", list.hide_words ?? new string[0]) + "\n");
+        AssetDatabase.ImportAsset(OutDir + "/rules.txt");
         AssetDatabase.SaveAssets();
 
         foreach (var other in AssetDatabase.GetAllAssetBundleNames())
@@ -389,6 +400,12 @@ public static class BuildClothes {
         lightGo.transform.rotation = Quaternion.Euler(35, -30, 0);
         RenderSettings.ambientLight = new Color(0.45f, 0.45f, 0.5f);
         int shots = 0;
+        foreach (string name in bodies.GetAllAssetNames().Where(n => n.EndsWith(".prefab"))) {  // every body's parts
+            var p = bodies.LoadAsset<GameObject>(name);
+            foreach (var r in p.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+                Debug.Log($"[Clothes] parts {Path.GetFileNameWithoutExtension(name)}: {r.name}: " +
+                          string.Join("/", r.sharedMaterials.Select(x => x ? x.name : "-")));
+        }
         try {
             foreach (string character in list.preview_characters) {
                 var prefab = bodies.LoadAsset<GameObject>("Body_" + character);
@@ -459,6 +476,23 @@ public static class BuildClothes {
         smr.updateWhenOffscreen = true;
         smr.sharedMaterials = matNames.Select(n => AssetDatabase.LoadAssetAtPath<Material>($"{OutDir}/Materials/{n.Trim()}.mat")).ToArray();
         if (missing > 0) Debug.LogWarning($"[Clothes] {character}/{item}: {missing} of {bones.Length} bones not on the body");
+        // Under a coat: the body's own jacket / sweater submeshes aren't drawn.
+        var list = JsonUtility.FromJson<ClothesList>(File.ReadAllText("clothes.json"));
+        if (list.hide_under != null && list.hide_under.Contains(item) && list.hide_words != null) {
+            var hidden = AssetDatabase.LoadAssetAtPath<Material>(OutDir + "/Materials/TLDCoop_Hidden.mat");
+            foreach (var r in body.GetComponentsInChildren<SkinnedMeshRenderer>(true)) {
+                if (r.gameObject == go) continue;
+                var mats = r.sharedMaterials;
+                bool changed = false;
+                for (int i = 0; i < mats.Length; i++)
+                    if (mats[i] && list.hide_words.Any(w => mats[i].name.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0)) {
+                        Debug.Log($"[Clothes] {character}/{item}: the body's {mats[i].name} hidden");
+                        mats[i] = hidden;
+                        changed = true;
+                    }
+                if (changed) r.sharedMaterials = mats;
+            }
+        }
         return true;
     }
 }

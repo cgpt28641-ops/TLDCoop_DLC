@@ -16,7 +16,11 @@
   "inflate_metres": [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
   "shorten_items": ["GEAR_DownParka"],
   "shorten_to": [0.45],
-  "preview_characters": ["mackenzie", "astrid", "heller", "molly"],
+  "hide_under": ["GEAR_BasicWinterCoat", "GEAR_BearSkinCoat", "GEAR_DownParka", "GEAR_DownSkiJacket", "GEAR_HeavyParka",
+                 "GEAR_LightParka", "GEAR_MackinawJacket", "GEAR_MilitaryParka", "GEAR_PremiumWinterCoat",
+                 "GEAR_QualityWinterCoat", "GEAR_SkiJacket"],
+  "hide_words": ["Jacket", "Sweater", "Coat", "Parka", "Hoodie", "Shirt", "Vest", "Top"],
+  "preview_characters": ["mackenzie", "astrid", "heller", "molly", "jeremiah", "jane"],
   "preview_outfits": [
     ["GEAR_BasicWoolHat", "GEAR_BasicWinterCoat"],
     ["GEAR_RabbitskinHat", "GEAR_BearSkinCoat"],
