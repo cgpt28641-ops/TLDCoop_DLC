@@ -108,6 +108,7 @@
 - Visible clothes are dressed only onto the bodies with separate parts: **Mackenzie, Astrid (indoor/outdoor) and Molly**. Mackenzie and Astrid are the game's own player characters anyway.
 - Other bodies keep their original outfit and no clothes are added onto them. No stronger inflate.
 - Variant 3 (covering the body with a stencil) is an optional later experiment, only if they want more characters.
+- **DONE (commit afbbb33):** the co-op setup and death screen offer only these 5 (`avatar::choosable_body_ids`); coop.ini default `body=mackenzie`; an unchoosable ini body falls back to mackenzie. Bodies from older builds are still accepted from the network.
 - Effort now goes into polishing those 3 characters: collars, sleeves, hem lengths, and checking all 22 items on each of them from several angles.
 
 ## Next steps
