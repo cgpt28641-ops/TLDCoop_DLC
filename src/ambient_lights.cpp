@@ -33,6 +33,7 @@ constexpr ptrdiff_t kArrayFirst = 0x20;                    // T[]: the first ele
 constexpr ptrdiff_t kCachedPtr = 0x10;                     // UnityEngine.Object.m_CachedPtr: null once destroyed
 constexpr size_t kLightDefSize = 40;                        // DarkLightingManager.LightDef: Light, float, Color, Vector3
 constexpr double kSettleMs = 4000;   // no InteriorLightingManager by then (dark interiors): set up anyway
+constexpr double kMinMs = 300;       // TLD's ambient light updating counts from this long after a scene change
 constexpr double kLookMs = 100;      // how often to look for the scene's InteriorLightingManager until it's there
 constexpr int kPointLight = 2, kSpotLight = 0;              // UnityEngine.LightType
 
@@ -90,6 +91,7 @@ ambient::Levels g_levels;
 std::string g_scene;
 double g_scene_since = 0;
 double g_last_look = 0;
+bool g_tld_lit = false;  // TLD's indoor ambient light has updated since the scene came in (any interior has one)
 const ambient::SceneLights* g_cfg = nullptr;  // this scene's emitters; null: the game's own lighting
 bool g_set_up = false;
 bool g_ready = false;           // lights set up and a light set computed: the hooks act
@@ -484,6 +486,7 @@ FloatFn g_gimble_light = nullptr;
 
 // GameLights.UpdateAmbience: TLD's indoor ambient light, quieter and in the light set's colours.
 void set_ambient_detour(Il2CppObject* self, float tod, float multiplier, const MethodInfo* method) {
+    g_tld_lit = true;
     if (self && api.amb_day >= 0) {
         if (acting() && g_cfg) {
             if (!g_ambient.count(self))
@@ -715,6 +718,7 @@ void on_frame(const std::string& scene, bool in_game) {
         if (g_set_up) restore_and_drop();
         g_scene = scene;
         g_scene_since = now;
+        g_tld_lit = false;
     }
     if (!in_game || !active()) {
         if (g_set_up) {
@@ -728,14 +732,17 @@ void on_frame(const std::string& scene, bool in_game) {
         // so the window light is there when the scene shows; a scene without that manager after kSettleMs.
         if (now - g_last_look < kLookMs) return;
         g_last_look = now;
-        bool lit = false;
-        if (Il2CppObject* managers = find_all(api.ilm_type); il2::array_length(managers)) {
-            Il2CppObject* m = il2::array_object_at(managers, 0);
-            lit = alive(m) && (api.ilm_initialized < 0 || il2::read_field<bool>(m, api.ilm_initialized));
+        // (TLD's indoor ambient light updating counts too: dark interiors have no InteriorLightingManager)
+        bool lit = g_tld_lit && now - g_scene_since >= kMinMs;
+        if (!lit) {
+            if (Il2CppObject* managers = find_all(api.ilm_type); il2::array_length(managers)) {
+                Il2CppObject* m = il2::array_object_at(managers, 0);
+                lit = alive(m) && (api.ilm_initialized < 0 || il2::read_field<bool>(m, api.ilm_initialized));
+            }
         }
         if (!lit && now - g_scene_since < kSettleMs) return;
         logx::info("ambient: %s set up %.1f s after it came in%s", scene.c_str(), (now - g_scene_since) / 1000.0,
-                   lit ? "" : " (no indoor lighting manager)");
+                   lit ? "" : " (TLD's indoor lighting not seen)");
         set_up(scene);
     }
     if (!g_cfg || paused()) return;
