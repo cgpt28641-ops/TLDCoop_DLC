@@ -70,6 +70,7 @@ double g_last_save = 0;
 float g_last_hours = -1;
 int g_state = -1;
 bool g_applied = false;  // our textures are on
+bool g_own_on = true;    // TLDCoop_DLC: our own setting (the host's may say otherwise in co-op)
 
 double now_ms() {
     static const double per_ms = [] {
@@ -288,6 +289,7 @@ void init() {
 }
 
 void set_settings(const config::Settings& s) {
+    g_own_on = s.dynamic_trees;  // TLDCoop_DLC (preloading at the menu)
     coop_features::set_own(net::kFeatureDynamicTrees, s.dynamic_trees);
     logx::info("trees: %s", s.dynamic_trees ? "on" : "off");
 }
@@ -311,7 +313,25 @@ void on_frame(const std::string& scene, bool in_game) {
                 ++it;
             }
     }
-    if (!in_game) return;
+    // TLDCoop_DLC: the trees' textures loaded at the main menu (a few seconds in), not when a game's first scene comes
+    // in: that took 1-2 s in one frame there (the log's slow frames), the game standing still.
+    if (!in_game) {
+        static double menu_since = 0;
+        static bool preloaded = false;
+        if (scene != "MainMenu") {
+            menu_since = 0;
+            return;
+        }
+        if (!menu_since) menu_since = now;
+        if (!preloaded && now - menu_since > 8000 && g_own_on) {
+            preloaded = true;
+            const double t0 = now_ms();
+            int n = 0;
+            for (int i = 0; i < 8; ++i) n += (texture(trees::kPine[i]) != nullptr) + (texture(trees::kCedar[i]) != nullptr);
+            logx::info("trees: %d textures loaded at the main menu (%.0f ms)", n, now_ms() - t0);
+        }
+        return;
+    }
     if (!active()) {
         if (g_applied) restore();
         return;

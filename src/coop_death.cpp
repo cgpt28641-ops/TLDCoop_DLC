@@ -1192,7 +1192,22 @@ void on_frame(const std::string& scene, bool in_game) {
         round = round >= 3 ? 1 : round + 1;
         g_controls_again_at = round == 1 ? now_ms() + 2500 : round == 2 ? now_ms() + 4000 : 0;
         if (round >= 3) round = 0;
-        if (Il2CppObject* pm = il2::invoke(api.player_manager, nullptr)) controls_back(pm);
+        // Only what the death left: a new fight (a wolf on the new survivor at once) or anything else TLD is doing
+        // with the player now is TLD's own. Breaking it here made the player stand up mid-fight, the wolf froze in
+        // the air and the arms stayed out after.
+        Il2CppObject* pm = il2::invoke(api.player_manager, nullptr);
+        bool fighting = false;
+        if (Il2CppObject* st = api.get_struggle ? il2::invoke(api.get_struggle, nullptr) : nullptr; st && api.in_struggle)
+            il2::invoke_value(api.in_struggle, st, fighting);
+        const int32_t mode = pm && api.control_mode >= 0 ? get<int32_t>(pm, api.control_mode) : 0;
+        if (fighting || mode != kNormal) {
+            logx::info("death: the new survivor is busy (%s, control mode %d): the controls are TLD's now; no more "
+                       "checks after this death", fighting ? "in a fight" : "not in normal play", mode);
+            g_controls_again_at = 0;
+            round = 0;
+        } else if (pm) {
+            controls_back(pm);
+        }
     }
     if (g_save_at && now_ms() >= g_save_at) {
         g_save_at = 0;
