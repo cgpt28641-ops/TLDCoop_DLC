@@ -233,7 +233,10 @@ std::string shared_text(Il2CppObject* c) { return net::strip_uniques(serialize(c
 std::string signature(Il2CppObject* c) {
     int64_t units = 0;
     il2::invoke_value(api.total_weight, c, units);
-    return contents_of(c) + " | " + std::to_string(units);
+    // TLDCoop_DLC: and whether it has been searched: a search that found nothing (or whose finds were all taken) is a
+    // change too, or the other players walked in later to a container still to search (and searched it again)
+    return contents_of(c) + " | " + std::to_string(units) + (get<bool>(c, api.inspected) ? " | searched" : "") +
+           (get<bool>(c, api.not_populated) ? " | not rolled" : "");
 }
 
 // --- state ---------------------------------------------------------------------------------------------------------
@@ -662,6 +665,9 @@ bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
     }
     drop_wait();
     g_lock_wait = Waiting{key, id, hold_obj(c), hold_obj(on_closed), show, now};
+    // TLDCoop_DLC: what's in it asked first, so the host's answer (in order, before its lock's) is in before TLD's
+    // search: a container someone searched already opens as searched, not to be searched again
+    ask(c);
     send_lock(g_scene, id, net::LockOp::Take, 0);
     logx::info("containers: %s (%s): asked the host if it's free", name_of(c).c_str(), short_id(id).c_str());
     return false;

@@ -85,6 +85,7 @@ jobs:
           name: TLDCoop_DLC
           path: pack/
           if-no-files-found: error
+          retention-days: 2
 
       # GitHub's artifact storage full: winhttp.dll alone (our code only, no game assets) to the private repo's
       # "dll-latest" release, so a build still reaches the players.

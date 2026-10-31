@@ -284,3 +284,13 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   `dll-latest` when the artifact upload fails (the run then shows as failed on purpose). Download:
   https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/download/dll-latest/winhttp.dll (build 1e9f623, run 41202336256).
   Bundles are unchanged since run 41151450359, so only winhttp.dll needs replacing.
+
+## 2026-10-31 (14:10) — searched containers in a scene we weren't in
+- Report: host in the Milton house, grzyb searched the bank; host walked in later: the bank's containers still to be searched
+  (and empty once searched).
+- Cause: a container's signature (what decides "changed, send it") was its items and weight only. A search that found
+  nothing, or whose finds were all taken, left it equal: never sent, so the host's copy stayed unsearched.
+- Now: the signature also carries m_Inspected and m_NotPopulated (the save text already carries m_InspectedProxy, so the
+  other games apply it). A client also asks the host for a container's contents together with its lock request (before
+  TLD's search), so a container already searched by someone opens as searched.
+- CI: artifacts kept 2 days (retention-days: 2), so the storage doesn't fill again.
