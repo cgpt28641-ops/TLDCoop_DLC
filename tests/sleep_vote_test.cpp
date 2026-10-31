@@ -70,7 +70,7 @@ int main() {
         expect("two for dusk (9 h), two for 4: 4", o.choice == SleepChoice::H4);
         o = net::decide_sleep({{0, true, SleepChoice::Dusk}, {1, true, SleepChoice::Dusk}, {2, true, SleepChoice::H4}}, {10, 7, 19});
         expect("two for dusk, one for 4: dusk, 9 hours", o.choice == SleepChoice::Dusk && near(o.hours, 9));
-        o = net::decide_sleep({{0, true, static_cast<SleepChoice>(9)}, {1, true, SleepChoice::H4}}, k);
+        o = net::decide_sleep({{0, true, static_cast<SleepChoice>(10)}, {1, true, SleepChoice::H4}}, k);
         expect("a vote that isn't a choice counts as no vote", o.kind == Kind::Waiting && o.awake[0] == 0);
     }
     {  // Resting (milestone 13): in bed to heal, no vote for a sleep.
