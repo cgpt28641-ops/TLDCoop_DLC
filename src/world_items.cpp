@@ -1398,8 +1398,21 @@ void scan(double now) {
             }
         }
         const double settle = burning_light(l.gi) ? kSettleLitMs : kSettleMs;
-        if (now - k.moved_ms >= settle && (!k.shared || distance(k.pos, k.told) > kMovedMetres))
+        if (now - k.moved_ms >= settle && (!k.shared || distance(k.pos, k.told) > kMovedMetres)) {
+            // TLDCoop_DLC: a new pot with food in it (a cup of coffee put on a stove to warm: TLD wraps it in a
+            // CookingPotDummy) - the food goes first, or the other game's pot had nothing to show (the food unknown there)
+            if (Il2CppObject* food = !k.shared ? food_in(pot_of(l.gi)) : nullptr) {
+                const std::string id = pdid_of(food);
+                Known& fk = g_known[id];
+                fk.prefab = name_of(food);
+                pose_of(food, fk.pos, fk.rot);
+                fk.units = units_of(food);
+                fk.opened = opened_of(food);
+                fk.moved_ms = now;
+                send_put(food, id, fk, now, 0, 0, "went into a new pot");
+            }
             send_put(l.gi, l.pdid, k, now, 0);
+        }
     }
     for (auto it = g_known.begin(); it != g_known.end();) {
         if (present.count(it->first) || it->first == inspected || it->first == placing) {

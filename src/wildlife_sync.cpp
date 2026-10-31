@@ -550,11 +550,17 @@ void capture(const std::string& scene, double now) {
         g_ai_emitters.clear();
     }
     int counts[std::size(kKinds)] = {};
+    // TLDCoop_DLC: each animal's last known place, and what of it still exists: an animal that stops being shared is
+    // logged with why (a friend's rabbit vanished in a chase, far from the host)
+    struct Where { uint8_t kind = 0; Vector3 pos{}; uint32_t id = 0; };
+    static std::unordered_map<uintptr_t, Where> where;
+    std::unordered_map<uintptr_t, int> listed;  // 0 inactive, 1 out of range
     for (Il2CppObject* ai : all_animals()) {
-        if (!active(go_of(ai))) continue;
+        const auto key0 = reinterpret_cast<uintptr_t>(ai);
+        if (!active(go_of(ai))) { listed[key0] = 0; continue; }
         Il2CppObject* tf = transform_of(ai);
         Vector3 pos{}, euler{};
-        if (!tf || !il2::invoke_value(api.get_position, tf, pos) || !in_range(pos)) continue;
+        if (!tf || !il2::invoke_value(api.get_position, tf, pos) || !in_range(pos)) { listed[key0] = 1; continue; }
         il2::invoke_value(api.get_euler, tf, euler);
         const auto key = reinterpret_cast<uintptr_t>(ai);
         auto id = g_ids.find(key);
@@ -609,7 +615,27 @@ void capture(const std::string& scene, double now) {
         if (emitters == g_ai_emitters.end()) emitters = g_ai_emitters.emplace(key, wwise_emitters(go_of(ai))).first;
         for (size_t e = 0; e < emitters->second.size(); ++e)
             owners[emitters->second[e]] = {a.id, static_cast<uint8_t>(e)};
+        where[key] = Where{a.kind, pos, a.id};
         animals.push_back(std::move(a));
+    }
+    for (const auto& [key, id] : g_ids) {
+        if (seen.count(key)) continue;
+        const auto w = where.find(key);
+        if (w == where.end()) continue;
+        float nearest = 1e9f;
+        auto consider = [&](float x, float y, float z) {
+            const float dx = w->second.pos.x - x, dy = w->second.pos.y - y, dz = w->second.pos.z - z;
+            nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy + dz * dz));
+        };
+        if (me.valid) consider(me.position.x, me.position.y, me.position.z);
+        for (const net::StateMsg& f : friends_here) consider(f.x, f.y, f.z);
+        const auto l = listed.find(key);
+        const char* why = l == listed.end() ? "TLD removed it (destroyed or despawned for good)"
+                        : l->second == 0 ? "TLD switched it off (despawned)" : "out of range of every player";
+        logx::info("wildlife: the %s #%u stops being shared: %s; it was at (%.0f, %.0f, %.0f), %.0f m from the nearest player",
+                   w->second.kind < std::size(kKinds) ? kKinds[w->second.kind] : "animal", id, why, w->second.pos.x,
+                   w->second.pos.y, w->second.pos.z, nearest);
+        where.erase(w);
     }
     {
         std::lock_guard lock(g_sound_mutex);

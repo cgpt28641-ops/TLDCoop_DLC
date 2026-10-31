@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -240,12 +241,28 @@ void small_game_to_items(double now) {
         if (get<int32_t>(ai, api.ai_mode) != kAiModeDead || get<float>(ai, api.ai_dead_time) < kSmallDeadSeconds) continue;
         Il2CppObject* wi = wildlife_item_of(ai);
         Il2CppObject* bh = get<Il2CppObject*>(ai, api.ai_body);
-        if (!wi || !bh || !behaviour_enabled(bh) || !in_world(ai)) continue;  // (TLD's condition for picking one up)
+        // TLDCoop_DLC: why a dead one stays an animal (a friend's rabbit, far from the host, couldn't be picked up)
+        static std::unordered_set<Il2CppObject*> told;
+        const bool late = get<float>(ai, api.ai_dead_time) > kSmallDeadSeconds + 10;
+        auto tell = [&](const char* why) {
+            if (late && wi && told.insert(ai).second)
+                logx::warn("wildlife: the dead %s stays an animal, no carcass item: %s", name_of(il2::invoke(api.component_go, ai)).c_str(), why);
+        };
+        if (!wi) continue;
+        if (!bh || !behaviour_enabled(bh)) { tell("its carcass (BodyHarvest) is off"); continue; }
+        if (!in_world(ai)) { tell("TLD put it away (inactive)"); continue; }
         Vector3 pos{};
         il2::invoke_value(api.get_position, il2::invoke(api.component_transform, ai), pos);
         seen[ai] = pos;
         const auto before = g_small_seen.find(ai);
-        if (before == g_small_seen.end() || distance(before->second, pos) > 0.01f) continue;  // still falling (a bird)
+        if (before == g_small_seen.end() || distance(before->second, pos) > 0.01f) {  // still falling (a bird)
+            if (before != g_small_seen.end()) {
+                char b[96];
+                snprintf(b, sizeof(b), "still moving (%.2f m since the last look; falling?) at y %.1f", distance(before->second, pos), pos.y);
+                tell(b);
+            }
+            continue;
+        }
         const std::string animal = name_of(il2::invoke(api.component_go, ai));
         Il2CppObject* gi = il2::invoke(api.spawn_carcass, wi);
         if (!gi) {

@@ -599,7 +599,45 @@ void on_frame() {
     }
 }
 
+// TLDCoop_DLC: ESC's menu (Panel_PauseMenu) pauses the game (GameManager.m_IsPaused): the clock, the animals, the
+// fires. In co-op the world is shared and the others play on: it doesn't pause while the menu is open.
+bool g_pause_menu_open = false;
+FieldInfo* g_is_paused = nullptr;          // static GameManager.m_IsPaused
+const MethodInfo* g_get_time_scale = nullptr, *g_set_time_scale = nullptr;  // UnityEngine.Time.timeScale
+int g_unpaused_logged = 0;
+
+void keep_world_running_in_menu() {
+    if (!g_pause_menu_open || !g_net_enabled || !g_is_paused || !netrt::status().connected) return;
+    bool paused = false;
+    il2::il2cpp_field_static_get_value(g_is_paused, &paused);
+    float scale = 1;
+    if (g_get_time_scale) il2::invoke_value(g_get_time_scale, nullptr, scale);
+    if (!paused && scale > 0.01f) return;
+    if (paused) {
+        paused = false;
+        il2::il2cpp_field_static_set_value(g_is_paused, &paused);
+    }
+    if (scale <= 0.01f && g_set_time_scale) {
+        float one = 1;
+        void* a[] = {&one};
+        il2::invoke(g_set_time_scale, nullptr, a);
+    }
+    if (g_unpaused_logged++ == 0)
+        logx::info("menu: ESC's menu open; co-op: the game is not paused (%s)", paused ? "its pause" : "its time scale");
+}
+
+using PanelEnableFn = void (*)(Il2CppObject* self, bool enable, const MethodInfo* method);
+PanelEnableFn g_pause_menu_enable = nullptr;
+void pause_menu_enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
+    g_pause_menu_enable(self, enable, method);
+    if (!self || il2::class_name_of(self) != "Panel_PauseMenu") return;  // (a base class's Enable: other panels too)
+    g_pause_menu_open = enable;
+    g_unpaused_logged = 0;
+    keep_world_running_in_menu();
+}
+
 void game_manager_update_detour(Il2CppObject* self, const MethodInfo* method) {
+    keep_world_running_in_menu();  // TLDCoop_DLC: before TLD's Update decides between paused and not
     g_game_manager_update(self, method);
     on_frame();
 }
@@ -661,6 +699,16 @@ void install_hooks() {
         hooks::install_method("GameManager.OnApplicationFocus", focus,
                               reinterpret_cast<void*>(&game_manager_on_focus_detour),
                               reinterpret_cast<void**>(&g_game_manager_on_focus));
+    // TLDCoop_DLC: ESC's menu doesn't pause a co-op game
+    g_is_paused = game_manager ? il2::il2cpp_class_get_field_from_name(game_manager, "m_IsPaused") : nullptr;
+    if (Il2CppClass* time = il2::find_class("UnityEngine.CoreModule.dll", "UnityEngine", "Time")) {
+        g_get_time_scale = il2::find_method_quiet(time, "get_timeScale", 0);
+        g_set_time_scale = il2::find_method_quiet(time, "set_timeScale", 1);
+    }
+    if (Il2CppClass* pm = il2::find_class("Assembly-CSharp.dll", "", "Panel_PauseMenu"))
+        if (const MethodInfo* enable = il2::find_method_quiet(pm, "Enable", 1))
+            hooks::install_method("Panel_PauseMenu.Enable", enable, reinterpret_cast<void*>(&pause_menu_enable_detour),
+                                  reinterpret_cast<void**>(&g_pause_menu_enable));
     if (const MethodInfo* pause = il2::find_method(game_manager, "PauseWhenFocusLost", 1))
         hooks::install_method("GameManager.PauseWhenFocusLost", pause,
                               reinterpret_cast<void*>(&pause_when_focus_lost_detour),

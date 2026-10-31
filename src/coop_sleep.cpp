@@ -38,9 +38,11 @@ constexpr double kDoneSlackMs = 300;     // passing time this close to its real 
 // time screen's list ends at TILL DUSK.
 // TLDCoop_DLC: each screen's own list, in order (a bed: REST too; waiting: 1 and 2 hours too). The screen's
 // m_SleepHours holds the row (1 the first), not the choice. kChoices: rows made (the longer list).
-constexpr net::SleepChoice kBedList[] = {net::SleepChoice::H4,   net::SleepChoice::H8,   net::SleepChoice::H12,
+// TLDCoop_DLC: 30 minutes, 1 and 2 hours in bed too (a short nap; the list started at 4 hours)
+constexpr net::SleepChoice kBedList[] = {net::SleepChoice::M30,  net::SleepChoice::H1,   net::SleepChoice::H2,
+                                         net::SleepChoice::H4,   net::SleepChoice::H8,   net::SleepChoice::H12,
                                          net::SleepChoice::Dawn, net::SleepChoice::Dusk, net::SleepChoice::Rest};
-constexpr net::SleepChoice kWaitList[] = {net::SleepChoice::H1,  net::SleepChoice::H2,   net::SleepChoice::H4,
+constexpr net::SleepChoice kWaitList[] = {net::SleepChoice::M30, net::SleepChoice::H1,  net::SleepChoice::H2,   net::SleepChoice::H4,
                                           net::SleepChoice::H8,  net::SleepChoice::H12,  net::SleepChoice::Dawn,
                                           net::SleepChoice::Dusk};
 constexpr int kFirstChoice = 1;  // the first row
@@ -51,9 +53,9 @@ constexpr int kPivotLeft = 3, kPivotCenter = 4, kPivotRight = 5;      // UIWidge
 constexpr int32_t kCancelButton = 4;     // Rest.PassTimeOptions.DisplayCancelButton: TLD's HUD button over GET UP
 
 // The list, in ControllerOffset/Shared's space (40 below the panel's centre): between the description and the stats.
-constexpr float kRowTopY = 106, kRowPitch = 20, kRowTextX = 205;  // seven rows between the description and TLD's stats
-constexpr int kRowWidth = 450, kRowHeight = 19;
-constexpr int kNameFont = 20, kVotersFont = 16;
+constexpr float kRowTopY = 108, kRowPitch = 16, kRowTextX = 205;  // nine rows between the description and TLD's stats
+constexpr int kRowWidth = 450, kRowHeight = 15;
+constexpr int kNameFont = 17, kVotersFont = 14;
 
 // Panel_Rest's widgets (TLDCoop/ui/Panel_Rest.txt). RestOnly is the sleep screen's, PassTimeOnly the pass time one's.
 constexpr const char* kBedTitle = "ControllerOffset/RestOnly/Label_Title";
@@ -1282,7 +1284,7 @@ Il2CppObject* nearest_bed() {
 
 net::SleepChoice choice_named(const std::string& name) {
     static const std::pair<const char*, net::SleepChoice> kNames[] = {
-        {"1", net::SleepChoice::H1}, {"2", net::SleepChoice::H2},
+        {"30", net::SleepChoice::M30}, {"1", net::SleepChoice::H1}, {"2", net::SleepChoice::H2},
         {"4", net::SleepChoice::H4}, {"8", net::SleepChoice::H8}, {"12", net::SleepChoice::H12},
         {"dawn", net::SleepChoice::Dawn}, {"dusk", net::SleepChoice::Dusk}, {"rest", net::SleepChoice::Rest}};
     for (const auto& [n, choice] : kNames)

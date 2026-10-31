@@ -75,7 +75,7 @@ int main() {
     }
     {  // Resting (milestone 13): in bed to heal, no vote for a sleep.
         expect("REST is a vote on the wire, and its name", net::is_sleep_choice(6) && !net::is_sleep_choice(net::kSleepChoices) &&
-                                                               std::string(net::sleep_choice_name(SleepChoice::Rest)) == "REST");
+                                                               std::string(net::sleep_choice_name(SleepChoice::Rest)) == "REST (REAL TIME)");
         expect("REST doesn't skip time", !net::skips_time(SleepChoice::Rest) && net::skips_time(SleepChoice::H4) &&
                                              !net::skips_time(SleepChoice::None));
         expect("a rest lasts kRestHours at most", net::sleep_hours(SleepChoice::Rest, k) == net::kRestHours);
@@ -98,7 +98,7 @@ int main() {
         expect("their names", std::string(net::sleep_choice_name(SleepChoice::H1)) == "1 HOUR" &&
                                   std::string(net::sleep_choice_name(SleepChoice::H2)) == "2 HOURS");
         expect("they're votes that skip time", net::is_sleep_choice(7) && net::is_sleep_choice(8) &&
-                                                   !net::is_sleep_choice(9) && net::skips_time(SleepChoice::H1));
+                                                   !net::is_sleep_choice(10) && net::skips_time(SleepChoice::H1));
         auto o = net::decide_sleep({{0, true, SleepChoice::H1, true}, {1, true, SleepChoice::H1, true}}, k);
         expect("two waiting 1 hour: everyone passes 1 hour", o.kind == Kind::Shared && o.choice == SleepChoice::H1 && o.hours == 1);
         o = net::decide_sleep({{0, true, SleepChoice::H2, true}, {1, true, SleepChoice::H8}}, k);

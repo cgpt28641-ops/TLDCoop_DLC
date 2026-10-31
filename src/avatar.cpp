@@ -11,6 +11,7 @@
 #include <memory>
 #include <sstream>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 #include "game_state.h"
@@ -315,6 +316,9 @@ struct HeldCopy {
     int lit_shown = -1;  // what is on: -1 not set yet, 0 nothing, 1 lit, 2 high beam
     bool indoors_shown = false;
     double lit_at = 0;   // TLDCoop_DLC: when it was lit (its lights are looked at in the log a moment later)
+    // TLDCoop_DLC: how often each light was found switched off while lit, and how far its scripts were taken away
+    std::unordered_map<uintptr_t, int> relit;
+    int scripts_stripped = 0;  // 0 none, 1 the light's own object's, 2 every script of the copy
 };
 
 // The bones of the body pack's rig (TLD's generic NPC rig) we pose: the arms (shoulder joint, elbow, wrist), and for
@@ -1108,6 +1112,22 @@ void set_light(uintptr_t handle, bool on) {
     }
 }
 
+// TLDCoop_DLC: game scripts left on a held copy (TLD's light scripts we keep) that switch its lights off: a friend's
+// flare's LightOutdoor was switched off again every frame, so nobody saw its light outdoors. Taken away, logged.
+int strip_light_scripts(Il2CppObject* go, std::string& names) {
+    int removed = 0;
+    Il2CppObject* components = go ? components_in_children(go, api.component_type) : nullptr;
+    for (size_t i = 0, n = il2::array_length(components); i < n; ++i) {
+        Il2CppObject* c = il2::array_object_at(components, i);
+        const std::string cls = il2::class_name_of(c);
+        if (cls.rfind("UnityEngine.", 0) == 0) continue;
+        names += (names.empty() ? "" : ", ") + cls;
+        destroy(c, true);
+        ++removed;
+    }
+    return removed;
+}
+
 // TLDCoop_DLC: while lit, the lights that should be on are kept on (something of TLD's switching them off is logged once).
 void keep_lit(const Avatar& a, HeldCopy& h, bool indoors) {
     if (h.lit_shown < 1 || !api.active_and_enabled) return;
@@ -1119,6 +1139,18 @@ void keep_lit(const Avatar& a, HeldCopy& h, bool indoors) {
         Il2CppObject* light = target(l);
         bool lit = true;
         if (!is_alive(light) || !il2::invoke_value(api.active_and_enabled, light, lit) || lit) continue;
+        int& times = h.relit[l];
+        ++times;
+        // Switched off again and again: the scripts doing it go (first the light's own object's, then all the copy's)
+        if ((times == 3 && h.scripts_stripped < 1) || (times == 8 && h.scripts_stripped < 2)) {
+            std::string names;
+            Il2CppObject* from = h.scripts_stripped < 1 ? il2::invoke(pv.component_go, light) : target(h.go);
+            const int removed = strip_light_scripts(from, names);
+            h.scripts_stripped = h.scripts_stripped < 1 ? 1 : 2;
+            say(a, "%s: %s keeps being switched off; %d script(s) of %s taken away%s%s", h.gear.c_str(),
+                name_of(light).c_str(), removed, h.scripts_stripped == 1 ? "the light's object" : "the whole copy",
+                names.empty() ? "" : ": ", names.c_str());
+        }
         set_light(l, true);
         if (logged++ < 10) say(a, "%s: %s was switched off; on again", h.gear.c_str(), name_of(light).c_str());
     }

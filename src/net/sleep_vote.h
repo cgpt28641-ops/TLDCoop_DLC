@@ -12,8 +12,8 @@
 namespace net {
 
 // TLDCoop_DLC: H1 and H2 (waiting to pass time: a pot of snow melts in under an hour, and 4 hours was the shortest).
-enum class SleepChoice : uint8_t { None = 0, H4 = 1, H8 = 2, H12 = 3, Dawn = 4, Dusk = 5, Rest = 6, H1 = 7, H2 = 8 };
-constexpr uint8_t kSleepChoices = 9;
+enum class SleepChoice : uint8_t { None = 0, H4 = 1, H8 = 2, H12 = 3, Dawn = 4, Dusk = 5, Rest = 6, H1 = 7, H2 = 8, M30 = 9 };
+constexpr uint8_t kSleepChoices = 10;
 constexpr float kRestHours = 12;  // a rest lasts this long at most (in real time), unless they get up first
 
 inline bool is_sleep_choice(uint8_t v) { return v > 0 && v < kSleepChoices; }  // a vote (REST too)
@@ -22,6 +22,7 @@ inline bool skips_time(SleepChoice c) { return c != SleepChoice::None && c != Sl
 // As the screen shows them.
 inline const char* sleep_choice_name(SleepChoice c) {
     switch (c) {
+        case SleepChoice::M30: return "30 MINUTES";
         case SleepChoice::H1: return "1 HOUR";
         case SleepChoice::H2: return "2 HOURS";
         case SleepChoice::H4: return "4 HOURS";
@@ -29,7 +30,7 @@ inline const char* sleep_choice_name(SleepChoice c) {
         case SleepChoice::H12: return "12 HOURS";
         case SleepChoice::Dawn: return "TILL DAWN";
         case SleepChoice::Dusk: return "TILL DUSK";
-        case SleepChoice::Rest: return "REST";
+        case SleepChoice::Rest: return "REST (REAL TIME)";
         default: return "NO VOTE";
     }
 }
@@ -44,6 +45,7 @@ struct SleepClock {
 // at most kRestHours.
 inline float sleep_hours(SleepChoice c, const SleepClock& k) {
     switch (c) {
+        case SleepChoice::M30: return 0.5f;
         case SleepChoice::H1: return 1;
         case SleepChoice::H2: return 2;
         case SleepChoice::H4: return 4;

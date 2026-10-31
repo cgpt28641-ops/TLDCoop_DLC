@@ -443,9 +443,18 @@ void apply_thrown(const net::ThrownMsg& t, uint8_t from) {
             il2::invoke_value(api.can_stun, ai, can);
             il2::invoke_value(api.stun_chance, ai, stun);
             if (can && static_cast<float>(rand() % 100) < stun) {
-                Vector3 contact{t.contact[0], t.contact[1], t.contact[2]};
-                void* args[] = {&contact};
-                il2::invoke(api.stun, ai, args);
+                // TLDCoop_DLC: stunned, small game is killed by picking it up (TLD's). A friend can't pick up the
+                // copy it sees (no AI, no interaction there), so the host's rabbit just lay there and ran off again:
+                // it dies here instead, becomes a carcass item for every player (wildlife_carcass), and is picked up.
+                float lethal = std::numeric_limits<float>::infinity(), bleed = 0;
+                int32_t src = kDamageSourcePlayer;
+                void* damage_args[] = {&lethal, &bleed, &src, il2::il2cpp_string_new("")};
+                il2::invoke(il2::virtual_method(ai, api.apply_damage), ai, damage_args);
+                if (il2::read_field<int32_t>(ai, api.ai_mode) != kAiModeDead) {  // not killed: TLD's stun after all
+                    Vector3 contact{t.contact[0], t.contact[1], t.contact[2]};
+                    void* args[] = {&contact};
+                    il2::invoke(api.stun, ai, args);
+                }
                 stunned = true;
                 continue;
             }
@@ -467,7 +476,7 @@ void apply_thrown(const net::ThrownMsg& t, uint8_t from) {
                kItems[static_cast<int>(t.item)], distance(at, Vector3{game::read_player().position.x,
                                                                        game::read_player().position.y,
                                                                        game::read_player().position.z}),
-               t.animal ? (" on #" + std::to_string(t.animal)).c_str() : "", scared, stunned ? ", one stunned" : "");
+               t.animal ? (" on #" + std::to_string(t.animal)).c_str() : "", scared, stunned ? ", one stunned (killed: the friend picks it up as a carcass)" : "");
 }
 
 // --- client tests: aim at a copy and fire -----------------------------------------------------------------------------

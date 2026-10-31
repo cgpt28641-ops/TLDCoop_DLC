@@ -856,6 +856,7 @@ struct FogCopy {
     Il2CppObject* drawn_into = nullptr;  // the texture ProcessList last drew, and from how many spots
     int drawn_spots = -1;
     int age = 0;  // frames since made
+    double drawn_ms = 0;  // TLDCoop_DLC: when it was last drawn
 } g_fog;
 
 void drop_fog() {
@@ -966,7 +967,12 @@ Il2CppObject* fog_texture(Il2CppObject* map, const Region& region) {
     Il2CppObject* spots = region_spots(map);
     if (!alive(texture) || !spots) return nullptr;
     const int count = list_size(spots);
-    if (texture != g_fog.drawn_into || count != g_fog.drawn_spots) {
+    // TLDCoop_DLC: drawn again now and then as well: after a climb on a rope the host's radar came up blank (its
+    // texture's drawing gone) and stayed so until another region was entered
+    const double now = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const bool stale = g_fog.drawn_ms > 0 && now - g_fog.drawn_ms > 10000;
+    if (texture != g_fog.drawn_into || count != g_fog.drawn_spots || stale) {
+        g_fog.drawn_ms = now;
         Il2CppObject* vistas = dict_get(get<Il2CppObject*>(map, api.map_vistas), region_key());
         float scene = g_fog.scene_radius, map_radius = 900;  // as Panel_Map.LoadMapElementsForScene passes them
         void* args[] = {spots, vistas, &scene, &map_radius};
@@ -1138,6 +1144,16 @@ float show_radar(const std::vector<avatar::Seen>& all, const game::PlayerState& 
     }
     g_radar_w.state = texture ? "map of " + region.name + " (" + std::to_string(g_fog.drawn_spots) + " charted spots)"
                               : (on_map ? "paper (nothing charted here yet)" : "indoors (bearing and distance)");
+    {  // TLDCoop_DLC: what the radar shows, logged when it changes (the host's came up blank after a rope climb)
+        static std::string shown;
+        const std::string now_shows = texture ? "the map" : !map ? "paper (TLD's map screen not found)"
+                                      : !region.mappable ? "paper (not a mapped region)"
+                                      : indoors ? "indoors mode" : "paper (no map texture)";
+        if (now_shows != shown) {
+            shown = now_shows;
+            logx::info("hud: radar shows %s (region %s)", now_shows.c_str(), region.name.c_str());
+        }
+    }
 
     for (auto& [id, b] : g_radar_w.blips) {
         set_active(go_of(live(b.dot)), false);
