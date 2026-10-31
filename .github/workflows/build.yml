@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # the dll-only release below, when the artifact can't be stored
 
 jobs:
   windows:
@@ -79,7 +79,23 @@ jobs:
           }
 
       - uses: actions/upload-artifact@v4
+        id: upload
+        continue-on-error: true
         with:
           name: TLDCoop_DLC
           path: pack/
           if-no-files-found: error
+
+      # GitHub's artifact storage full: winhttp.dll alone (our code only, no game assets) to the private repo's
+      # "dll-latest" release, so a build still reaches the players.
+      - name: winhttp.dll alone when the artifact could not be stored
+        if: steps.upload.outcome == 'failure' && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view dll-latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create dll-latest -R "$GITHUB_REPOSITORY" --prerelease --title "winhttp.dll (latest)" --notes "Only winhttp.dll"
+          gh release upload dll-latest pack/winhttp.dll -R "$GITHUB_REPOSITORY" --clobber
+          gh release edit dll-latest -R "$GITHUB_REPOSITORY" --notes "Only winhttp.dll, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
+          exit 1
