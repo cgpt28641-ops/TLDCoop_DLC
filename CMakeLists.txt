@@ -40,6 +40,7 @@ add_library(tldcoop SHARED
   src/dynamic_trees.cpp
   src/custom_pictures.cpp
   src/adaptive_arsenal.cpp
+  src/dev_console.cpp  # TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
   src/avatar.cpp
   src/config.cpp
   src/coop_death.cpp
@@ -80,6 +81,8 @@ add_library(tldcoop SHARED
   src/coop_backup.cpp
   src/world_spray.cpp
 )
+# TLDCoop_DLC: TLD's developer console, for testing; to be removed (src/dev_console.h)
+target_compile_definitions(tldcoop PRIVATE TLDCOOP_DEV_CONSOLE)
 set_target_properties(tldcoop PROPERTIES OUTPUT_NAME winhttp)
 target_link_libraries(tldcoop PRIVATE minhook tldnet)
 

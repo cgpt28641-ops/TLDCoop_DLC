@@ -80,6 +80,9 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   obrażenia maleją z odległością (pełne przy lufie, 10% na 500 m). Rewolwerem można celować w ruchu, a HUD pokazuje
   wylatującą łuskę. To mod AdaptiveArsenal (Deaadman), wbudowany za zgodą autora, **bez MelonLoadera**. Włącza go
   **host** (MODS → ADAPTIVE ARSENAL); w solo `coop.ini` `[arsenal] enabled=`. Usuń kopię z MelonLoadera, jeśli ją masz.
+- **Konsola deweloperska (na testy, do usunięcia):** F1 otwiera konsolę TLD (`help` pokazuje komendy). To
+  Developer Console (DigitalzombieTLD), wbudowany za zgodą autora; `coop.ini` `[devconsole] enabled=0` wyłącza,
+  `key=F2` zmienia klawisz.
 - **Własne obrazy:** w ramkach na obrazy w grze mogą wisieć nasze obrazy (`assets/pictures`, wbudowane w DLL).
   Na razie jeden: obrazek nr 6 z atlasu `OBJ_PictureFrame_GM_A` (ten ze wspinaczem). Plik TLD zostaje bez zmian:
   mod kopiuje atlas w grze i wkleja nasz obrazek. Ikona przedmiotu w ekwipunku zostaje stara.
@@ -313,5 +316,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
   **Jods** (tekstury); wbudowany za zgodą autorów (`third_party/dynamictrees/NOTICE.txt`).
 - Adaptive Arsenal: mod [AdaptiveArsenal](https://github.com/Deaadman/adaptive-arsenal) autorstwa **Deaadmana**
   (GPL-3.0); przeniesiony do C++ i wbudowany za zgodą autora (`third_party/adaptive-arsenal/NOTICE.txt`).
+- Developer Console: mod [TLD-Developer-Console](https://github.com/DigitalzombieTLD/TLD-Developer-Console) autorstwa
+  **DigitalzombieTLD** (MIT); jego rdzeń wbudowany za zgodą autora (`third_party/developer-console/NOTICE.txt`).
 - **The Long Dark** i jego postacie należą do **Hinterland Studio**. To nieoficjalny mod fanowski, niewykonany ani
   niepopierany przez Hinterland. Do gry potrzebna jest własna kopia gry.

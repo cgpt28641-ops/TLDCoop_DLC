@@ -1,0 +1,3 @@
+Developer Console by DigitalzombieTLD (earlier FINDarkside) — https://github.com/DigitalzombieTLD/TLD-Developer-Console (MIT, see LICENSE).
+TLDCoop_DLC carries a small C++ port of its core (src/dev_console.cpp: TLD's own uConsole brought up, opened with a
+key), built in with the author's permission (given to Karol, 2026-10-31), for testing. Remove: see src/dev_console.h.

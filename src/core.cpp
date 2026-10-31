@@ -14,6 +14,9 @@
 #include "coop_features.h"
 #include "adaptive_arsenal.h"
 #include "custom_pictures.h"
+#ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
+#include "dev_console.h"
+#endif
 #include "dynamic_trees.h"
 #include "avatar.h"
 #include "config.h"
@@ -558,6 +561,9 @@ void on_frame() {
     TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
     TIMED("custom_pictures::on_frame", custom_pictures::on_frame(scene, in_game));
     TIMED("adaptive_arsenal::on_frame", adaptive_arsenal::on_frame(scene, in_game));
+#ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
+    TIMED("dev_console::on_frame", dev_console::on_frame(scene, in_game));
+#endif
     TIMED("coop_backup::on_frame", coop_backup::on_frame(game::active_scene(), g_net_enabled));
     TIMED("world_join::on_frame", world_join::on_frame(scene, in_game));
     TIMED("coop_death::on_frame", coop_death::on_frame(scene, in_game));
