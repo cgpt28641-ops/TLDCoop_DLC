@@ -99,4 +99,4 @@ jobs:
             gh release create dll-latest -R "$GITHUB_REPOSITORY" --prerelease --title "winhttp.dll (latest)" --notes "Only winhttp.dll"
           gh release upload dll-latest pack/winhttp.dll -R "$GITHUB_REPOSITORY" --clobber
           gh release edit dll-latest -R "$GITHUB_REPOSITORY" --notes "Only winhttp.dll, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
-          exit 1
+          echo "::warning::Artifact storage full: winhttp.dll alone is in the dll-latest release"

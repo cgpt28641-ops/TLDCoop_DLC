@@ -281,7 +281,7 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Untested. Look in the log for "death: arms:" and "props in view".
 - CI: artifact storage quota hit (20 GB of old builds). With Karol's OK all old artifacts were deleted except run 41151450359's;
   GitHub recalculates the quota only every 6-12 h. Meanwhile build.yml uploads winhttp.dll alone to the private prerelease
-  `dll-latest` when the artifact upload fails (the run then shows as failed on purpose). Download:
+  `dll-latest` when the artifact upload fails (the run now ends green, with a warning). Download:
   https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/download/dll-latest/winhttp.dll (build 1e9f623, run 41202336256).
   Bundles are unchanged since run 41151450359, so only winhttp.dll needs replacing.
 
