@@ -83,24 +83,36 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
 - **Konsola deweloperska (na testy, do usunięcia):** F1 otwiera konsolę TLD (`help` pokazuje komendy). To
   Developer Console (DigitalzombieTLD), wbudowany za zgodą autora; `coop.ini` `[devconsole] enabled=0` wyłącza,
   `key=F2` zmienia klawisz.
-- **Własne obrazy:** w ramkach na obrazy w grze mogą wisieć nasze obrazy (`assets/pictures`, wbudowane w DLL).
-  Na razie jeden: obrazek nr 6 z atlasu `OBJ_PictureFrame_GM_A` (ten ze wspinaczem). Plik TLD zostaje bez zmian:
-  mod kopiuje atlas w grze i wkleja nasz obrazek. Ikona przedmiotu w ekwipunku zostaje stara.
+- **Własne obrazy:** w ramkach na obrazy w grze wiszą nasze obrazy w stylu malowanym (`assets/pictures`, wbudowane
+  w DLL). Są dwa: obrazek nr 6 z atlasu `OBJ_PictureFrame_GM_A` (ten ze wspinaczem) i lewy górny, większy obraz z
+  `OBJ_PictureMisc_01`. Pliki TLD zostają bez zmian: mod kopiuje atlas w grze i wkleja nasz obrazek. Ikona
+  przedmiotu w ekwipunku zostaje stara.
 - **Kolory graczy:** każdy gracz ma swój kolor na radarze, mapie i nad głową. Kolor znajomego można zmienić w
   `coop.ini`, sekcja `[colors]` (np. `Shatsca=blue`).
 - Nad głową widać nazwę gracza, a na krawędzi ekranu strzałkę. Jest też mały radar, a gracze są widoczni na mapie
-  gry.
+  gry (strzałki w kolorze gracza).
+- **Światło w rękach znajomego:** zapałka, pochodnia, raca, latarka i lampa świecą u wszystkich.
 
 **Wspólny świat**
 - **Zwierzęta są wspólne.** Wszyscy widzą tego samego wilka, a strzały trafiają w to samo zwierzę.
-- Wspólne są też **tusze** (mięso, skóra), **przedmioty** (co jeden podniesie, znika u innych), **szafki i sejfy**,
-  **ogniska i gotowanie**, rozbite meble i zebrane rośliny.
+- Zwierzęta przy znajomym żyją i ruszają się także wtedy, gdy host jest daleko.
+- Królik ogłuszony kamieniem przez znajomego od razu ginie i leży jako tusza do podniesienia (znajomy nie może
+  podnieść żywego, ogłuszonego królika, bo widzi tylko jego kopię).
+- Wspólne są też **tusze** (mięso, skóra), **przedmioty** (co jeden podniesie, znika u innych), **szafki i sejfy**
+  (także to, że szafka jest już przeszukana), **ogniska i gotowanie** (również kubek kawy postawiony do podgrzania),
+  **naprawy w kryjówce**, rozbite meble i zebrane rośliny.
 - **Unikalne przedmioty** (notatki, klucze, plecak techniczny) każdy ma swoje.
 
 **Przetrwanie razem**
 - Każdy przedmiot można **dać znajomemu**.
-- Ze **spaniem i czekaniem** jest tak, że czas przeskakuje dopiero, gdy wszyscy się położą. Każdy głosuje, jak długo.
-- **Śmierć:** ciało zostaje z plecakiem, a Ty wracasz jako nowy ocalały obok znajomych.
+- Ze **spaniem i czekaniem** jest tak, że czas przeskakuje dopiero, gdy wszyscy się położą. Każdy głosuje, jak długo:
+  30 minut, 1, 2, 4, 8 lub 12 godzin, do świtu albo do zmierzchu. **REST (REAL TIME)** w łóżku to odpoczynek bez
+  przeskakiwania czasu: leżysz w czasie rzeczywistym, a dolegliwości i stan zdrowia wracają 1,5 raza szybciej.
+- **ESC nie pauzuje gry w co-opie.** Gdy masz otwarte menu, świat (zegar, zwierzęta, ogień) toczy się dalej, jak u
+  innych graczy. W solo pauza działa jak zwykle.
+- **Śmierć:** ciało zostaje z plecakiem, a Ty od razu wracasz jako nowy ocalały **w miejscu śmierci** (nie ma
+  przycisku NEXT SURVIVOR). Przy śmierci tracisz losowo **70% zwykłych przedmiotów** (`[death] lose_percent=` w
+  `coop.ini`); przedmioty fabularne, misyjne i takie, których gra nie pozwala wyrzucić, zostają zawsze.
 - **Zrywanie połączenia:** po powrocie zmiany obu stron są łączone. Zapis hosta przechowuje świat, a zapis każdego
   gracza jego postać.
 
@@ -127,14 +139,16 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v36**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v37**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
 ## Instalacja
 
 1. **Pobierz zip.** Wejdź w zakładkę **Actions** tego repozytorium, otwórz najnowszy udany build (zielony) i na dole
-   strony, w sekcji **Artifacts**, kliknij **TLDCoop_DLC**. Musisz być zalogowany na GitHubie.
+   strony, w sekcji **Artifacts**, kliknij **TLDCoop_DLC**. Musisz być zalogowany na GitHubie. Buildy są trzymane
+   **2 dni**. Gdy na GitHubie zabraknie miejsca na paczki, najnowszy sam `winhttp.dll` jest w wydaniu
+   [dll-latest](https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/tag/dll-latest): wtedy podmień tylko ten plik.
 2. **Zrób kopię zapisów.** Wklej w pasek adresu Eksploratora `%LOCALAPPDATA%\Hinterland\TheLongDark` i skopiuj ten
    folder w bezpieczne miejsce.
 3. **Zamknij The Long Dark.**
@@ -156,7 +170,8 @@ TheLongDark\
     ├── tldcoop_bodies.bundle       postacie, jako które widać znajomych
     ├── tldcoop_eating.bundle       animacje
     ├── tldcoop_handover.bundle
-    └── tldcoop_sleeping.bundle
+    ├── tldcoop_sleeping.bundle
+    └── tldcoop_trees.bundle        tekstury Dynamic Trees
 ```
 
 7. **Uruchom grę ze Steama.** W Survival wybierz NEW albo RESUME. Jeśli pojawi się ekran **SOLO OR CO-OP?**, mod
@@ -201,6 +216,10 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host: ekran co-opa → MODS). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze). |
 | `[trees] enabled=1` | **Nowe.** Dynamic Trees w solo (w co-opie decyduje host: MODS). Ilość śniegu na drzewach jest zapisywana osobno dla każdego zapisu gry w `TLDCoop\dynamic_trees.ini`. |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
+| `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
+| `[arsenal] enabled=1` | **Nowe.** Adaptive Arsenal w solo (w co-opie decyduje host: MODS). |
+| `[devconsole] enabled=1`, `key=F1` | **Nowe, na testy.** Konsola deweloperska i jej klawisz. |
+| `backups=5` | Ile kopii zapasowych zapisów trzymać w `TLDCoop\backups` (`0` żadnej). |
 | `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
 | `transport=local` | Gra w sieci lokalnej po IP zamiast przez kody Steam (z `bind_ip`, `host_ip`, `port`). |
 
@@ -216,13 +235,16 @@ trybie solo nic nie robi. Gra wczytuje go jako `winhttp.dll`, więc MelonLoader 
 | `winmm.dll` | Nic. |
 
 Jak rozpoznać, czyj jest `winhttp.dll`? Kliknij prawym → **Właściwości** → **Szczegóły**. Plik MelonLoadera ma
-nazwę **MelonLoader.Bootstrap** (ok. 10 MB), a plik TLDCoop nie ma nazwy produktu (ok. 2 MB).
+nazwę **MelonLoader.Bootstrap** (ok. 10 MB), a plik TLDCoop nie ma nazwy produktu (ok. 3,7 MB).
 
 **AmbientLights:** jest już wbudowany w TLDCoop. Jeśli masz go też w `Mods` MelonLoadera, usuń go stamtąd
 (`AmbientLights.dll` i folder `ambient-lights`). Dopóki tam jest, TLDCoop ustępuje mu miejsca, a przełącznik hosta
 nie działa.
 
 **DynamicTrees:** też jest już wbudowany. Usuń go z `Mods` MelonLoadera, żeby oba nie zmieniały tych samych tekstur.
+
+**AdaptiveArsenal** i **Developer Console:** też są wbudowane. Usuń je z `Mods` MelonLoadera, żeby nie działały
+podwójnie.
 
 **Pamiętaj:** wszyscy w grupie powinni mieć te same mody zmieniające rozgrywkę, np. dodające przedmioty albo
 zmieniające loot. Mody graficzne i od interfejsu mogą się różnić.
@@ -273,6 +295,10 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
 - **Unikalne przedmioty z Iron Road** (np. woskowe cylindry) nie są jeszcze na liście unikalnych. Może się zdarzyć,
   że tylko jeden gracz podniesie dany przedmiot.
 - **Gesty** są na razie liczone w kodzie (ruch ręki i głowy). Ładne, gotowe animacje wymagają zbudowania ich w Unity.
+- **Odrodzenie w miejscu ostatniego snu** (zamiast w miejscu śmierci): w planach.
+- **Lampy naftowe** w rękach znajomego: do sprawdzenia w grze.
+- **Temperatura powietrza** może się różnić między graczami przy tej samej pogodzie, bo gra liczy ją lokalnie dla
+  każdego: wnętrze lub zewnątrz, wysokość, ciepło ogniska w pobliżu. To nie błąd synchronizacji.
 
 ## Budowanie samemu
 
@@ -297,6 +323,12 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
 | `src/` | Mod. `dllmain.cpp` go ładuje, a `src/net/` to protokół i połączenie (bez kodu gry, z testami). |
 | `src/net/content.h` | **Nowe.** Porównywanie list DLC graczy. |
 | `src/optional_content.cpp` | **Nowe.** Odczyt zainstalowanych DLC z gry. |
+| `src/coop_death.cpp` | Śmierć: ciało, utrata przedmiotów, odrodzenie, przywracanie kamery i rąk. |
+| `src/coop_sleep.cpp` | Wspólny sen i czekanie (głosowanie). |
+| `src/wildlife_*.cpp` | Wspólne zwierzęta, trafienia, tusze, cele ataków. |
+| `src/world_*.cpp` | Wspólne przedmioty, szafki, ogniska, obiekty. |
+| `src/custom_pictures.cpp` | Nasze obrazy w ramkach. |
+| `src/adaptive_arsenal.cpp`, `src/dynamic_trees.cpp`, `src/ambient_lights.cpp`, `src/dev_console.cpp` | Wbudowane mody. |
 | `tests/` | Testy bez gry, w tym `content_test.cpp`. |
 | `bodypack/` | Jak budowane są postacie (Unity 6000.0.60f1) i animacje. |
 | `third_party/minhook` | [MinHook](https://github.com/TsudaKageyu/minhook) do przechwytywania funkcji. |

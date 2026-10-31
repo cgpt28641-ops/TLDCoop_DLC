@@ -294,3 +294,27 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   other games apply it). A client also asks the host for a container's contents together with its lock request (before
   TLD's search), so a container already searched by someone opens as searched.
 - CI: artifacts kept 2 days (retention-days: 2), so the storage doesn't fill again.
+
+## 2026-10-31 (21:00) — Karol's list after the evening session (host log coop_host13, build 38ab54a: before the containers fix)
+- Rabbit "killed" far from the host couldn't be picked up: it was STUNNED by the friend's stone (wildlife_hits
+  apply_thrown "one stunned", 255 m from the host). A friend sees only a copy (no AI, no interaction), so a stunned
+  rabbit can't be picked up there. Now the host kills it (ApplyDamage inf) -> carcass item for everyone (Stun only if
+  that didn't kill it).
+- Rabbits vanishing: no evidence in the host log. Added logs: host `wildlife: the X #id stops being shared: <why>`
+  (TLD removed / switched off / out of range, distance to nearest player); `wildlife: the dead X stays an animal`
+  (why a dead rabbit isn't made an item).
+- ESC paused the world: Panel_PauseMenu.Enable hooked (class-name guarded); while it's open in a connected co-op game,
+  GameManager.m_IsPaused is cleared before GameManager.Update, Time.timeScale set back to 1 if 0. Log "menu: ESC's menu
+  open; co-op: the game is not paused".
+- Flare light not visible: log showed LightOutdoor switched off again every frame (keep_lit turned it on, something
+  turned it off). keep_lit now counts; at 3 it destroys the non-Unity scripts on the light's GameObject, at 8 all game
+  scripts of the held copy; logged "keeps being switched off; N script(s) ... taken away: <classes>".
+- Coffee cup on a stove (CookingPotDummy) not seen by others: a NEW pot was sent without its food, so the other game
+  couldn't find the food. world_items scan now sends the food first ("went into a new pot").
+- Sleep: bed list 30 MIN, 1, 2, 4, 8, 12 h, dawn, dusk, REST (renamed "REST (REAL TIME)": no skip, heals 1.5x; that
+  is what "doesn't work" was). Wait list 30 MIN too. Rows smaller (pitch 16) for 9 rows. SleepChoice::M30 = 9,
+  kSleepChoices 10; protocol v37.
+- Host radar blank after a rope climb: the fog copy is redrawn every 10 s; `hud: radar shows ...` logged on change.
+- Air temperature differences: local (indoors, height, fire), not sync. Containers searched by others: fixed in
+  2715c1b (the host ran 38ab54a).
+- README brought up to date.
