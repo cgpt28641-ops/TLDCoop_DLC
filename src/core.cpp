@@ -18,6 +18,7 @@
 #include "dev_console.h"
 #endif
 #include "dynamic_trees.h"
+#include "just_zoom.h"
 #include "avatar.h"
 #include "config.h"
 #include "dumper.h"
@@ -645,6 +646,15 @@ void game_manager_update_detour(Il2CppObject* self, const MethodInfo* method) {
 // After the animation step: what the others hold goes into their avatars' hands, the arms posed over the clip.
 void game_manager_late_update_detour(Il2CppObject* self, const MethodInfo* method) {
     g_game_manager_late_update(self, method);
+    {  // TLDCoop_DLC: JustZoom (its OnLateUpdate); a new scene starts it over
+        static std::string zoom_scene;
+        const std::string sc = game::active_scene();
+        if (sc != zoom_scene) {
+            zoom_scene = sc;
+            just_zoom::reset();
+        }
+        just_zoom::late_update(game::is_gameplay_scene(sc));
+    }
     if (g_net_enabled) avatar::late_update();
     coop_hud::late_update();  // after the avatars moved: names over their heads, the radar
 }
@@ -742,6 +752,7 @@ void on_runtime_ready() {
     ambient_lights::init();
     dynamic_trees::init();
     custom_pictures::init();
+    just_zoom::init();  // TLDCoop_DLC
     adaptive_arsenal::init();
     world_join::init();
     coop_death::init();

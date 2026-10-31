@@ -80,6 +80,10 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   obrażenia maleją z odległością (pełne przy lufie, 10% na 500 m). Rewolwerem można celować w ruchu, a HUD pokazuje
   wylatującą łuskę. To mod AdaptiveArsenal (Deaadman), wbudowany za zgodą autora, **bez MelonLoadera**. Włącza go
   **host** (MODS → ADAPTIVE ARSENAL); w solo `coop.ini` `[arsenal] enabled=`. Usuń kopię z MelonLoadera, jeśli ją masz.
+- **JustZoom (wbudowane):** przytrzymaj **Z**, żeby przybliżyć widok; kółko myszy (z wciśniętym Z) przybliża lub
+  oddala (1,1x–20x), a kamera obraca się wtedy wolniej i płynniej. To mod JustZoom (WillWunderhorn), wbudowany za
+  zgodą autora, **bez MelonLoadera i ModSettings**. Każdy ustawia u siebie w `coop.ini` `[zoom]` (`enabled`, `key`,
+  `wheel_step`, `speed`, `smooth`).
 - **Konsola deweloperska (na testy, do usunięcia):** F1 otwiera konsolę TLD (`help` pokazuje komendy). To
   Developer Console (DigitalzombieTLD), wbudowany za zgodą autora; `coop.ini` `[devconsole] enabled=0` wyłącza,
   `key=F2` zmienia klawisz.
@@ -218,6 +222,7 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
 | `[arsenal] enabled=1` | **Nowe.** Adaptive Arsenal w solo (w co-opie decyduje host: MODS). |
+| `[zoom] enabled=1`, `key=Z` | **Nowe.** JustZoom: klawisz przybliżenia; `wheel_step` (5–50) krok kółka, `speed` (1–30) szybkość przybliżania, `smooth` (1–40) płynność obrotu kamery. |
 | `[devconsole] enabled=1`, `key=F1` | **Nowe, na testy.** Konsola deweloperska i jej klawisz. |
 | `backups=5` | Ile kopii zapasowych zapisów trzymać w `TLDCoop\backups` (`0` żadnej). |
 | `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
@@ -243,7 +248,7 @@ nie działa.
 
 **DynamicTrees:** też jest już wbudowany. Usuń go z `Mods` MelonLoadera, żeby oba nie zmieniały tych samych tekstur.
 
-**AdaptiveArsenal** i **Developer Console:** też są wbudowane. Usuń je z `Mods` MelonLoadera, żeby nie działały
+**AdaptiveArsenal**, **JustZoom** i **Developer Console:** też są wbudowane. Usuń je z `Mods` MelonLoadera, żeby nie działały
 podwójnie.
 
 **Pamiętaj:** wszyscy w grupie powinni mieć te same mody zmieniające rozgrywkę, np. dodające przedmioty albo
@@ -328,7 +333,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
 | `src/wildlife_*.cpp` | Wspólne zwierzęta, trafienia, tusze, cele ataków. |
 | `src/world_*.cpp` | Wspólne przedmioty, szafki, ogniska, obiekty. |
 | `src/custom_pictures.cpp` | Nasze obrazy w ramkach. |
-| `src/adaptive_arsenal.cpp`, `src/dynamic_trees.cpp`, `src/ambient_lights.cpp`, `src/dev_console.cpp` | Wbudowane mody. |
+| `src/adaptive_arsenal.cpp`, `src/dynamic_trees.cpp`, `src/ambient_lights.cpp`, `src/just_zoom.cpp`, `src/dev_console.cpp` | Wbudowane mody. |
 | `tests/` | Testy bez gry, w tym `content_test.cpp`. |
 | `bodypack/` | Jak budowane są postacie (Unity 6000.0.60f1) i animacje. |
 | `third_party/minhook` | [MinHook](https://github.com/TsudaKageyu/minhook) do przechwytywania funkcji. |
@@ -348,6 +353,8 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
   **Jods** (tekstury); wbudowany za zgodą autorów (`third_party/dynamictrees/NOTICE.txt`).
 - Adaptive Arsenal: mod [AdaptiveArsenal](https://github.com/Deaadman/adaptive-arsenal) autorstwa **Deaadmana**
   (GPL-3.0); przeniesiony do C++ i wbudowany za zgodą autora (`third_party/adaptive-arsenal/NOTICE.txt`).
+- JustZoom: mod [JustZoom](https://github.com/WillWunderhorn/JustZoom) autorstwa **WillWunderhorna**; przeniesiony
+  do C++ i wbudowany za zgodą autora (`third_party/justzoom/NOTICE.txt`).
 - Developer Console: mod [TLD-Developer-Console](https://github.com/DigitalzombieTLD/TLD-Developer-Console) autorstwa
   **DigitalzombieTLD** (MIT); jego rdzeń wbudowany za zgodą autora (`third_party/developer-console/NOTICE.txt`).
 - **The Long Dark** i jego postacie należą do **Hinterland Studio**. To nieoficjalny mod fanowski, niewykonany ani

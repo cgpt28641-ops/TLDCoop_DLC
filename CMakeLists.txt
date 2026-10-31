@@ -40,6 +40,7 @@ add_library(tldcoop SHARED
   src/dynamic_trees.cpp
   src/custom_pictures.cpp
   src/adaptive_arsenal.cpp
+  src/just_zoom.cpp  # TLDCoop_DLC: JustZoom (WillWunderhorn), with permission
   src/dev_console.cpp  # TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
   src/avatar.cpp
   src/config.cpp

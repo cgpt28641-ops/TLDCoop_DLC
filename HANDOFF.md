@@ -318,3 +318,11 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Air temperature differences: local (indoors, height, fire), not sync. Containers searched by others: fixed in
   2715c1b (the host ran 38ab54a).
 - README brought up to date.
+
+## 2026-10-31 (21:15) — JustZoom built in
+- WillWunderhorn/JustZoom (MelonLoader, permission given to Karol; repo has no license file) ported to
+  src/just_zoom.cpp: hold Z (coop.ini [zoom] key) to zoom, wheel while holding 1.1x..20x, FOV via Camera.fieldOfView +
+  vp_FPSCamera.m_RenderingFieldOfView, sensitivity via MouseSensitivity/m_MouseSensitivity, smoothed look by writing
+  Angle/m_Yaw/m_Pitch/m_Current*/m_Target* (as the original). Runs in GameManager.LateUpdate (core), reset on scene
+  change. Key read with GetAsyncKeyState (game window in front); wheel via UnityEngine.Input.mouseScrollDelta.
+  Local only. third_party/justzoom/NOTICE.txt; README updated.

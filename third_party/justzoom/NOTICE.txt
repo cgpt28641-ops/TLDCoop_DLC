@@ -1,0 +1,4 @@
+JustZoom by WillWunderhorn (LittleWolfStorm in its MelonInfo) — https://github.com/WillWunderhorn/JustZoom
+("Just zoom from Absolute Cinema mod"). The repository states no license. TLDCoop_DLC carries a C++ port of it
+(src/just_zoom.cpp), built in with the author's permission (given to Karol, 2026-10-31). No MelonLoader, ModSettings
+or files of the mod are needed; its settings are in coop.ini [zoom].
