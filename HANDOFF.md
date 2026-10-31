@@ -269,3 +269,13 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Log hosta coop_host12: odrodzenie 01:34:57 poprawne (od razu i po 1.5 s: kamera (9,0,0), idle). Ale 01:35:00 wilk zaatakował nowego ocalałego od razu, a nasze sprawdzenia po 4 s i 8 s (`controls back: the struggle, ... screen's fade`) PRZERWAŁY tę walkę (BreakStruggle, kamera do idle, rozjaśnienie) — stąd wstawanie w trakcie walki, wilk zamrożony w powietrzu i ręce widoczne potem. Poprawka: opóźnione sprawdzenia nic nie robią, gdy gracz walczy (PlayerStruggle.InStruggle) albo tryb sterowania ≠ Normal — wtedy kończą się na dobre (log `the new survivor is busy ...`).
 - Wolne klatki: wczytanie tekstur Dynamic Trees przy pierwszej scenie gry trwało 1.1–1.8 s w jednej klatce. Teraz ładowane w menu głównym (8 s po wejściu; log `trees: N textures loaded at the main menu`).
 - W logach obu: brak FAULT/ERROR; konsola ładuje się poprawnie; „shown under it” działa u klienta; zwierzęta przy znajomych bez imposterów działa.
+
+## 2026-10-31 (13:30) — bedroll in view / arms after respawn
+- Host log 52f0f885: 3 deaths, camera checks clean, yet a bedroll in first person after respawn and the arms in the air again.
+- Cause (likely): `Animator.Rebind()` on PlayerAnimation.m_Animator (the FP arms rig) put every animated prop of the rig back
+  to its default, shown — the bedroll prop. It did not fix the arms either.
+- Now (coop_death `controls_back` + `put_arms_away`): only the camera rig is rebound. With nothing in hand: at respawn
+  DisableWeapon, ResetParams, m_State -> Hidden; HideHands if the hands are drawn; any other active renderer under the arms
+  rig is SetActive(false) and logged ("the arms' rig's props in view, switched off: ..."). Late checks (1.5/4/8 s) do the
+  hide/props part only when TLD's state is Hidden and nothing is held. Holding something: logged, left alone.
+- Untested. Look in the log for "death: arms:" and "props in view".
