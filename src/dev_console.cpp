@@ -17,11 +17,15 @@ namespace {
 constexpr const char* kConsoleGuid = "5e8222cec53bee74d90412e9e11caec3";
 constexpr int kKeyF1 = 282;  // UnityEngine.KeyCode.F1 (F2..F12 follow)
 
-bool g_done = false;
-int g_tries = 0;
-uintptr_t g_console = 0;
+bool g_done = false;        // nothing more to do (made and keyed, off, or given up)
+bool g_requested = false;   // InstantiateAsync asked; waiting for TLD's uConsole to wake (its Awake sets m_Instance)
+double g_menu_since = 0, g_requested_at = 0;
+Il2CppClass* g_console_class = nullptr;
+FieldInfo* g_instance = nullptr;
 
-// coop.ini [devconsole]: enabled (1), key (F1..F12).
+double now_ms() { return static_cast<double>(GetTickCount64()); }
+
+// coop.ini [devconsole]: enabled (1), key (F1..F15).
 bool settings(int& key) {
     const auto ini = paths::instance_dir() / L"coop.ini";
     if (!GetPrivateProfileIntW(L"devconsole", L"enabled", 1, ini.c_str())) return false;
@@ -35,74 +39,103 @@ bool settings(int& key) {
     return true;
 }
 
-bool make() {
-    const char* addr = "Unity.Addressables.dll";
-    Il2CppClass* ref_class = il2::find_class(addr, "UnityEngine.AddressableAssets", "AssetReference");
-    Il2CppClass* handle_class =
-        il2::find_class("Unity.ResourceManager.dll", "UnityEngine.ResourceManagement.AsyncOperations", "AsyncOperationHandle");
-    Il2CppClass* console = il2::find_class("Assembly-CSharp.dll", "", "uConsole");
-    if (!ref_class || !handle_class || !console) {
-        logx::warn("devconsole: TLD's classes for it are missing (AssetReference %s, AsyncOperationHandle %s, uConsole %s)",
-                   ref_class ? "ok" : "no", handle_class ? "ok" : "no", console ? "ok" : "no");
-        return true;  // nothing to retry
-    }
-    // Already there (made before, or TLD's own)?
-    FieldInfo* instance = il2::il2cpp_class_get_field_from_name(console, "m_Instance");
-    Il2CppObject* existing = nullptr;
-    if (instance) il2::il2cpp_field_static_get_value(instance, &existing);
-    Il2CppObject* made = existing;
-    if (!made) {
-        const MethodInfo* ctor = il2::find_method_params(ref_class, ".ctor", {"System.String"});
-        const MethodInfo* inst = il2::find_method_params(ref_class, "InstantiateAsync",
-                                                         {"UnityEngine.Transform", "System.Boolean"});
-        const MethodInfo* wait = il2::find_method(handle_class, "WaitForCompletion", 0);
-        if (!ctor || !inst || !wait) {
-            logx::warn("devconsole: TLD's calls for it are missing");
-            return true;
-        }
-        Il2CppObject* ref = il2::il2cpp_object_new(ref_class);
-        void* ca[] = {il2::il2cpp_string_new(kConsoleGuid)};
-        il2::invoke(ctor, ref, ca);
-        bool world = false;
-        void* ia[] = {nullptr, &world};
-        // AsyncOperationHandle<GameObject>, boxed; the plain AsyncOperationHandle has the same fields, so its
-        // (compiled) WaitForCompletion runs on it.
-        Il2CppObject* handle = il2::invoke(il2::virtual_method(ref, inst), ref, ia);
-        Il2CppObject* go = handle ? il2::invoke(wait, handle) : nullptr;
-        if (!go) {
-            logx::warn("devconsole: TLD's console didn't load (try %d)", g_tries);
-            return g_tries >= 3;
-        }
-        if (instance) il2::il2cpp_field_static_get_value(instance, &made);
-        if (!made) {
-            logx::warn("devconsole: TLD's console loaded, but no uConsole came with it");
-            return true;
-        }
-    }
+Il2CppObject* instance() {
+    Il2CppObject* o = nullptr;
+    if (g_instance) il2::il2cpp_field_static_get_value(g_instance, &o);
+    return o;
+}
+
+// TLD's uConsole is there: its key set. True when done.
+bool key_it(Il2CppObject* made, bool was_there) {
     int key = kKeyF1;
     settings(key);
-    const ptrdiff_t activate = il2::field_offset_quiet(console, "m_Activate");
+    const ptrdiff_t activate = il2::field_offset_quiet(g_console_class, "m_Activate");
     if (activate >= 0) *reinterpret_cast<int32_t*>(reinterpret_cast<char*>(made) + activate) = key;
-    g_console = il2::il2cpp_gchandle_new(made, false);
     logx::info("devconsole: TLD's developer console is in (F%d opens it; 'help' lists its commands)%s", key - kKeyF1 + 1,
-               existing ? " (it was there already)" : "");
+               was_there ? " (it was there already)" : "");
     return true;
+}
+
+// Ask Addressables for TLD's uConsole prefab, made in the scene. No waiting on it here (blocking on the handle
+// crashed the game at the main menu): its Awake sets uConsole.m_Instance, which on_frame looks for.
+bool request() {
+    Il2CppClass* ref_class = il2::find_class("Unity.Addressables.dll", "UnityEngine.AddressableAssets", "AssetReference");
+    const MethodInfo* ctor = ref_class ? il2::find_method_params(ref_class, ".ctor", {"System.String"}) : nullptr;
+    const MethodInfo* inst = ref_class ? il2::find_method_params(ref_class, "InstantiateAsync",
+                                                                  {"UnityEngine.Transform", "System.Boolean"})
+                                       : nullptr;
+    if (!ctor || !inst) {
+        logx::warn("devconsole: TLD's calls for it are missing");
+        return false;
+    }
+    Il2CppObject* ref = il2::il2cpp_object_new(ref_class);
+    void* ca[] = {il2::il2cpp_string_new(kConsoleGuid)};
+    il2::invoke(ctor, ref, ca);
+    bool world = false;
+    void* ia[] = {nullptr, &world};
+    Il2CppObject* handle = il2::invoke(il2::virtual_method(ref, inst), ref, ia);
+    // AsyncOperationHandle<GameObject>, boxed: its first field is the operation (null: nothing was started)
+    void* op = handle ? *reinterpret_cast<void**>(reinterpret_cast<char*>(handle) + 0x10) : nullptr;
+    if (!op) {
+        logx::warn("devconsole: Addressables didn't start loading TLD's console");
+        return false;
+    }
+    logx::info("devconsole: loading TLD's console");
+    return true;
+}
+
+// A crash in TLD's code while asking (an access violation) caught here: no console, but the game goes on.
+bool guarded(bool (*fn)(), bool* faulted) {
+    __try {
+        return fn();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *faulted = true;
+        return false;
+    }
 }
 
 }  // namespace
 
 void on_frame(const std::string& scene, bool in_game) {
     if (g_done) return;
-    // Once TLD's own start is through (its Addressables are up): at the main menu or in a game.
-    if (scene != "MainMenu" && !in_game) return;
+    if (scene != "MainMenu" && !in_game) {
+        g_menu_since = 0;
+        return;
+    }
+    const double now = now_ms();
+    if (!g_menu_since) g_menu_since = now;
+    if (now - g_menu_since < 5000) return;  // TLD's own start first (Addressables, its menus)
+    if (!g_console_class) {
+        g_console_class = il2::find_class("Assembly-CSharp.dll", "", "uConsole");
+        g_instance = g_console_class ? il2::il2cpp_class_get_field_from_name(g_console_class, "m_Instance") : nullptr;
+        if (!g_console_class || !g_instance) {
+            logx::warn("devconsole: TLD has no uConsole here");
+            g_done = true;
+            return;
+        }
+    }
     int key = 0;
     if (!settings(key)) {
         g_done = true;
         logx::info("devconsole: off (coop.ini [devconsole] enabled=0)");
         return;
     }
-    ++g_tries;
-    g_done = make();
+    if (Il2CppObject* made = instance()) {
+        g_done = key_it(made, !g_requested);
+        return;
+    }
+    if (!g_requested) {
+        g_requested = true;
+        g_requested_at = now;
+        bool faulted = false;
+        if (!guarded(&request, &faulted)) g_done = true;
+        if (faulted) logx::error("devconsole: TLD faulted loading its console; no console this time (the game goes on)");
+        return;
+    }
+    if (now - g_requested_at > 30000) {
+        logx::warn("devconsole: TLD's console didn't come (30 s); no console this time");
+        g_done = true;
+    }
 }
 
 }  // namespace dev_console
