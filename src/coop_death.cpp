@@ -9,7 +9,9 @@
 #include <map>
 #include <random>
 #include <tuple>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "avatar.h"
 #include "config.h"
@@ -158,6 +160,15 @@ struct Api {
     const MethodInfo* struggle_reset_anim = nullptr; // PlayerAnimation.ResetStruggleStartEnd()
     const MethodInfo* aiming_reset = nullptr;        // PlayerAnimation.FullResetAimingModes()
     const MethodInfo* hands_restore = nullptr;       // PlayerAnimation.RestoreCameraBasedHandPositioning()
+    // TLDCoop_DLC: the arms put away when the hands are empty (arms in the air, a bedroll in view after a respawn)
+    ptrdiff_t player_anim_state = -1;                // PlayerAnimation.m_State (0 Hidden)
+    ptrdiff_t pa_hands_mesh = -1, pa_male = -1, pa_female = -1, pa_clothing = -1, pa_story_clothing = -1;
+    const MethodInfo* hide_hands = nullptr;          // PlayerAnimation.HideHands()
+    const MethodInfo* disable_weapon = nullptr;      // PlayerAnimation.DisableWeapon(): a struggle's weapon away
+    const MethodInfo* reset_params = nullptr;        // PlayerAnimation.ResetParams()
+    ptrdiff_t item_in_hands = -1;                    // PlayerManager.m_ItemInHandsInternal
+    Il2CppObject* renderer_type = nullptr;           // typeof(Renderer)
+    const MethodInfo* renderer_enabled = nullptr;    // Renderer.get_enabled()
     const MethodInfo* fade_alpha = nullptr;          // static CameraFade.get_CurrentAlpha()
     const MethodInfo* main_camera = nullptr;         // static GameManager.GetMainCamera()
     const MethodInfo* local_euler = nullptr;         // Transform.get_localEulerAngles()
@@ -748,6 +759,74 @@ void sounds_back() {
     }
 }
 
+// TLDCoop_DLC: the first-person arms with nothing in hand: hidden, no struggle weapon, no prop of the rig in view.
+// At a respawn always; later only when TLD itself has them hidden (state Hidden), so nothing TLD is doing is cut.
+template <typename Note>
+void put_arms_away(Il2CppObject* pm, Il2CppObject* pa, bool respawn, Note&& note) {
+    Il2CppObject* held = pm && api.item_in_hands >= 0 ? get<Il2CppObject*>(pm, api.item_in_hands) : nullptr;
+    const int32_t state = api.player_anim_state >= 0 ? get<int32_t>(pa, api.player_anim_state) : -1;
+    if (alive(held)) {
+        if (respawn) logx::info("death: arms: holding %s (state %d), left as they are", name_of(held).c_str(), state);
+        return;
+    }
+    if (!respawn && state != 0) return;
+    if (respawn) {
+        if (api.disable_weapon) il2::invoke(api.disable_weapon, pa);
+        if (api.reset_params) il2::invoke(api.reset_params, pa);
+        if (api.player_anim_state >= 0 && state != 0) {
+            put<int32_t>(pa, api.player_anim_state, 0);
+            char b[64];
+            snprintf(b, sizeof(b), "the arms' state (%d) to hidden", state);
+            note(b);
+        }
+    }
+    // What of the rig is still drawn
+    Il2CppObject* animator = api.player_anim_animator >= 0 ? get<Il2CppObject*>(pa, api.player_anim_animator) : nullptr;
+    Il2CppObject* root = alive(animator) ? il2::invoke(api.component_go, animator) : nullptr;
+    if (!root || !api.renderer_type || !api.go_components) return;
+    std::vector<Il2CppObject*> hands;  // the hands and their clothing: TLD's HideHands deals with those
+    for (ptrdiff_t off : {api.pa_hands_mesh, api.pa_male, api.pa_female})
+        if (off >= 0) hands.push_back(get<Il2CppObject*>(pa, off));
+    for (ptrdiff_t off : {api.pa_clothing, api.pa_story_clothing}) {
+        Il2CppObject* arr = off >= 0 ? get<Il2CppObject*>(pa, off) : nullptr;
+        for (size_t i = 0, n = il2::array_length(arr); i < n; ++i) hands.push_back(il2::array_object_at(arr, i));
+    }
+    auto is_hands = [&](Il2CppObject* go) {
+        for (Il2CppObject* t = go ? il2::invoke(api.go_transform, go) : nullptr; t; t = il2::invoke(api.get_parent, t)) {
+            Il2CppObject* g = il2::invoke(api.component_go, t);
+            for (Il2CppObject* h : hands)
+                if (h && h == g) return true;
+            if (g == root) break;
+        }
+        return false;
+    };
+    bool hands_shown = false;
+    std::vector<Il2CppObject*> props;
+    bool no = false;
+    void* ca[] = {api.renderer_type, &no};
+    Il2CppObject* rs = il2::invoke(api.go_components, root, ca);
+    for (size_t i = 0, n = il2::array_length(rs); i < n; ++i) {
+        Il2CppObject* r = il2::array_object_at(rs, i);
+        bool on = true;
+        if (!alive(r) || (api.renderer_enabled && il2::invoke_value(api.renderer_enabled, r, on) && !on)) continue;
+        Il2CppObject* go = il2::invoke(api.component_go, r);
+        if (is_hands(go)) hands_shown = true;
+        else if (std::find(props.begin(), props.end(), go) == props.end()) props.push_back(go);
+    }
+    if (hands_shown && api.hide_hands) {
+        il2::invoke(api.hide_hands, pa);
+        note("the empty-handed arms put away");
+    }
+    std::string names;
+    bool off = false;
+    void* oa[] = {&off};
+    for (Il2CppObject* go : props) {
+        names += (names.empty() ? "" : ", ") + name_of(go);
+        il2::invoke(api.go_set_active, go, oa);
+    }
+    if (!names.empty()) note(("the arms' rig's props in view, switched off: " + names).c_str());
+}
+
 // TLDCoop_DLC: what TLD's death (its struggle, its death screen) left locked goes: a new survivor can look and move.
 // TLD's own death ends in a scene load that resets these; co-op's respawn doesn't load anything, so after a death in a
 // wolf's struggle the camera stayed locked to the struggle's view.
@@ -855,24 +934,24 @@ void controls_back(Il2CppObject* pm) {
     // The arms' rig (first person): whatever the death left it in (a struggle's, the fall's) — the arms hung in the air
     // apart from the camera once the camera was idle again. Both rigs from their start (Animator.Rebind), once a respawn,
     // then the usual hold.
+    // The arms' rig (first person): whatever the death left it in. Its Animator is NOT rebound (that put every prop of the
+    // rig back to its default, shown: a bedroll in view); the camera's is. With empty hands the arms are put away the way
+    // TLD does (HideHands), and a prop of the rig still shown with nothing in hand is switched off.
     if (Il2CppObject* pa = api.player_anim ? il2::invoke(api.player_anim, nullptr) : nullptr) {
+        const bool respawn = g_rebind_rigs;
         if (g_rebind_rigs && api.animator_rebind) {
             g_rebind_rigs = false;
-            int rebound = 0;
-            for (Il2CppObject* animator :
-                 {api.player_anim_animator >= 0 ? get<Il2CppObject*>(pa, api.player_anim_animator) : nullptr,
-                  api.camera_anim && api.camera_anim_animator >= 0
-                      ? get<Il2CppObject*>(il2::invoke(api.camera_anim, nullptr), api.camera_anim_animator)
-                      : nullptr}) {
-                if (!alive(animator)) continue;
+            Il2CppObject* ca = api.camera_anim ? il2::invoke(api.camera_anim, nullptr) : nullptr;
+            Il2CppObject* animator = ca && api.camera_anim_animator >= 0 ? get<Il2CppObject*>(ca, api.camera_anim_animator) : nullptr;
+            if (alive(animator)) {
                 il2::invoke(api.animator_rebind, animator);
-                ++rebound;
+                note("the camera's animation from its start");
             }
-            if (rebound) note(rebound == 2 ? "the arms' and camera's animations from their start" : "an animation rig from its start");
         }
         if (api.struggle_reset_anim) il2::invoke(api.struggle_reset_anim, pa);
         if (api.aiming_reset) il2::invoke(api.aiming_reset, pa);
         if (api.hands_restore) il2::invoke(api.hands_restore, pa);
+        put_arms_away(pm, pa, respawn, note);
     }
     // TLD's sleep, if we died in it (black screen, time racing)
     if (const std::string slept = coop_sleep::wake_after_death(); !slept.empty()) note(slept.c_str());
@@ -1382,6 +1461,20 @@ bool init() {
         api.struggle_reset_anim = il2::find_method_quiet(pa, "ResetStruggleStartEnd", 0);
         api.aiming_reset = il2::find_method_quiet(pa, "FullResetAimingModes", 0);
         api.hands_restore = il2::find_method_quiet(pa, "RestoreCameraBasedHandPositioning", 0);
+        api.player_anim_state = il2::field_offset_quiet(pa, "m_State");
+        api.pa_hands_mesh = il2::field_offset_quiet(pa, "m_HandsMesh");
+        api.pa_male = il2::field_offset_quiet(pa, "m_FPMesh_MaleHands");
+        api.pa_female = il2::field_offset_quiet(pa, "m_FPMesh_FemaleHands");
+        api.pa_clothing = il2::field_offset_quiet(pa, "m_ActiveHandsClothing");
+        api.pa_story_clothing = il2::field_offset_quiet(pa, "m_ActiveStoryHandsClothing");
+        api.hide_hands = il2::find_method_quiet(pa, "HideHands", 0);
+        api.disable_weapon = il2::find_method_quiet(pa, "DisableWeapon", 0);
+        api.reset_params = il2::find_method_quiet(pa, "ResetParams", 0);
+    }
+    api.item_in_hands = il2::field_offset_quiet(player_manager, "m_ItemInHandsInternal");
+    if (Il2CppClass* rc = il2::find_class(kCore, "UnityEngine", "Renderer")) {
+        api.renderer_type = il2::type_object(rc);
+        api.renderer_enabled = il2::find_method_quiet(rc, "get_enabled", 0);
     }
     if (Il2CppClass* fade = il2::find_class(kGame, "", "CameraFade")) api.fade_alpha = il2::find_method_quiet(fade, "get_CurrentAlpha", 0);
     api.main_camera = il2::find_method_quiet(game_manager, "GetMainCamera", 0);
