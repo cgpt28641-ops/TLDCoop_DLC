@@ -376,6 +376,10 @@ struct Avatar {
     bool action_upper = false; // it has an "_up" state
     float lower = 0;           // 0: the action has the whole body; 1: only from the spine up (they walk or crouch)
     float crouch = 0;          // how far down they are (kStateCrouched, eased in and out)
+    // TLDCoop_DLC: how much higher TLD says they are once crouched than where they stood just before (their crouched
+    // body floated over the ground with its feet in the air); taken off while crouched.
+    bool crouch_seen = false;
+    float crouch_rise = 0, stand_x = 0, stand_z = 0;
     bool lying = false;        // in bed: the sleep clip, at the bed
     bool handover_on = false;  // coop_give: a handover this body shows (`handover`)
     HandoverShow handover;
@@ -934,10 +938,8 @@ void add_own_light(HeldCopy& h, Il2CppObject* copy) {
     set_value(pv.light_intensity, light, 1.6f);
     set_value(pv.light_color, light, Color{1.0f, 0.62f, 0.3f, 1.0f});
     if (parts.light_range) set_value(parts.light_range, light, 6.0f);
-    if (parts.light_tracking_type) {
-        void* tracking_arg[] = {parts.light_tracking_type};
-        il2::invoke(api.add_component, go, tracking_arg);
-    }
+    // TLDCoop_DLC: no LightTracking: TLD's lighting switched a friend's tracked lights off (the log showed them "off"
+    // a moment after they were lit: nobody saw a friend's flare or match light anything).
     keep(h.lights_in, light);
     keep(h.lights_out, light);
     h.own_light = true;
@@ -1061,7 +1063,7 @@ bool held_keeps(const std::string& cls) {
            cls == "UnityEngine.SkinnedMeshRenderer" || cls == "UnityEngine.LODGroup" || cls == "UnityEngine.Light" ||
            cls == "UnityEngine.ParticleSystem" || cls == "UnityEngine.ParticleSystemRenderer" ||
            cls == "UnityEngine.LensFlare" || cls == "UnityEngine.TrailRenderer" || cls == "UnityEngine.LineRenderer" ||
-           cls == "LightFlickering" || cls == "LightRandomIntensity" || cls == "LightTracking" ||
+           cls == "LightFlickering" || cls == "LightRandomIntensity" ||  // (TLDCoop_DLC: not LightTracking, below)
            cls == "LightQualitySwitch";
 }
 
@@ -1104,9 +1106,21 @@ void set_light(uintptr_t handle, bool on) {
         void* mode_args[] = {&force_pixel};
         il2::invoke(api.light_set_mode, light, mode_args);
     }
-    if (go && parts.light_tracking_type && api.get_component && api.add_component) {
-        void* type_arg[] = {parts.light_tracking_type};
-        if (!il2::invoke(api.get_component, go, type_arg)) il2::invoke(api.add_component, go, type_arg);
+}
+
+// TLDCoop_DLC: while lit, the lights that should be on are kept on (something of TLD's switching them off is logged once).
+void keep_lit(const Avatar& a, HeldCopy& h, bool indoors) {
+    if (h.lit_shown < 1 || !api.active_and_enabled) return;
+    const auto& in = h.lit_shown == 2 && !h.lights_in_high.empty() ? h.lights_in_high : h.lights_in;
+    const auto& out = h.lit_shown == 2 && !h.lights_out_high.empty() ? h.lights_out_high : h.lights_out;
+    const std::vector<uintptr_t>& on = indoors ? (!in.empty() ? in : out) : (!out.empty() ? out : in);
+    static int logged = 0;
+    for (uintptr_t l : on) {
+        Il2CppObject* light = target(l);
+        bool lit = true;
+        if (!is_alive(light) || !il2::invoke_value(api.active_and_enabled, light, lit) || lit) continue;
+        set_light(l, true);
+        if (logged++ < 10) say(a, "%s: %s was switched off; on again", h.gear.c_str(), name_of(light).c_str());
     }
 }
 
@@ -1449,6 +1463,7 @@ void sync_held(Avatar& a, const net::StateMsg& s, bool indoors) {
         if (a.held.lit_shown >= 1)
             say(a, "%s lit, %s: %s", a.held.gear.c_str(), indoors ? "indoors" : "outdoors", describe_lights(a.held).c_str());
     }
+    keep_lit(a, a.held, indoors);  // TLDCoop_DLC
     if (!a.held.emitters.empty()) emit_flame(a.held);  // TLDCoop_DLC
 }
 
@@ -2030,11 +2045,20 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
         }
         // TLDCoop_DLC: in a fight, on the ground where they stood (TLD moves its player up and about for the
         // struggle's camera: the body floated).
-        if (!down) {
+        const bool crouching = crouched;
+        if (crouching && !a.crouch_seen && a.has_ground) {  // TLDCoop_DLC: just crouched: how much higher it says
+            const float dx = s.x - a.stand_x, dz = s.z - a.stand_z;
+            a.crouch_rise = dx * dx + dz * dz < 0.5f * 0.5f ? std::clamp(s.y - a.ground_y, 0.0f, 0.8f) : 0.0f;
+            if (a.crouch_rise > 0.03f) say(a, "crouched: TLD has them %.2f m higher; shown on the ground", a.crouch_rise);
+        }
+        a.crouch_seen = crouching;
+        if (!down && !crouching) {
             a.ground_y = s.y;
             a.has_ground = true;
+            a.stand_x = s.x, a.stand_z = s.z;
         }
         float y = down && a.has_ground ? std::min(s.y, a.ground_y) : s.y;
+        if (!down) y -= a.crouch_rise * a.crouch;  // (eased with the crouch)
         // TLDCoop_DLC: in a fight with the host's wolf, on the wolf: its fight clips play on its root with the victim
         // lying there, facing back along it. Where they stood the wolf leapt about beside them, at nothing.
         float wx = 0, wy = 0, wz = 0, wyaw = 0;
