@@ -149,10 +149,12 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 
 ## Instalacja
 
-1. **Pobierz zip.** Wejdź w zakładkę **Actions** tego repozytorium, otwórz najnowszy udany build (zielony) i na dole
-   strony, w sekcji **Artifacts**, kliknij **TLDCoop_DLC**. Musisz być zalogowany na GitHubie. Buildy są trzymane
-   **2 dni**. Gdy na GitHubie zabraknie miejsca na paczki, najnowszy sam `winhttp.dll` jest w wydaniu
-   [dll-latest](https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/tag/dll-latest): wtedy podmień tylko ten plik.
+1. **Pobierz pliki.** Najnowszy `winhttp.dll` jest zawsze w wydaniu
+   [dll-latest](https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/tag/dll-latest) (każda zmiana kodu trafia
+   tam od razu). Pełny zip z postaciami i animacjami (folder `TLDCoop`) robi się tylko na żądanie, bo ma ok. 220 MB, a
+   darmowe konto GitHuba mieści 0,5 GB paczek: **Actions** → **build** → **Run workflow**, potem w tym buildzie
+   **Artifacts** → **TLDCoop_DLC** (trzymany 2 dni). Przy aktualizacji wystarczy zwykle podmienić sam `winhttp.dll`.
+   Musisz być zalogowany na GitHubie.
 2. **Zrób kopię zapisów.** Wklej w pasek adresu Eksploratora `%LOCALAPPDATA%\Hinterland\TheLongDark` i skopiuj ten
    folder w bezpieczne miejsce.
 3. **Zamknij The Long Dark.**
@@ -307,8 +309,8 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
 
 ## Budowanie samemu
 
-Najprościej: każde wypchnięcie zmian do repozytorium uruchamia build w GitHub Actions. Gotowy zip jest w
-**Artifacts**.
+Najprościej: każde wypchnięcie zmian do repozytorium uruchamia build w GitHub Actions, a `winhttp.dll` trafia do
+wydania `dll-latest`. Pełny zip: **Run workflow** w Actions, potem **Artifacts**.
 
 Lokalnie potrzebujesz Windowsa,
 [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/) z „Desktop development with C++”,

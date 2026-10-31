@@ -78,8 +78,11 @@ jobs:
             Write-Host "::notice title=sha256::$($f.Name) $h ($($f.Length) bytes)"
           }
 
+      # The whole zip (~220 MB, mostly the characters) only when asked for (Actions -> build -> Run workflow): the
+      # free plan stores 0.5 GB of artifacts, two zips. Every push puts winhttp.dll in the dll-latest release instead.
       - uses: actions/upload-artifact@v4
         id: upload
+        if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
         with:
           name: TLDCoop_DLC
@@ -87,10 +90,10 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
-      # GitHub's artifact storage full: winhttp.dll alone (our code only, no game assets) to the private repo's
-      # "dll-latest" release, so a build still reaches the players.
-      - name: winhttp.dll alone when the artifact could not be stored
-        if: steps.upload.outcome == 'failure' && github.event_name == 'push'
+      # Every push: winhttp.dll alone (our code only, no game assets) to the private repo's "dll-latest" release
+      # (release files don't count against the Actions storage).
+      - name: winhttp.dll to the dll-latest release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -99,4 +102,4 @@ jobs:
             gh release create dll-latest -R "$GITHUB_REPOSITORY" --prerelease --title "winhttp.dll (latest)" --notes "Only winhttp.dll"
           gh release upload dll-latest pack/winhttp.dll -R "$GITHUB_REPOSITORY" --clobber
           gh release edit dll-latest -R "$GITHUB_REPOSITORY" --notes "Only winhttp.dll, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
-          echo "::warning::Artifact storage full: winhttp.dll alone is in the dll-latest release"
+          echo "::notice::winhttp.dll is in the dll-latest release"

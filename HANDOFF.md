@@ -326,3 +326,7 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   Angle/m_Yaw/m_Pitch/m_Current*/m_Target* (as the original). Runs in GameManager.LateUpdate (core), reset on scene
   change. Key read with GetAsyncKeyState (game window in front); wheel via UnityEngine.Input.mouseScrollDelta.
   Local only. third_party/justzoom/NOTICE.txt; README updated.
+- CI (21:15): the account is on the free plan: 0.5 GB Actions storage (Karol's billing page; $0 budgets block any
+  overage, so nothing is charged). A full zip is ~220 MB. Now: every push to main uploads winhttp.dll to the
+  dll-latest release (not counted against Actions storage); the full zip artifact only on workflow_dispatch
+  (retention 2 days). README Installation updated.
