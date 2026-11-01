@@ -697,7 +697,7 @@ int purge_leaked(Instance& in) {
         owned.push_back({clean_name(name_of(go)), position(t)});
     });
     if (owned.empty() && owned_off.empty()) return 0;
-    auto near = [](const std::vector<Owned>& list, const std::string& n, V3 p) {
+    auto close_to = [](const std::vector<Owned>& list, const std::string& n, V3 p) {
         for (const Owned& o : list)
             if (o.name == n && dist(o.pos, p) <= kLeakMatch) return true;
         return false;
@@ -720,7 +720,7 @@ int purge_leaked(Instance& in) {
             return;
         const std::string n = clean_name(name_of(go));
         const std::string g = mod_guid(go);
-        const bool copy = (!g.empty() && owned_guids.count(g)) || near(owned, n, pos) || (lifted && near(owned_off, n, pos));
+        const bool copy = (!g.empty() && owned_guids.count(g)) || close_to(owned, n, pos) || (lifted && close_to(owned_off, n, pos));
         if (copy) doomed.push_back(go);
     });
     for (Il2CppObject* go : doomed) {
