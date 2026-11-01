@@ -1,4 +1,5 @@
 #include "coop_hud.h"
+#include "text_upper.h"
 
 #include <algorithm>
 #include <chrono>
@@ -277,11 +278,7 @@ void destroy(Il2CppObject* obj) {
     il2::invoke(api.destroy, nullptr, args);
 }
 
-std::string upper(std::string s) {
-    for (char& c : s)
-        if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-    return s;
-}
+std::string upper(const std::string& s) { return utf8_upper(s); }  // TLDCoop_DLC: Polish letters too
 
 // Where a screen point (pixels) is in NGUI's world: a widget put there shows at that pixel.
 bool place_on_screen(Il2CppObject* transform, Il2CppObject* ui_camera, float sx, float sy) {

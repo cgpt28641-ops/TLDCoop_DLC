@@ -1,4 +1,5 @@
 #include "coop_death.h"
+#include "text_upper.h"
 
 #include <windows.h>
 
@@ -300,10 +301,7 @@ bool hosting() {
     return role && *role == net::Role::Host;
 }
 
-std::string upper(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    return s;
-}
+std::string upper(const std::string& s) { return utf8_upper(s); }  // TLDCoop_DLC: Polish letters too
 
 // --- state ---------------------------------------------------------------------------------------------------------
 

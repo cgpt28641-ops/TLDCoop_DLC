@@ -391,3 +391,4 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   ("different scenes") and showed its own animals elsewhere. Now on that stop each live host copy is taken over by one
   of our own animals of that kind (nearest), put where the copy was, facing the same, with its hp. Not done the other
   way (host back in the region: its fresh animals replace the friend's).
+- 17:35 Karol: Polish letters small among capitals ("LEśNICZóWKA" for a friend elsewhere): upper() was ASCII-only in coop_hud/coop_menu/coop_death; now text_upper.h utf8_upper (CharUpperBuffW).

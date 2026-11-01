@@ -1,4 +1,5 @@
 #include "coop_menu.h"
+#include "text_upper.h"
 
 #include <windows.h>
 
@@ -409,10 +410,7 @@ void write_field(Il2CppObject* obj, ptrdiff_t offset, T value) {
     if (obj && offset >= 0) memcpy(reinterpret_cast<char*>(obj) + offset, &value, sizeof(T));
 }
 
-std::string upper(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    return s;
-}
+std::string upper(const std::string& s) { return utf8_upper(s); }  // TLDCoop_DLC: Polish letters too
 
 void play(const MethodInfo* sound) {
     if (sound) il2::invoke(sound, nullptr);
