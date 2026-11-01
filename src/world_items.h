@@ -28,6 +28,9 @@
 
 namespace world_items {
 
+// TLDCoop_DLC: a door (LoadScene.Activate) is being used: items leaving our view now aren't destroyed.
+void door_used();
+
 bool init();
 void on_frame(bool in_game);
 

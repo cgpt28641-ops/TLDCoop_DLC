@@ -476,3 +476,8 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 
 ## 2026-11-01 23:20 – crash przy starcie (Seamless Interiors)
 - Log Kerela 23:12: 0xC0000005 w UnityPlayer.dll zaraz po „DynamicGI…” → mod wyłączony na całą sesję (dlatego „co-op się nie wyświetla”). Przyczyna: LayerMask.NameToLayer wołane w resolve() przy starcie moda (Unity jeszcze nie działa). Teraz resolve_layers() w on_frame, gdy jesteśmy w grze. Build 82b3d1e.
+
+## 2026-11-01 23:55 – znikające przedmioty i duplikaty (raporty 23:33–23:39)
+- Przyczyna „zniknęła cała woda”: przy przejściu przez drzwi TLD zabiera przedmioty sceny chwilę przed zmianą sceny; world_items u Szymona wysłał ItemGone (Destroyed) dla 14 przedmiotów, host (w tym domu) je usunął. Działo się też wcześniej (Kerel 23:21:57, 156 szt.).
+  Teraz: przez 6 s po LoadScene.Activate (world_items::door_used, wołane z hooka seamless) i gdy naraz znika ≥4 i ≥ połowa udostępnionych przedmiotów sceny – nie wysyłamy „zniszczony”.
+- Duplikaty (Kerel): przedmiot hosta, który u nas istnieje, ale jest wyłączony (nasza gra wylosowała go „precz”), tworzono drugi raz z nowym id; teraz włączamy nasz i stawiamy tam, gdzie host (poza plecakiem i pojemnikami).

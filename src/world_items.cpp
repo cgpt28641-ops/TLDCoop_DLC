@@ -62,6 +62,8 @@ struct Api {
     const MethodInfo* component_go = nullptr;
     const MethodInfo* component_transform = nullptr;
     const MethodInfo* go_active = nullptr;     // GameObject.get_activeInHierarchy
+    const MethodInfo* go_set_active = nullptr; // TLDCoop_DLC: GameObject.SetActive(bool)
+    Il2CppObject* container_type = nullptr;    // TLDCoop_DLC: typeof(Container)
     const MethodInfo* go_component = nullptr;  // GameObject.GetComponent(Type)
     const MethodInfo* get_position = nullptr;
     const MethodInfo* get_rotation = nullptr;
@@ -415,6 +417,7 @@ struct Known {
     bool burning = false;    // TLDCoop_DLC: a flare or torch burning (burning_light)
 };
 std::unordered_map<std::string, Known> g_known;  // our pdid -> item
+double g_door_until = 0;  // TLDCoop_DLC: a door is being used until then (door_used)
 // TLDCoop_DLC: what a pot holds, to see changes the hooks don't (melting snow in 2.58, water once it's in, food ready
 // or ruined). kind: 0 nothing, 1 food, 2 snow, 3 water.
 struct PotSig {
@@ -1094,6 +1097,18 @@ void refused(const Change& c) {
                out ? "out of our pack" : "it isn't in our pack", c.put ? ", back where it lay" : "");
 }
 
+// TLDCoop_DLC: inside a container (it lies in it, hidden), up to a few parents.
+bool in_a_container(Il2CppObject* gi) {
+    if (!api.container_type) return false;
+    Il2CppObject* t = transform_of(gi);
+    for (int up = 0; up < 4 && t; ++up) {
+        void* args[] = {api.container_type};
+        if (alive(il2::invoke(api.go_component, il2::invoke(api.component_go, t), args))) return true;
+        t = il2::invoke(api.get_parent, t);
+    }
+    return false;
+}
+
 void apply_put(const net::ItemPutMsg& m, double now) {
     if (net::is_unique_gear(m.prefab)) {  // (never sent; a game from before keeps theirs to themselves too)
         logx::info("items: the other player's %s (%s) is one of a kind: ours stays ours", m.prefab.c_str(),
@@ -1131,6 +1146,30 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         load_lamp(gi, m.gear);
         load_pot(gi, m.gear, m.pdid);
         return;
+    }
+    // TLDCoop_DLC: we have it too, but switched off (a random spawn our game rolled away, the host's kept): that one
+    // is shown where the host has it, instead of a second copy beside it ("the same items twice, and anyone could
+    // pick up mine").
+    if (gi && !get<bool>(gi, api.in_inventory) && !in_a_container(gi) && api.go_set_active) {
+        bool on = true;
+        il2::invoke_value(api.go_active, go, on);
+        if (!on) {
+            bool yes = true;
+            void* args[] = {&yes};
+            il2::invoke(api.go_set_active, go, args);
+            set_pose(gi, pos, rot);
+            Known& k = g_known[ours];
+            k.prefab = m.prefab;
+            k.pos = k.told = pos;
+            k.rot = rot;
+            k.units = units_of(gi);
+            k.snare = snare_state(gi);
+            k.moved_ms = now;
+            k.shared = true;
+            logx::info("items: the other player's %s (%s) was switched off here (our game rolled it away); shown at "
+                       "(%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(), pos.x, pos.y, pos.z);
+            return;
+        }
     }
     // Make it from TLD's save record, under the same id unless something here already goes by it.
     std::string id = m.pdid, gear = m.gear;
@@ -1499,6 +1538,21 @@ void scan(double now) {
             send_put(l.gi, l.pdid, k, now, 0);
         }
     }
+    // TLDCoop_DLC: going through a door, TLD takes every item of the scene away a moment before the scene changes:
+    // that isn't destroying them ("all the water was gone": a friend's door told the host 14 items were destroyed,
+    // and the host's game, still in that house, removed them). Not told while a door is being used, nor when many
+    // items leave at once; the other player's list sorts it out when we come back.
+    size_t shared_known = 0, shared_gone = 0;
+    for (const auto& [id, k] : g_known) {
+        if (!k.shared || k.unique) continue;
+        ++shared_known;
+        if (!present.count(id) && id != inspected && id != placing) ++shared_gone;
+    }
+    const bool through_door = now < g_door_until;
+    const bool all_at_once = shared_gone >= 4 && shared_gone * 2 >= shared_known;
+    if ((through_door || all_at_once) && shared_gone > 0)
+        logx::info("items: %zu of our %zu item(s) here left our view at once (%s); not told as destroyed", shared_gone,
+                   shared_known, through_door ? "a door is being used" : "the scene is going");
     for (auto it = g_known.begin(); it != g_known.end();) {
         if (present.count(it->first) || it->first == inspected || it->first == placing) {
             ++it;
@@ -1507,7 +1561,7 @@ void scan(double now) {
         if (it->second.unique)
             logx::info("items: %s (%s), one of a kind, is gone from our world; the other player keeps theirs",
                        it->second.prefab.c_str(), short_id(it->first).c_str());
-        else if (it->second.shared)
+        else if (it->second.shared && !through_door && !all_at_once)
             send_gone(it->first, it->second);
         it = g_known.erase(it);
     }
@@ -1850,6 +1904,9 @@ bool drop(const std::string& name, int units) {
     return alive(dropped);
 }
 
+// TLDCoop_DLC: a door (LoadScene.Activate) was used: what leaves our view now goes with the scene.
+void door_used() { g_door_until = now_ms() + 6000; }
+
 bool init() {
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
     Il2CppClass* transform = il2::find_class(kCore, "UnityEngine", "Transform");
@@ -1866,6 +1923,8 @@ bool init() {
     api.component_go = il2::find_method(component, "get_gameObject", 0);
     api.component_transform = il2::find_method(component, "get_transform", 0);
     api.go_active = il2::find_method(game_object, "get_activeInHierarchy", 0);
+    api.go_set_active = il2::find_method(game_object, "SetActive", 1);
+    if (Il2CppClass* container = il2::find_class(kGame, "", "Container")) api.container_type = il2::type_object(container);
     api.go_component = il2::find_method_params(game_object, "GetComponent", {"System.Type"});
     api.get_position = il2::find_method(transform, "get_position", 0);
     api.get_rotation = il2::find_method(transform, "get_rotation", 0);

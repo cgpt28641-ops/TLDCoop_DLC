@@ -1,4 +1,5 @@
 #include "seamless_interiors.h"
+#include "world_items.h"
 
 // TLDCoop_DLC: Seamless Interiors (karsontr13), ported from its C# source function by function; the SI function each
 // part comes from is named in its comment ("SI: Environment.cs PrepareMasterInterior"). See seamless_interiors.h for
@@ -2837,6 +2838,7 @@ void tick_fade() {
 using ActivateFn = void (*)(Il2CppObject* self, bool immediately, const MethodInfo* method);
 ActivateFn g_activate = nullptr;
 void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* method) {
+    world_items::door_used();  // TLDCoop_DLC: (any door, this feature on or off)
     if (!engaged() || !self) return g_activate(self, immediately, method);
     if (g_fade.busy) return;  // a door is already being used (SI: s_DoorFadeBusy)
     const DoorChoice c = choose(self);
