@@ -16,6 +16,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <memory>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -600,6 +601,8 @@ enum class Stage {
     Ready,      // built: the door takes the player in
 };
 
+constexpr int kLegacyNone = 0, kLegacyReady = 1, kLegacyHydrating = 2;  // Instance::legacy (seamless_import.inc)
+
 struct Instance {
     const Config* cfg = nullptr;
     Stage stage = Stage::Idle;
@@ -631,6 +634,11 @@ struct Instance {
          state_blocked = false;  // SI: *SaveBlocked: a file that couldn't be read is never written over
     std::vector<std::string> orphan_spawned, orphan_gear, orphan_containers, orphan_state;  // SI: Orphan*Entries
     std::unordered_set<std::string> spawned_guids;  // SI: SpawnedPlaceableGuids
+    std::unordered_set<std::string> curing_applied;              // curing boxes whose contents came back (by guid)
+    std::unordered_map<std::string, std::string> curing_kept;    // ... and those that didn't: their record, kept
+    // pre-mod saves (seamless_import.inc, SI: LegacyImport.cs)
+    int legacy = 0;                      // kLegacy*: none, read and waiting for the room, hydrating from memory
+    std::shared_ptr<struct LegacyData> legacy_data;
     int hydrate_step = 0;
     double hydrate_started = 0;
     std::vector<std::vector<std::string>> gear_rows;
@@ -717,6 +725,13 @@ bool hold_targets(const Instance& in);
 bool hold_active();
 void ensure_dir(Instance& in);
 Instance* unready_with_data(Il2CppObject* door);
+// Old saves, in seamless_import.inc.
+bool old_save_gate(Instance& in, std::string& why);
+bool compose_import(Instance& in, std::string& why);
+void commit_import(Instance& in);
+void drop_import(Instance& in);
+bool import_complete(Instance& in, std::string& why);
+void abandon_import(Instance& in, const std::string& why);
 
 // Milestone 2, in seamless_coop.inc (included after it).
 enum class Coop { Solo, Host, Friend };
@@ -2321,6 +2336,7 @@ void fail_build(Instance& in, const char* why) {
         }
     drop(in.master);
     drop(in.master_tf);
+    drop_import(in);
     set_stage(in, Stage::Vanilla);
     if (g_building == &in) g_building = nullptr;
     g_loading_base.clear();
@@ -2357,6 +2373,11 @@ void tick_build() {
             if (now - in->stage_since < (hold_targets(*in) ? 0 : kPreRollWaitMs)) return;
             set_placeables_invalidated(*in, true);  // SI: DisableInteriorContainerSerialization (the containers' too)
             stabilize_guids(*in);                   // SI: HandleInitialPlaceables
+            if (in->legacy == kLegacyReady) {       // an old save's interior: its files, in memory (seamless_import.inc)
+                std::string why;
+                if (!compose_import(*in, why))
+                    return fail_build(*in, ("its interior in the old save can't be imported: " + why).c_str());
+            }
             if (!decide_loot(*in)) roll_loot(*in);  // SI: ProcessSpawnsAndDeduplication, PerformInitialLootRoll
             each_in(master_of(*in), api.t_renderer, [&](Il2CppObject* r) { set_renderer(r, false); });
             set_active(master_of(*in), true);  // SI: invisibly, so the containers' and placeables' Awake run
@@ -2381,8 +2402,14 @@ void tick_build() {
         }
         case Stage::Hydrating: {
             if (!tick_hydrate(*in)) return;
+            if (in->stage == Stage::Vanilla) {  // an old save's import that didn't come back whole (abandon_import)
+                g_building = nullptr;
+                g_template_scenes.clear();
+                return;
+            }
             show_room_renderers(*in);
             set_stage(*in, Stage::Ready);
+            commit_import(*in);  // an old save's import: its files and marker written now (before the co-op ids)
             coop_room_ready(*in);  // milestone 2: its contents under ids every game shares, and the others told
             if (hold_targets(*in)) {
                 enter_from_record(*in);  // SI: Run's early activation: the player saved in this room
@@ -2469,11 +2496,12 @@ void pick_building() {
     if (*in.cfg->shell && !shell)
         logx::info("interiors: %s: its shell '%s' isn't within reach of its spot; the room stands on the config's spot",
                    in.cfg->id, in.cfg->shell);
-    std::string key;
+    std::string why;
+    // The save holds its interior from before the rooms: imported (seamless_import.inc), or the game's door.
     // (a friend: its own save's interiors don't matter; the host's room is the one everybody shares)
-    if (role != Coop::Friend && has_vanilla_data(in, key)) {
-        logx::info("interiors: %s: the save already holds its interior ('%s'); its door stays the game's%s", in.cfg->id,
-                   key.c_str(), in.has_data ? " (our files of it are left alone)" : "");
+    if (role != Coop::Friend && !old_save_gate(in, why)) {
+        logx::info("interiors: %s: %s; its door stays the game's%s", in.cfg->id, why.c_str(),
+                   in.has_data ? " (our files of it are left alone)" : "");
         set_stage(in, Stage::Vanilla);
         return;
     }
@@ -3215,6 +3243,7 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
 // Milestone 1b: the rooms' own save files, the player's place, closed-room time, adoption (SI: SaveData.cs,
 // Hydration.cs, FrozenTime.cs, ...).
 #include "seamless_persist.inc"
+#include "seamless_import.inc"
 #include "seamless_coop.inc"
 
 // --- hooks: inside (SI: WeatherPatches.cs, WindInstanceFix.cs, EvolvePatches.cs, SafehouseFixes.cs) -------------------
@@ -3470,6 +3499,7 @@ void forget_region(const char* why) {
     g_pristine.clear();
     g_scene_keys.clear();
     g_scene_keys_read = g_scene_keys_failed = false;
+    g_overlay.clear();  // an import not finished in this region (nothing of it was written)
     g_region_scene_state = 0;
     g_region_state_searches = 0;
     g_state_corrections = 0;
@@ -3538,7 +3568,9 @@ bool skip_game_manager_awake(Il2CppObject* gm) {
 
 void set_settings(const config::Settings& s) {
     coop_features::set_own(net::kFeatureSeamlessInteriors, s.seamless_interiors);
-    logx::info("interiors: Seamless Interiors %s in coop.ini", s.seamless_interiors ? "on" : "off");
+    g_import_old = s.seamless_import_old;
+    logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s)", s.seamless_interiors ? "on" : "off",
+               g_import_old ? "imported" : "left to the game's doors");
 }
 
 void on_frame(const std::string& scene, bool in_game) {
@@ -4012,11 +4044,12 @@ bool resolve() {
             logx::warn("interiors: %s are missing in this build; Seamless Interiors is unavailable", n.what);
             ok = false;
         }
-    if (!ok) return false;
-
     // --- hooks: installed always, inert unless engaged ---
+    // (the door's first, even when the rest is missing: world_items::door_used, which keeps a door's scene change from
+    // being told as items destroyed, is called from it for every door)
     hook("LoadScene.Activate", il2::find_method_params(load_scene, "Activate", {"System.Boolean"}), &activate_detour,
          &g_activate);
+    if (!ok) return false;
     if (Il2CppClass* rso = il2::find_class(kGame, "", "RandomSpawnObject"))
         hook("RandomSpawnObject.Start", il2::find_method(rso, "Start", 0), &rso_start_detour, &g_rso_start);
     if (Il2CppClass* plm = il2::find_class(kGame, "TLD.Placement", "PlaceableManager")) {
@@ -4079,6 +4112,7 @@ bool resolve() {
         return false;
     }
     resolve_persist();
+    resolve_import();
     return true;
 }
 

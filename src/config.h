@@ -49,6 +49,9 @@ struct Settings {
     // TLDCoop_DLC: [interiors] Seamless Interiors (built in, with its author's permission): a building's door takes
     // the player in without a loading screen. Off by default while it's being finished; in co-op the host's choice.
     bool seamless_interiors = false;
+    // [interiors] import_old: a building used before the rooms (its interior is in the save) gets its room built from
+    // that record (items, containers, furniture...), once; 0: such a building keeps the game's door.
+    bool seamless_import_old = true;
     // TLDCoop_DLC: [death] lose_percent: how many of the ordinary items (not story, mission or undroppable ones) a death
     // takes, at random; the rest stay in the body.
     int death_lose_percent = 70;

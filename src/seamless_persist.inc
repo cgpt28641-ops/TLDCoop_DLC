@@ -39,6 +39,10 @@ struct PApi {
     const MethodInfo* evolve_can = nullptr;
     ptrdiff_t evolve_spent = -1, evolve_days = -1;
     ptrdiff_t breakdown_post_load = -1;
+    // curing boxes (SI: DecorationState.cs): their contents ride along in the .spawned record
+    Il2CppObject* t_curing = nullptr, *t_curing_state = nullptr;
+    const MethodInfo* curing_save = nullptr, *curing_load = nullptr;
+    ptrdiff_t curing_state = -1, curing_guid = -1, curing_items = -1;
     ptrdiff_t pm_save_position = -1, pm_object_to_place = -1;
     FieldInfo* save_name = nullptr;
     std::string spawned_suffix = " (PLACED)", placement_root = "DesignPlaceables";
@@ -190,14 +194,21 @@ bool read_whole(const fs::path& p, std::string& out) {
     out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     return true;
 }
+// An old save's import (seamless_import.inc) builds a room's files in memory first: the readers see them there, and
+// nothing reaches the disk until the room has been built from them completely (main thread only).
+std::unordered_map<std::string, std::string> g_overlay;
 // SI: readers prefer the staged file (changes since the last disk save are the newest truth this session).
 bool read_preferred(const fs::path& p, std::string& out) {
+    if (auto it = g_overlay.find(p.string()); it != g_overlay.end()) {
+        out = it->second;
+        return true;
+    }
     std::lock_guard lock(g_files);
     return read_whole(pending_of(p), out) || read_whole(p, out);
 }
 bool exists_preferred(const fs::path& p) {
     std::error_code ec;
-    return !p.empty() && (fs::exists(pending_of(p), ec) || fs::exists(p, ec));
+    return !p.empty() && (g_overlay.count(p.string()) || fs::exists(pending_of(p), ec) || fs::exists(p, ec));
 }
 // SI: JsonWriteCache.Write: "<file>.pending", skipped when the content is what's already there.
 bool write_staged(const fs::path& p, const std::string& content) {
@@ -813,7 +824,7 @@ bool decide_loot(Instance& in) {
     }
     if (!g_rolled_read) read_rolled(in.dir);
     const bool saved = has_saved_contents(in);
-    const bool flag = g_rolled_ids.count(in.cfg->id) > 0;
+    const bool flag = g_rolled_ids.count(in.cfg->id) > 0 || in.legacy == kLegacyHydrating;  // (an old save's import)
     in.from_files = flag && saved;
     if (flag && !saved)
         logx::info("interiors: %s: rolled before but no saved contents; the template's loot is kept and rolled again", in.cfg->id);
@@ -974,6 +985,36 @@ std::unordered_map<std::string, Il2CppObject*> best_per_guid(const std::vector<I
     return best;
 }
 
+Il2CppObject* deserialize_object(const std::string& s, Il2CppObject* type);
+
+// SI: SerializeDecorationState: a curing box's contents ("" for anything else).
+std::string curing_text(Il2CppObject* go) {
+    Il2CppObject* box = papi.t_curing && papi.curing_save ? component(go, papi.t_curing) : nullptr;
+    if (!box) return {};
+    Il2CppObject* state = nullptr;
+    if (!call(papi.curing_save, box, nullptr, &state) || !state) return {};
+    void* a[] = {state};
+    return call_text(papi.utils_serialize, nullptr, a);
+}
+int curing_count(Il2CppObject* state) {  // the items a CuringStorageState holds
+    return state && papi.curing_items >= 0 ? list_count(get<Il2CppObject*>(state, papi.curing_items)) : 0;
+}
+// SI: ApplyCuringState: -1 not a curing box / nothing to apply, 0 failed, else 1 + the items put in.
+int apply_curing(Il2CppObject* go, const std::string& serialized) {
+    if (serialized.empty()) return -1;
+    Il2CppObject* box = papi.t_curing ? component(go, papi.t_curing) : nullptr;
+    if (!box || !papi.curing_load || !papi.t_curing_state) return box ? 0 : -1;
+    Il2CppObject* state = deserialize_object(serialized, papi.t_curing_state);
+    if (!state) return 0;
+    if (Il2CppObject* current = papi.curing_state >= 0 ? get<Il2CppObject*>(box, papi.curing_state) : nullptr)  // its own id wins
+        if (Il2CppObject* g = get<Il2CppObject*>(current, papi.curing_guid); g && !text(g).empty())
+            put<Il2CppObject*>(state, papi.curing_guid, g);
+    const int items = curing_count(state);
+    void* a[] = {state};
+    if (!call(papi.curing_load, box, a)) return 0;
+    return 1 + items;
+}
+
 // SI: SavePlaceablePositions (+ SaveSpawnedPlaceables)
 void save_placeables(Instance& in) {
     if (in.placeable_blocked) return;
@@ -1002,7 +1043,9 @@ void save_placeables(Instance& in) {
         void* sa[] = {data};
         const std::string s = call_text(papi.utils_serialize, nullptr, sa);
         if (s.empty()) continue;
-        spawned.push_back(esc(g) + "\t" + esc(s));
+        auto kept = in.curing_kept.find(g);  // contents we couldn't put back: the record's, not the empty box's
+        const std::string cs = kept != in.curing_kept.end() ? kept->second : curing_text(go);  // a curing box only
+        spawned.push_back(esc(g) + "\t" + esc(s) + (cs.empty() ? "" : "\t" + esc(cs)));
     }
     lines.push_back(esc(kStableGuidMarker) + "\t0\t0\t0\t0\t0\t0\t1\t1\t1\t1\t1");  // SI: StableGuidMarker
     write_staged(building_file(in.dir, in, "placeables"), file_text("placeables", lines));
@@ -1119,18 +1162,28 @@ void save_state(Instance& in) {
 // Utils.DeserializeObject<T> is a shared generic (no MethodInfo to call): the same branch it takes, by hand:
 // SerializationUtils.s_UseJsonNet ? JsonConvert.DeserializeObject(text, type, m_SerializerSettings)
 //                                 : FastJson.Deserialize(text, type)   (read from 2.58's SerializeObject).
+// The other one is tried when the game's own choice gives nothing (a call missing in this build, or a text the other
+// serializer wrote).
 Il2CppObject* deserialize_object(const std::string& s, Il2CppObject* type) {
+    if (s.empty() || !type) return nullptr;
     bool json_net = false;
     if (papi.use_json_net) il2::il2cpp_field_static_get_value(papi.use_json_net, &json_net);
-    Il2CppObject* r = nullptr;
-    if (json_net && papi.json_deserialize) {
-        Il2CppObject* settings = static_object(papi.json_settings);
-        void* a[] = {str(s.c_str()), type, settings};
+    auto by_json_net = [&]() -> Il2CppObject* {
+        if (!papi.json_deserialize) return nullptr;
+        Il2CppObject* r = nullptr;
+        void* a[] = {str(s.c_str()), type, static_object(papi.json_settings)};
         call(papi.json_deserialize, nullptr, a, &r);
-    } else if (papi.fast_deserialize) {
+        return r;
+    };
+    auto by_fast_json = [&]() -> Il2CppObject* {
+        if (!papi.fast_deserialize) return nullptr;
+        Il2CppObject* r = nullptr;
         void* a[] = {str(s.c_str()), type};
         call(papi.fast_deserialize, nullptr, a, &r);
-    }
+        return r;
+    };
+    Il2CppObject* r = json_net ? by_json_net() : by_fast_json();
+    if (!r) r = json_net ? by_fast_json() : by_json_net();
     return r;
 }
 
@@ -1157,7 +1210,9 @@ void restore_spawned(Instance& in) {
         return;
     }
     Il2CppObject* mt = live(in.master_tf);
-    int applied = 0, carried = 0, failed = 0;
+    int applied = 0, carried = 0, failed = 0, curing_ok = 0, curing_failed = 0, curing_items = 0;
+    in.curing_applied.clear();
+    in.curing_kept.clear();
     std::unordered_set<std::string> seen;
     for (size_t i = 0; i < r.rows.size(); ++i) {
         const std::string guid = unesc(r.rows[i][0]);
@@ -1198,9 +1253,27 @@ void restore_spawned(Instance& in) {
         void* ra[] = {placed};
         call(papi.placeable_remove, nullptr, ra);
         ++applied;
+        if (r.rows[i].size() >= 3 && !r.rows[i][2].empty()) {  // a curing box's contents (SI: RestoreDecorationState)
+            const int c = apply_curing(go_of(placed), unesc(r.rows[i][2]));
+            if (c > 0) {
+                ++curing_ok;
+                curing_items += c - 1;
+                in.curing_applied.insert(guid);
+            } else if (c == 0) {
+                ++curing_failed;
+                logx::warn("interiors: %s: the curing box '%s' couldn't take its contents back (kept in the file)", in.cfg->id,
+                           name_of(go_of(placed)).c_str());
+                in.curing_kept[guid] = unesc(r.rows[i][2]);  // written back as it was, never the empty box's
+            }
+        }
     }
-    logx::info("interiors: %s: %d of %zu placed object(s) of the player's put back (%d in the backpack, %d could not be made)",
-               in.cfg->id, applied, r.rows.size(), carried, failed);
+    logx::info("interiors: %s: %d of %zu placed object(s) of the player's put back (%d in the backpack, %d could not be made)%s",
+               in.cfg->id, applied, r.rows.size(), carried, failed,
+               curing_ok || curing_failed
+                   ? (", " + std::to_string(curing_ok) + " curing box(es) with " + std::to_string(curing_items) + " item(s), " +
+                      std::to_string(curing_failed) + " not")
+                         .c_str()
+                   : "");
 }
 
 // SI: RestorePlaceablePositions
@@ -1298,11 +1371,24 @@ bool begin_gear(Instance& in) {
     }
     Il2CppObject* m = master_of(in);
     Il2CppObject* mt = go_tf(m);
-    int deleted = 0;
+    int deleted = 0, kept = 0;
     std::vector<Il2CppObject*> doomed;
     each_in(m, api.t_gear, [&](Il2CppObject* gi) {
         if (!inside_container(tf_of(gi), mt)) doomed.push_back(go_of(gi));
     });
+    // A region item standing in the room is deleted only when the file has it (the same item within 12 cm: a copy that
+    // got into the region's save); anything else is the player's and is taken into the room (TLDCoop_DLC: SI deleted
+    // every one, which lost an item left where the adoption's rays didn't reach).
+    struct Rec {
+        std::string name;
+        V3 local;
+    };
+    std::vector<Rec> recs;
+    for (const auto& row : r.rows) {
+        V3 lp;
+        if (read_v3(row, 2, lp)) recs.push_back({prefab_name(unesc(row[0])), lp});
+    }
+    std::vector<Il2CppObject*> taken_in;
     Box filter;
     const bool has_filter = filter_box(in, filter);
     each_listed(static_object(api.gear_list), [&](Il2CppObject* gi, int) {
@@ -1312,18 +1398,40 @@ bool begin_gear(Instance& in) {
         if (child_of(t, mt) || (has_filter && !filter.contains(pos)) || player_or_inventory(t) || on_shell(t) ||
             under_placement_root(t) || !in_parked_room(in, pos))
             return;
-        doomed.push_back(go_of(gi));
+        const std::string n = prefab_name(name_of(go_of(gi)));
+        const V3 lp = to_local(in, pos);
+        bool twin = false;
+        for (const Rec& rec : recs)
+            if (rec.name == n && dist(rec.local, lp) <= kLeakMatch) {
+                twin = true;
+                break;
+            }
+        if (twin)
+            doomed.push_back(go_of(gi));
+        else
+            taken_in.push_back(gi);
     });
     for (Il2CppObject* go : doomed) {
         destroy_now(go);
         ++deleted;
     }
+    for (Il2CppObject* gi : taken_in) {
+        Il2CppObject* t = tf_of(gi);
+        bool keep_world = true;
+        void* pa[] = {mt, &keep_world};
+        il2::invoke(api.tf_set_parent, t, pa);
+        freeze_physics(gi);
+        if (kept++ < 10)
+            logx::info("interiors: %s: '%s' lay in the room but isn't in its file: kept, the room's from now on", in.cfg->id,
+                       name_of(go_of(gi)).c_str());
+    }
     in.gear_rows = std::move(r.rows);
     in.gear_lines = std::move(r.lines);
     in.gear_restored = in.gear_failed = 0;
     in.gear_next = 0;
-    logx::info("interiors: %s: %zu saved item record(s); %d item(s) in the room cleared first", in.cfg->id, in.gear_rows.size(),
-               deleted);
+    logx::info("interiors: %s: %zu saved item record(s); %d item(s) in the room cleared first (template or copies of saved "
+               "ones), %d of the player's lying there kept",
+               in.cfg->id, in.gear_rows.size(), deleted, kept);
     return true;
 }
 // SI: SpawnGearRecord (the stateful path; a record without the game's own text can't be made: kept as an orphan)
@@ -1417,7 +1525,7 @@ bool begin_containers(Instance& in) {
         int best = -1;
         float bd = 3.0f;
         for (size_t k = 0; k < cs.size(); ++k)
-            if (!cs[k].claimed && cs[k].name == n && dist(cs[k].pos, rpos[i]) < bd) {
+            if (!cs[k].claimed && prefab_name(cs[k].name) == prefab_name(n) && dist(cs[k].pos, rpos[i]) < bd) {
                 bd = dist(cs[k].pos, rpos[i]);
                 best = static_cast<int>(k);
             }
@@ -1524,12 +1632,43 @@ std::string json_unescape(const std::string& t) {
             case 'n': o += '\n'; break;
             case 'r': o += '\r'; break;
             case 't': o += '\t'; break;
+            case 'b': o += '\b'; break;
+            case 'f': o += '\f'; break;
+            case 'u': {  // \uXXXX as UTF-8 (a surrogate half as it stands)
+                unsigned cp = 0;
+                bool ok = i + 4 < t.size();
+                for (size_t k = 1; ok && k <= 4; ++k) {
+                    const char h = t[i + k];
+                    cp <<= 4;
+                    if (h >= '0' && h <= '9') cp |= static_cast<unsigned>(h - '0');
+                    else if (h >= 'a' && h <= 'f') cp |= static_cast<unsigned>(h - 'a' + 10);
+                    else if (h >= 'A' && h <= 'F') cp |= static_cast<unsigned>(h - 'A' + 10);
+                    else ok = false;
+                }
+                if (!ok) {
+                    o += "\\u";
+                    break;
+                }
+                i += 4;
+                if (cp < 0x80) {
+                    o += static_cast<char>(cp);
+                } else if (cp < 0x800) {
+                    o += static_cast<char>(0xC0 | (cp >> 6));
+                    o += static_cast<char>(0x80 | (cp & 0x3F));
+                } else {
+                    o += static_cast<char>(0xE0 | (cp >> 12));
+                    o += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    o += static_cast<char>(0x80 | (cp & 0x3F));
+                }
+                break;
+            }
             default: o += '\\'; o += n;
         }
     }
     return o;
 }
-int keep_region_fires(const std::string& blob) {
+// The burning ones of a FireManager blob, by guid.
+int parse_fire_records(const std::string& blob, std::unordered_map<std::string, std::string>& out) {
     const std::string pm = "\"m_SearializedFire\":\"", gm = "\",\"m_Guid\":\"";
     int n = 0;
     for (size_t idx = 0;;) {
@@ -1546,11 +1685,12 @@ int keep_region_fires(const std::string& blob) {
         if (guid.empty()) continue;
         const std::string payload = json_unescape(blob.substr(start, end - start));
         if (!record_burning(payload)) continue;
-        g_region_fires[guid] = payload;
+        out[guid] = payload;
         ++n;
     }
     return n;
 }
+int keep_region_fires(const std::string& blob) { return parse_fire_records(blob, g_region_fires); }
 
 // SI: RestoreCloneFireStates for one room: our building's record first, else the region save's; only burning records,
 // only onto a fire not burning already; the fire's place kept.
@@ -1704,6 +1844,13 @@ bool tick_hydrate(Instance& in) {
             in.hydrate_step = 7;
             return false;
         default:
+            if (in.legacy == kLegacyHydrating) {  // an old save's import: all of it or none of it
+                std::string why;
+                if (!import_complete(in, why)) {
+                    abandon_import(in, why);
+                    return true;
+                }
+            }
             in.hydrated = true;  // SI: ContentHydrated
             in.closed_dirty = true;
             purge_leaked(in);
@@ -2148,6 +2295,7 @@ using RestoreFn = void (*)(Il2CppString* name, const MethodInfo* method);
 RestoreFn g_restore_game = nullptr;
 void restore_game_detour(Il2CppString* name, const MethodInfo* method) {
     if (api.ok && name) {
+        g_overlay.clear();  // an import in progress belonged to the play that's being left
         int n = 0;
         for (const fs::path& d : dirs_of_slot(il2::to_utf8(name))) n += discard_dir(d);
         if (n) logx::info("interiors: loading '%s': %d staged room file(s) from unsaved play thrown away", il2::to_utf8(name).c_str(), n);
@@ -2191,6 +2339,15 @@ bool hook1b(const char* label, const MethodInfo* m, Fn detour, Fn* original) {
         return false;
     }
     return hooks::install_method(label, m, reinterpret_cast<void*>(detour), reinterpret_cast<void**>(original));
+}
+
+// A class from the first of these assemblies that has it (quiet: the others are fallbacks).
+Il2CppClass* class_in(std::initializer_list<const char*> dlls, const char* ns, const char* name) {
+    for (const char* dll : dlls)
+        if (const Il2CppImage* image = il2::find_image(dll))
+            if (Il2CppClass* k = il2::il2cpp_class_from_name(image, ns, name)) return k;
+    logx::warn("interiors: class %s%s%s not found", ns, *ns ? "." : "", name);
+    return nullptr;
 }
 
 void resolve_persist() {
@@ -2238,14 +2395,15 @@ void resolve_persist() {
         papi.data_rotation = il2::field_offset(data, "m_Rotation");
     }
     if (Il2CppClass* u = il2::find_class(kGame, "", "Utils")) papi.utils_serialize = il2::find_method_params(u, "SerializeObject", {"System.Object"});
-    if (Il2CppClass* su = il2::find_class(kGame, "TLD.Serialization", "SerializationUtils")) {
+    // (SerializationUtils and FastJson live in TLD.Serialization.dll; looked for in Assembly-CSharp too, in case)
+    if (Il2CppClass* su = class_in({"TLD.Serialization.dll", kGame}, "TLD.Serialization", "SerializationUtils")) {
         papi.use_json_net = il2::il2cpp_class_get_field_from_name(su, "s_UseJsonNet");
         papi.json_settings = il2::il2cpp_class_get_field_from_name(su, "m_SerializerSettings");
     }
     if (Il2CppClass* jc = il2::find_class("Newtonsoft.Json.dll", "Newtonsoft.Json", "JsonConvert"))
         papi.json_deserialize = il2::find_method_params(jc, "DeserializeObject",
                                                         {"System.String", "System.Type", "Newtonsoft.Json.JsonSerializerSettings"});
-    if (Il2CppClass* fj = il2::find_class(kGame, "", "FastJson"))
+    if (Il2CppClass* fj = class_in({"TLD.Serialization.dll", kGame}, "", "FastJson"))
         papi.fast_deserialize = il2::find_method_params(fj, "Deserialize", {"System.String", "System.Type"});
     if (Il2CppClass* pdid = il2::find_class("TLD.PDID.dll", "TLD.PDID", "PdidObjectBase")) {
         papi.pdid_get = il2::find_method(pdid, "GetPDID", 0);
@@ -2313,6 +2471,19 @@ void resolve_persist() {
         k.load = il2::find_method_params(c, "Deserialize", {"System.String"});
         if (std::strcmp(k.tag, "BD") == 0) papi.breakdown_post_load = il2::field_offset(c, "m_PostLoadBreakdown");
     }
+    if (Il2CppClass* cs = il2::find_class(kGame, "", "CuringStorage")) {
+        papi.t_curing = il2::type_object(cs);
+        papi.curing_save = il2::find_method(cs, "SerializeCuringStorage", 0);
+        papi.curing_load = il2::find_method_params(cs, "DeserializeCuringStorage", {"CuringStorageState"});
+        papi.curing_state = il2::field_offset(cs, "m_State");
+    }
+    if (Il2CppClass* st = il2::find_class(kGame, "", "CuringStorageState")) {
+        papi.t_curing_state = il2::type_object(st);
+        papi.curing_guid = il2::field_offset(st, "m_GUID");
+        papi.curing_items = il2::field_offset(st, "m_CuringItems");
+    }
+    if (!papi.curing_save || !papi.curing_load || !papi.t_curing_state || papi.curing_guid < 0)
+        logx::warn("interiors: CuringStorage calls missing: a curing box in a room comes back empty");
     Il2CppClass* pmc = il2::find_class(kGame, "", "PlayerManager");
     papi.pm_save_position = pmc ? il2::field_offset(pmc, "m_SaveGamePosition") : -1;
     papi.pm_object_to_place = pmc ? il2::field_offset(pmc, "m_ObjectToPlace") : -1;

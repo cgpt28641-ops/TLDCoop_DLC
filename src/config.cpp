@@ -102,6 +102,9 @@ constexpr const char* kDefaultIni =
     "; Seamless Interiors (built in, by karsontr13, with his permission): a building's door takes you in and out\n"
     "; without a loading screen. Being finished: off by default. In co-op the HOST decides for everyone (MODS).\n"
     "enabled=0\n"
+    "; A building you already used without it (its interior is in your save) gets its room built from your save once\n"
+    "; (items, containers, furniture, curing boxes); 0 = such buildings keep the game's door. The save is only read.\n"
+    "import_old=1\n"
     "\n"
     "[death]\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
@@ -227,6 +230,7 @@ Settings load() {
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
     s.seamless_interiors = GetPrivateProfileIntW(L"interiors", L"enabled", 0, ini.c_str()) != 0;
+    s.seamless_import_old = GetPrivateProfileIntW(L"interiors", L"import_old", 1, ini.c_str()) != 0;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
