@@ -301,7 +301,7 @@ bool arsenal_hit(Il2CppObject* bullet, const void* hit, float damage) {
     void* react_args[] = {const_cast<int32_t*>(&ws)};
     il2::invoke(il2::virtual_method(ai, api.react_to_hit), ai, react_args);
     add_skill_point(weapon == net::Weapon::Revolver ? kSkillRevolver : kSkillRifle);
-    logx::info("wildlife: our %s hit %s (%s): %.1f damage%s", weapon_name(weapon), name_of(il2::invoke(api.component_go, ai)).c_str(),
+    logx::info("wildlife: our %s hit %s (%s): %.1f damage%s", weapon_name(weapon), name_of(il2::invoke(api.component_transform, ai)).c_str(),
                name_of(tf).c_str(), crit ? 0.0f : dealt, crit ? " (kill chance came up)" : "");
     return true;
 }
