@@ -5,12 +5,18 @@
 // what milestone 1a covers. Every step logs one "interiors:" line; every missing game API is logged once at start.
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -22,6 +28,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/protocol.h"
+#include "paths.h"
 
 namespace seamless_interiors {
 namespace {
@@ -185,7 +192,8 @@ struct Api {
     const MethodInfo* tf_position = nullptr, *tf_set_position = nullptr, *tf_rotation = nullptr, *tf_set_rotation = nullptr,
                       *tf_set_local_position = nullptr, *tf_set_local_scale = nullptr, *tf_parent = nullptr,
                       *tf_set_parent = nullptr, *tf_is_child_of = nullptr, *tf_find = nullptr, *tf_child_count = nullptr,
-                      *tf_child = nullptr, *tf_to_world = nullptr, *tf_root = nullptr;
+                      *tf_child = nullptr, *tf_to_world = nullptr, *tf_root = nullptr,
+                      *tf_local_scale = nullptr;
     const MethodInfo* behaviour_enabled = nullptr, *behaviour_set_enabled = nullptr;
     // rendering
     const MethodInfo* r_enabled = nullptr, *r_set_enabled = nullptr, *r_bounds = nullptr, *r_lightmap = nullptr,
@@ -585,6 +593,7 @@ enum class Stage {
     Loading,    // its interior scenes are coming in
     PreRoll,    // prepared and placed; a moment for the placeables
     Waking,     // active with its renderers off, for the containers' and placeables' Awake
+    Hydrating,  // its saved contents coming back, a step per frame (SI: HydrateRoutine, eager)
     Ready,      // built: the door takes the player in
 };
 
@@ -610,6 +619,32 @@ struct Instance {
     uintptr_t cached_lightmaps = 0, cached_probes = 0;
     double stage_since = 0, started = 0;
     bool rolled = false;  // SI: the "<id>Gen_<save>" flag, kept for this visit (RandomSpawnBlockerPatch)
+    // milestone 1b: the room's state kept with the save (seamless_persist.inc)
+    std::filesystem::path dir;  // our per-save folder, fixed when the room is built
+    bool has_data = false;      // any file of this building in it (the door waits for the room instead of the game's)
+    bool from_files = false;    // SI: isAlreadyGenerated (loot flag and a gear file): the contents come from the files
+    bool hydrated = false;      // SI: ContentHydrated: what CanPersistContent asks
+    bool placeable_blocked = false, spawn_blocked = false, gear_blocked = false, container_blocked = false,
+         state_blocked = false;  // SI: *SaveBlocked: a file that couldn't be read is never written over
+    std::vector<std::string> orphan_spawned, orphan_gear, orphan_containers, orphan_state;  // SI: Orphan*Entries
+    std::unordered_set<std::string> spawned_guids;  // SI: SpawnedPlaceableGuids
+    int hydrate_step = 0;
+    double hydrate_started = 0;
+    std::vector<std::vector<std::string>> gear_rows;
+    std::vector<std::string> gear_lines;
+    size_t gear_next = 0;
+    int gear_restored = 0, gear_failed = 0;
+    struct ContainerJob {
+        uintptr_t container = 0;
+        std::string data, line;
+    };
+    std::vector<ContainerJob> container_jobs;
+    std::unordered_map<std::string, std::string> state_fires;  // the building's own fire records, by fire key
+    // SI: FrozenTime.cs caches
+    std::vector<uintptr_t> closed_fires, closed_pots, closed_lamps, closed_torches, closed_flares, closed_evolve;
+    bool closed_was_open = true, closed_dirty = true;
+    double closed_next_rescan = 0;
+    int closed_logged = 0;
 };
 std::vector<Instance> g_instances;
 std::string g_region;               // the region these instances belong to
@@ -665,6 +700,18 @@ struct DeferredGear {
     uintptr_t a = 0, b = 0;
 };
 std::vector<DeferredGear> g_deferred_gear;
+
+// Milestone 1b, in seamless_persist.inc (included further down).
+int adopt_strays(Instance& in, const char* why);
+int purge_leaked(Instance& in);
+int stabilize_guids(Instance& in);
+bool decide_loot(Instance& in);
+bool tick_hydrate(Instance& in);
+void enter_from_record(Instance& in);
+bool hold_targets(const Instance& in);
+bool hold_active();
+void ensure_dir(Instance& in);
+Instance* unready_with_data(Il2CppObject* door);
 
 // --- a room's geometry (SI: Instances.cs) ------------------------------------------------------------------------------
 
@@ -839,10 +886,10 @@ bool in_another_room(const Instance& in, Il2CppObject* tf) {
     return false;
 }
 
-// SI: SetInteriorItemsVisibleCore without the adoption: loose gear and placeables that stand in the closed room but
-// aren't part of it (what the player dropped or placed there) are hidden with it and shown again at the door. SI
-// moves them under the room instead (AdoptStrayInteriorObjects) and saves them in its own files; 1a has no room files
-// yet, so they stay the region's and the game's save keeps them where they are.
+// SI: SetInteriorItemsVisibleCore's hidden outsiders: loose gear and placeables that stand in the closed room's box but
+// aren't part of it are hidden with it and shown again at the door. Since milestone 1b what the player leaves in a room
+// is adopted first (AdoptStrayInteriorObjects, hide_room) and saved with the room; this keeps what can't be adopted
+// (outside the room's walls but inside its box) out of sight 80 m up.
 void set_outsiders_visible(Instance& in, bool visible) {
     Il2CppObject* m = master_of(in);
     if (!m) return;
@@ -900,10 +947,15 @@ void leave_audio_zones(Instance& in) {
     });
 }
 
-// SI: HideInteriorCompletely
+// SI: HideInteriorCompletely (+ SetInteriorItemsVisible(false)'s purge and adoption, milestone 1b: what the player left
+// in the room is the room's now, saved with it; only what can't be adopted is hidden as an outsider, as in 1a)
 void hide_room(Instance& in) {
     Il2CppObject* m = master_of(in);
     if (!m) return;
+    if (in.hydrated && active_self(m)) {
+        purge_leaked(in);
+        adopt_strays(in, "the room closed");
+    }
     set_outsiders_visible(in, false);
     leave_audio_zones(in);
     set_active(m, false);
@@ -2288,9 +2340,10 @@ void tick_build() {
             return;
         }
         case Stage::PreRoll: {
-            if (now - in->stage_since < kPreRollWaitMs) return;
+            if (now - in->stage_since < (hold_targets(*in) ? 0 : kPreRollWaitMs)) return;
             set_placeables_invalidated(*in, true);  // SI: DisableInteriorContainerSerialization (the containers' too)
-            roll_loot(*in);
+            stabilize_guids(*in);                   // SI: HandleInitialPlaceables
+            if (!decide_loot(*in)) roll_loot(*in);  // SI: ProcessSpawnsAndDeduplication, PerformInitialLootRoll
             each_in(master_of(*in), api.t_renderer, [&](Il2CppObject* r) { set_renderer(r, false); });
             set_active(master_of(*in), true);  // SI: invisibly, so the containers' and placeables' Awake run
             freeze_gear(*in);
@@ -2298,7 +2351,7 @@ void tick_build() {
             return;
         }
         case Stage::Waking: {
-            if (now - in->stage_since < kAwakeWaitMs) return;
+            if (now - in->stage_since < (hold_targets(*in) ? 500 : kAwakeWaitMs)) return;
             V3 center, size;
             if (!room_bounds(*in, center, size))
                 logx::info("interiors: %s: no renderers to measure; the room's volume is SI's default box", in->cfg->id);
@@ -2306,13 +2359,23 @@ void tick_build() {
             setup_perimeter(*in, center, size);
             strip_lightmaps(*in);
             update_global_environment();
-            show_room_renderers(*in);
             register_fires(*in);
             safehouse_fix(*in);
-            // SI: ApplyInitialSyncState: the player isn't in it, so it closes (what stands in its volume with it).
-            hide_room(*in);
-            if (Il2CppObject* s = live(in->shell)) set_active(s, true);
+            in->hydrate_step = 0;
+            set_stage(*in, Stage::Hydrating);
+            return;
+        }
+        case Stage::Hydrating: {
+            if (!tick_hydrate(*in)) return;
+            show_room_renderers(*in);
             set_stage(*in, Stage::Ready);
+            if (hold_targets(*in)) {
+                enter_from_record(*in);  // SI: Run's early activation: the player saved in this room
+            } else {
+                // SI: ApplyInitialSyncState: the player isn't in it, so it closes (what stands in its volume with it).
+                hide_room(*in);
+                if (Il2CppObject* s = live(in->shell)) set_active(s, true);
+            }
             g_building = nullptr;
             g_template_scenes.clear();
             g_wind_restore_at = now + 1500;
@@ -2320,7 +2383,7 @@ void tick_build() {
             g_region_state_searches = 0;
             logx::info("interiors: %s: room ready in %.1f s (box %.1f x %.1f x %.1f m); its door now goes in without a "
                        "loading screen",
-                       in->cfg->id, (now - in->started) / 1000.0, size.x, size.y, size.z);
+                       in->cfg->id, (now - in->started) / 1000.0, in->trig_size.x, in->trig_size.y, in->trig_size.z);
             return;
         }
         default:
@@ -2331,19 +2394,28 @@ void tick_build() {
 
 // Lazy building (the port: SI builds every room behind a black screen at the region's load): the nearest building
 // within kBuildDistance of the player whose room isn't built yet, one at a time.
+Instance* g_urgent = nullptr;  // a building whose door was used before its room was built (it has saved contents)
+
 void pick_building() {
     if (g_building || !g_feature_on) return;
     static double next = 0;
     const double now = now_ms();
     if (now < next) return;
-    next = now + 500;
-    if (game::seconds_since_level_load() < 5.0f) return;  // the game's own load first
+    next = now + 250;
+    // the game's own load first (shorter for the room the player saved in: they wait at its door in the dark)
+    if (game::seconds_since_level_load() < (hold_active() ? 1.5f : 5.0f)) return;
+    if (game::save_id().empty()) return;  // milestone 1b: the save's folder must be known before any room is filled
     const V3 p = player_pos();
     if (is_zero(p)) return;
     Instance* best = nullptr;
     float best_d = kBuildDistance;
     for (Instance& in : g_instances) {
         if (in.stage != Stage::Idle) continue;
+        if (hold_targets(in) || &in == g_urgent) {
+            best = &in;
+            best_d = dist(p, in.cfg->fallback);
+            break;
+        }
         const float d = dist(p, in.cfg->fallback);
         if (d < best_d) {
             best_d = d;
@@ -2351,6 +2423,8 @@ void pick_building() {
         }
     }
     if (!best) return;
+    if (best == g_urgent) g_urgent = nullptr;
+    ensure_dir(*best);
     Instance& in = *best;
     Il2CppObject* shell = find_shell(in);
     in.shell = hold(shell);
@@ -2359,8 +2433,8 @@ void pick_building() {
                    in.cfg->id, in.cfg->shell);
     std::string key;
     if (has_vanilla_data(in, key)) {
-        logx::info("interiors: %s: the save already holds its interior ('%s'); its door stays the game's", in.cfg->id,
-                   key.c_str());
+        logx::info("interiors: %s: the save already holds its interior ('%s'); its door stays the game's%s", in.cfg->id,
+                   key.c_str(), in.has_data ? " (our files of it are left alone)" : "");
         set_stage(in, Stage::Vanilla);
         return;
     }
@@ -2728,6 +2802,13 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
     if (g_fade.busy) return;  // a door is already being used (SI: s_DoorFadeBusy)
     const DoorChoice c = choose(self);
     if (c.way == DoorWay::Vanilla) {
+        if (Instance* wait = unready_with_data(self)) {  // milestone 1b: its room holds the player's things
+            static int told = 0;
+            if (told++ < 20)
+                logx::info("interiors: %s: its room isn't built yet and has saved contents; the door waits for it", wait->cfg->id);
+            if (wait->stage == Stage::Idle) g_urgent = wait;
+            return;
+        }
         static int logged = 0;
         if (logged++ < 20) logx::info("interiors: '%s' (to %s) is the game's own door", name_of(go_of(self)).c_str(), door_scene(self).c_str());
         return g_activate(self, immediately, method);
@@ -2777,9 +2858,10 @@ void rso_start_detour(Il2CppObject* self, const MethodInfo* method) {
 // from the region's save as duplicates, or the game would switch the room's furniture off).
 using StaticObjFn = void (*)(Il2CppObject* arg, const MethodInfo* method);
 StaticObjFn g_placeable_add = nullptr;
+bool g_creating_placeable_1b = false;  // mirrors seamless_persist.inc's g_creating_placeable (SI: IsCreatingClonePlaceable)
 void placeable_add_detour(Il2CppObject* placeable, const MethodInfo* method) {
     if (engaged() && placeable &&
-        (g_copying_template || is_clone_object(placeable))) {
+        (g_copying_template || g_creating_placeable_1b || is_clone_object(placeable))) {
         static int logged = 0;
         if (logged++ < 5) logx::info("interiors: a room's placeable kept out of the game's registry");
         return;
@@ -2964,23 +3046,37 @@ void defer_gear(int overload, Il2CppObject* a, Il2CppObject* b) {
     logx::warn("interiors: GearManager.Deserialize (%d) held back while %s loads; it runs once the load is over", overload,
                g_loading_base.c_str());
 }
+void freeze_restored_gear();  // seamless_persist.inc
+// SI: FreezeRestoredGearPhysics, after the game's own restore of a supported region's items.
+void after_gear_load() {
+    if (g_gear_des_depth != 0 || !engaged()) return;
+    const std::string region = active_region();
+    for (int i = 0; i < kConfigCount; ++i)
+        if (region == kConfigs[i].region) {
+            freeze_restored_gear();
+            return;
+        }
+}
 void gear_des1_detour(Il2CppObject* t, const MethodInfo* method) {
     if (deferring_gear()) return defer_gear(1, t, nullptr);
     ++g_gear_des_depth;
     g_gear_des1(t, method);
     --g_gear_des_depth;
+    after_gear_load();
 }
 void gear_des2_detour(Il2CppObject* a, Il2CppObject* b, const MethodInfo* method) {
     if (deferring_gear()) return defer_gear(2, a, b);
     ++g_gear_des_depth;
     g_gear_des2(a, b, method);
     --g_gear_des_depth;
+    after_gear_load();
 }
 void gear_des3_detour(Il2CppObject* a, Il2CppObject* b, const MethodInfo* method) {
     if (deferring_gear()) return defer_gear(3, a, b);
     ++g_gear_des_depth;
     g_gear_des3(a, b, method);
     --g_gear_des_depth;
+    after_gear_load();
 }
 void replay_deferred_gear() {
     if (g_deferred_gear.empty()) return;
@@ -3007,7 +3103,7 @@ void flush_deferred_gear() {
 }
 
 // SI: SafeSavePositionPatch: a save made in a parked room holds the door point outside, not a spot 80 m in the air.
-// (1a has no "player was inside" record of its own: the load starts at that door.)
+// (The load starts at that door; our own player.inside record then puts the player back in the room, milestone 1b.)
 Instance* parked_room_holding(V3 pos) {
     if (g_inside && in_room(g_inside) && in_parked_room(*g_inside, pos)) return g_inside;
     for (Instance& in : g_instances)
@@ -3033,6 +3129,15 @@ bool nearest_region_exit(Instance& in, V3 near_pos, V3& safe) {
     safe = p;
     return true;
 }
+// The door point outside a room (or its parent's, for a sub-interior) that the game's save holds instead of the room.
+bool safe_door_point(Instance& room, V3 near_pos, V3& safe) {
+    if (nearest_region_exit(room, near_pos, safe)) return true;
+    for (Instance& parent : g_instances)
+        if (&parent != &room && is_sub_linked(parent, room.cfg->id) && in_room(&parent) &&
+            nearest_region_exit(parent, near_pos, safe))
+            return true;
+    return false;
+}
 using PmSerializeFn = Il2CppObject* (*)(Il2CppObject* self, const MethodInfo* method);
 PmSerializeFn g_pm_serialize = nullptr;
 Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) {
@@ -3043,14 +3148,7 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
     V3 safe;
     bool moved = false;
     if (room) {
-        bool found = nearest_region_exit(*room, here, safe);
-        if (!found)
-            for (Instance& parent : g_instances)
-                if (&parent != room && is_sub_linked(parent, room->cfg->id) && in_room(&parent) &&
-                    nearest_region_exit(parent, here, safe)) {
-                    found = true;
-                    break;
-                }
+        const bool found = safe_door_point(*room, here, safe);
         if (found) {
             set_position(ptf, safe);
             moved = true;
@@ -3064,6 +3162,10 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
     if (moved) set_position(ptf, here);
     return r;
 }
+
+// Milestone 1b: the rooms' own save files, the player's place, closed-room time, adoption (SI: SaveData.cs,
+// Hydration.cs, FrozenTime.cs, ...).
+#include "seamless_persist.inc"
 
 // --- hooks: inside (SI: WeatherPatches.cs, WindInstanceFix.cs, EvolvePatches.cs, SafehouseFixes.cs) -------------------
 
@@ -3285,7 +3387,18 @@ void forget_region(const char* why) {
     drop(g_fade.door);
     g_fade = {};
     g_fall_guard_until = 0;
+    if (g_hold.active) release_hold("the region changed");
+    g_record_checked = false;
+    g_rolled_read = false;
+    g_mod_guids.clear();
+    g_stable_checked.clear();
+    g_carried_wrong_prev.clear();
+    g_urgent = nullptr;
     for (Instance& in : g_instances) {
+        for (auto* list : {&in.closed_fires, &in.closed_pots, &in.closed_lamps, &in.closed_torches, &in.closed_flares,
+                           &in.closed_evolve})
+            for (uintptr_t& h : *list) drop(h);
+        for (Instance::ContainerJob& j : in.container_jobs) drop(j.container);
         drop(in.master);
         drop(in.master_tf);
         drop(in.shell);
@@ -3320,6 +3433,7 @@ void forget_region(const char* why) {
 
 void enter_region(const std::string& region) {
     g_region = region;
+    if (now_ms() - g_region_fires_at > 30000) g_region_fires.clear();  // the fire records kept belong to an earlier load
     for (int i = 0; i < kConfigCount; ++i) {
         if (region != kConfigs[i].region) continue;
         Instance in;
@@ -3395,7 +3509,8 @@ void on_frame(const std::string& scene, bool in_game) {
     }
     bool any_built = false;
     for (const Instance& in : g_instances) any_built = any_built || in.stage == Stage::Ready || in.stage == Stage::Loading ||
-                                                        in.stage == Stage::PreRoll || in.stage == Stage::Waking;
+                                                        in.stage == Stage::PreRoll || in.stage == Stage::Waking ||
+                                                        in.stage == Stage::Hydrating;
     const bool engaged_now = g_feature_on || any_built;
     if (engaged_now != g_engaged || !g_logged_state) {
         g_logged_state = true;
@@ -3406,8 +3521,12 @@ void on_frame(const std::string& scene, bool in_game) {
     if (!g_engaged || g_instances.empty()) return;
     (void)scene;
     tick_build();
+    check_inside_record();  // milestone 1b: back into the room the save was made in
+    tick_hold();
     pick_building();
     tick_fade();
+    tick_closed_time();
+    tick_carried_guard();
     tick_doorless_exit();
     sync_indoor_space();
     tick_capsule();
@@ -3531,6 +3650,7 @@ bool resolve() {
     api.tf_set_rotation = il2::find_method(tf, "set_rotation", 1);
     api.tf_set_local_position = il2::find_method(tf, "set_localPosition", 1);
     api.tf_set_local_scale = il2::find_method(tf, "set_localScale", 1);
+    api.tf_local_scale = il2::find_method(tf, "get_localScale", 0);
     api.tf_parent = il2::find_method(tf, "get_parent", 0);
     api.tf_set_parent = il2::find_method_params(tf, "SetParent", {"UnityEngine.Transform", "System.Boolean"});
     api.tf_is_child_of = il2::find_method(tf, "IsChildOf", 1);
@@ -3895,6 +4015,7 @@ bool resolve() {
         logx::warn("interiors: the door can't be hooked; Seamless Interiors is unavailable");
         return false;
     }
+    resolve_persist();
     return true;
 }
 

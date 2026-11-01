@@ -5,9 +5,12 @@
 // "clone", parked 80 m above the building, as SI does) and the door moves the player there and back behind a short
 // fade to black. The game keeps the region as its scene the whole time.
 //
-// Milestone 1a: the rooms rebuild from their template on every visit to a region (nothing of a room is saved by us
-// yet), and the game's region save is kept free of the rooms' objects. Off by default: coop.ini [interiors] enabled,
-// in co-op the host's choice (the MODS page). Off, every hook calls straight through to the game.
+// Milestone 1a: rooms built near the player, doors without a loading screen, the game's region save kept free of the
+// rooms' objects. Milestone 1b (seamless_persist.inc): each room keeps its state with the save in our own per-save
+// folder (furniture, the player's placed objects, loose items, containers, broken/opened/harvested objects, fires),
+// what the player leaves in a room is adopted by it, a save made inside puts the player back in the room, and a closed
+// room's fires, pots, lamps and curing go on with the game's time. Off by default: coop.ini [interiors] enabled, in
+// co-op the host's choice (the MODS page). Off, every hook calls straight through to the game.
 //
 // Building list: src/seamless_configs.inc (tools/seamless/gen_configs.py from SI's own list).
 
