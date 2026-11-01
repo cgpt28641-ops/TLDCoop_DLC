@@ -88,6 +88,7 @@ struct Api {
     const MethodInfo* label_set_text = nullptr;
     const MethodInfo* label_set_font_size = nullptr;
     const MethodInfo* label_set_overflow = nullptr;
+    const MethodInfo* label_set_alignment = nullptr;  // UILabel.set_alignment(NGUIText.Alignment): Left 1
     const MethodInfo* label_printed = nullptr;      // UILabel.get_printedSize()
     const MethodInfo* widget_set_pivot = nullptr;
     const MethodInfo* widget_set_width = nullptr;
@@ -614,7 +615,7 @@ void show_elsewhere(const std::vector<avatar::Seen>& all, Il2CppObject* ui_camer
 // --- TLDCoop_DLC: the chat box ------------------------------------------------------------------------------------
 // Bottom left, above TLD's status: TLD's hover text for the lines, TLD's hover text box behind them.
 
-constexpr int kChatFont = 18, kChatInputFont = 20, kPivotBottomLeft = 6;
+constexpr int kChatFont = 20, kChatInputFont = 20, kPivotBottomLeft = 6;  // TLDCoop_DLC: one size for all of it
 constexpr float kChatLeft = 28, kChatBottom = 170, kChatPad = 10, kChatWidth = 560;
 std::vector<std::string> g_chat_lines;
 bool g_chat_typing = false;
@@ -657,11 +658,13 @@ void show_chat(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
     }
     if (!label) {
         label = make_label(go_transform(r), "Chat", kChatFont, kPivotBottomLeft);
+        if (label && api.label_set_alignment) set_int(api.label_set_alignment, label, 1);  // lines start at the left
         g_chat_label = hold(label);
         g_chat_shown.clear();
     }
     if (!input) {
         input = make_label(go_transform(r), "ChatInput", kChatInputFont, kPivotBottomLeft);
+        if (input && api.label_set_alignment) set_int(api.label_set_alignment, input, 1);
         g_chat_input = hold(input);
         g_chat_input_shown.clear();
     }
@@ -1478,6 +1481,7 @@ bool init() {
     api.label_set_text = il2::find_method(label, "set_text", 1);
     api.label_set_font_size = il2::find_method(label, "set_fontSize", 1);
     api.label_set_overflow = il2::find_method(label, "set_overflowMethod", 1);
+    api.label_set_alignment = il2::find_method_quiet(label, "set_alignment", 1);
     api.label_printed = il2::find_method(label, "get_printedSize", 0);
     api.widget_set_pivot = il2::find_method(widget, "set_pivot", 1);
     api.widget_set_width = il2::find_method(widget, "set_width", 1);
