@@ -268,7 +268,7 @@ float gun_accuracy(Il2CppObject* gun, int32_t type) {
 }
 
 // Where it lands (or ends): TLD's bullet, started `back` metres in front, pointed along `dir`, reaching `reach`.
-void land(Flight& f, V3 at, V3 dir, float reach, bool hit) {
+void land(Flight& f, V3 at, V3 dir, float reach, bool hit, const uint8_t* raycast_hit = nullptr) {
     Il2CppObject* bullet = target(f.bullet);
     if (alive(bullet)) {
         Il2CppObject* tf = tf_of(bullet);
@@ -280,13 +280,18 @@ void land(Flight& f, V3 at, V3 dir, float reach, bool hit) {
             il2::invoke(api.set_rotation, tf, ra);
         }
         char* b = reinterpret_cast<char*>(bullet);
-        const float range = reach, damage = f.damage * arsenal::damage_share(f.travelled), effective = 1e4f;
+        float damage = f.damage * arsenal::damage_share(f.travelled);
+        // TLDCoop_DLC: an animal takes the hit here (TLD's bullet, started again, didn't hurt them); then TLD's bullet
+        // only shows the impact (no damage of its own)
+        const bool dealt = hit && raycast_hit && wildlife_hits::arsenal_impact(bullet, raycast_hit, damage);
+        if (dealt) damage = 0;
+        const float range = reach, effective = 1e4f;
         memcpy(b + api.bullet_range, &range, sizeof(float));
         memcpy(b + api.bullet_damage, &damage, sizeof(float));
         memcpy(b + api.bullet_accuracy, &effective, sizeof(float));  // TLD's "effective range": no falloff of its own
         set_active(go_of(bullet), true);
         g_started[bullet] = 0;
-        wildlife_hits::start_bullet(bullet);
+        wildlife_hits::start_bullet(bullet, dealt);
         static int logged = 0;
         if (logged++ < 20)
             logx::info("arsenal: a bullet %s after %.0f m (%.2f s): %.0f%% of its damage", hit ? "hit" : "ended",
@@ -321,7 +326,7 @@ bool fly(Flight& f, float dt) {
             const float back = f.travelled < kBackOff ? f.travelled : kBackOff;
             f.points.push_back(point);
             draw_trail(f);
-            land(f, point - dir * back, dir, back + (f.range > f.travelled ? f.range - f.travelled : 0) + 0.5f, true);
+            land(f, point - dir * back, dir, back + (f.range > f.travelled ? f.range - f.travelled : 0) + 0.5f, true, hit);
             return false;
         }
         f.pos = f.pos + seg;

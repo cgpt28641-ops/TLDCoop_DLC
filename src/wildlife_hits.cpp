@@ -63,6 +63,8 @@ struct Api {
     const MethodInfo* find_objects = nullptr;     // static Object.FindObjectsOfType(Type)
     const MethodInfo* find_object = nullptr;      // static Object.FindObjectOfType(Type)
     const MethodInfo* collider_by_id = nullptr;   // static Physics.GetColliderByInstanceID(int)
+    Il2CppObject* base_ai_type = nullptr;         // TLDCoop_DLC: typeof(BaseAi)
+    const MethodInfo* get_parent = nullptr;       // TLDCoop_DLC: Transform.get_parent()
     const MethodInfo* navmesh_sample = nullptr;   // static NavMesh.SamplePosition(Vector3, out NavMeshHit, float, int)
     Il2CppObject* localized_damage_type = nullptr;
     Il2CppObject* shooter_type = nullptr;
@@ -202,9 +204,11 @@ void send_hit(uint32_t animal, net::Weapon weapon, Il2CppObject* ld, Il2CppObjec
 using SpawnImpactFn = void (*)(Il2CppObject* self, void* hit, const MethodInfo* method);
 SpawnImpactFn g_spawn_impact = nullptr;
 
+bool g_arsenal_landing = false;  // TLDCoop_DLC: Adaptive Arsenal restarting a bullet whose hit it dealt already
+
 void spawn_impact_detour(Il2CppObject* self, void* hit, const MethodInfo* method) {
     g_spawn_impact(self, hit, method);
-    if (!g_ready || !hit || !is_client()) return;
+    if (!g_ready || !hit || !is_client() || g_arsenal_landing) return;
     int32_t collider_id = 0;
     memcpy(&collider_id, static_cast<char*>(hit) + kRaycastHitCollider, sizeof(collider_id));
     void* id_args[] = {&collider_id};
@@ -246,6 +250,60 @@ void spawn_impact_detour(Il2CppObject* self, void* hit, const MethodInfo* method
     Vector3 point{};
     memcpy(&point, hit, sizeof(point));  // RaycastHit.m_Point
     send_hit(animal, weapon, ld, tf, damage, bleed, crit, false, point);
+}
+
+// TLDCoop_DLC: Adaptive Arsenal's bullet hit this (its raycast's RaycastHit): an animal takes the hit here, as the
+// original mod does it (LocalizedDamage's scale and bleed-out, the kill chance, TLD's hit reaction), with the damage
+// the flight left it. Animals took no damage from TLD's bullet started again where ours landed.
+bool arsenal_hit(Il2CppObject* bullet, const void* hit, float damage) {
+    if (!g_ready || !bullet || !hit || !api.collider_by_id) return false;
+    int32_t collider_id = 0;
+    memcpy(&collider_id, static_cast<const char*>(hit) + kRaycastHitCollider, sizeof(collider_id));
+    void* id_args[] = {&collider_id};
+    Il2CppObject* collider = il2::invoke(api.collider_by_id, nullptr, id_args);
+    Il2CppObject* tf = collider ? il2::invoke(api.component_transform, collider) : nullptr;
+    if (!tf) return false;
+    Vector3 point{};
+    memcpy(&point, hit, sizeof(point));
+    const int32_t gun = il2::read_field<int32_t>(bullet, api.bullet_gun);  // GunType: Revolver 0, Rifle 1
+    const net::Weapon weapon = gun == 0 ? net::Weapon::Revolver : net::Weapon::Rifle;
+    const int32_t ws = static_cast<int32_t>(weapon);
+    Il2CppObject* ld = component(collider, api.localized_damage_type);
+    if (is_client()) {  // our copy of the host's animal: the host deals it
+        uint32_t animal = 0;
+        bool dead = false;
+        if (!wildlife_sync::puppet_at(tf, animal, dead)) return false;
+        if (dead || !ld) return true;
+        const bool crit = roll_kill(ld, ws);
+        add_skill_point(weapon == net::Weapon::Revolver ? kSkillRevolver : kSkillRifle);
+        send_hit(animal, weapon, ld, tf, damage * lz_call(api.damage_scale, ld, ws), lz_call(api.bleed_minutes, ld, ws), crit,
+                 false, point);
+        return true;
+    }
+    // ours (the host's, or alone): the BaseAi above the collider
+    Il2CppObject* ai = nullptr;
+    for (Il2CppObject* t = tf; t && !ai && api.base_ai_type; t = api.get_parent ? il2::invoke(api.get_parent, t) : nullptr)
+        ai = component(t, api.base_ai_type);
+    if (!ai) return false;
+    if (il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead) return true;
+    if (!ld) return false;  // (TLD's own bullet deals it)
+    const float bleed = lz_call(api.bleed_minutes, ld, ws);
+    float dealt = damage * lz_call(api.damage_scale, ld, ws);
+    const bool crit = !il2::read_field<bool>(ai, api.ai_ignore_crits) && roll_kill(ld, ws);
+    if (crit) dealt = std::numeric_limits<float>::infinity();
+    const game::PlayerState p = game::read_player();
+    Vector3 from{p.position.x, p.position.y, p.position.z};
+    void* anim_args[] = {&point, &from, ld};
+    il2::invoke(api.setup_damage_anim, ai, anim_args);
+    int32_t src = kDamageSourcePlayer;
+    void* damage_args[] = {&dealt, const_cast<float*>(&bleed), &src, il2::il2cpp_string_new(name_of(tf).c_str())};
+    il2::invoke(il2::virtual_method(ai, api.apply_damage), ai, damage_args);
+    void* react_args[] = {const_cast<int32_t*>(&ws)};
+    il2::invoke(il2::virtual_method(ai, api.react_to_hit), ai, react_args);
+    add_skill_point(weapon == net::Weapon::Revolver ? kSkillRevolver : kSkillRifle);
+    logx::info("wildlife: our %s hit %s (%s): %.1f damage%s", weapon_name(weapon), name_of(il2::invoke(api.component_go, ai)).c_str(),
+               name_of(tf).c_str(), crit ? 0.0f : dealt, crit ? " (kill chance came up)" : "");
+    return true;
 }
 
 // Arrows: ArrowItem.HandleCollisionWithObject has stuck the arrow in our copy (parented to the hit collider) and
@@ -755,8 +813,14 @@ void run_shot() {
 
 }  // namespace
 
-void start_bullet(Il2CppObject* bullet) {
+void start_bullet(Il2CppObject* bullet, bool hit_dealt) {
+    g_arsenal_landing = hit_dealt;
     if (g_bullet_start && bullet) g_bullet_start(bullet, g_bullet_start_mi);
+    g_arsenal_landing = false;
+}
+
+bool arsenal_impact(Il2CppObject* bullet, const void* raycast_hit, float damage) {
+    return arsenal_hit(bullet, raycast_hit, damage);
 }
 
 bool approach(float metres) {
@@ -856,6 +920,8 @@ bool init() {
     api.find_objects = il2::find_method_params(object, "FindObjectsOfType", {"System.Type"});
     api.find_object = il2::find_method_params(object, "FindObjectOfType", {"System.Type"});
     api.collider_by_id = il2::find_method(il2::find_class(kPhysics, "UnityEngine", "Physics"), "GetColliderByInstanceID", 1);
+    if (base_ai) api.base_ai_type = il2::type_object(base_ai);  // TLDCoop_DLC
+    api.get_parent = il2::find_method(transform, "get_parent", 0);
     api.navmesh_sample = il2::find_method(il2::find_class(kAi, "UnityEngine.AI", "NavMesh"), "SamplePosition", 4);
     for (auto [slot, klass] : {std::pair{&api.localized_damage_type, localized},
                                std::pair{&api.shooter_type, il2::find_class(kGame, "", "vp_FPSShooter")},

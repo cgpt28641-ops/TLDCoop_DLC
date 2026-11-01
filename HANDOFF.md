@@ -405,3 +405,9 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Self-update with a token built into the DLL (private repo) was written but NOT shipped: a credential inside a file
   handed to friends can be dug out. Asked Karol; alternative: the host's game hands its winhttp.dll to friends over
   the co-op link (no token, no public repo).
+- 18:10 Karol: animals take no damage when shot. Adaptive Arsenal flew the bullet and restarted TLD's vp_Bullet
+  just before the hit point; that dealt nothing (no "hit" logs at all). Now wildlife_hits::arsenal_impact deals it
+  from our own raycast hit, as the original mod does (LocalizedDamage scale/bleed, kill chance, SetupDamageForAnim,
+  ApplyDamage, MaybeFleeOrAttackFromProjectileHit, skill point): host/alone on the BaseAi above the collider; a
+  friend on its copy of the host's animal sends the Hit as before. TLD's bullet is then restarted with Damage 0 for
+  the impact only (spawn_impact_detour skips it). Log: "wildlife: our rifle hit WILDLIFE_x (collider): N damage".
