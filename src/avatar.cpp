@@ -1689,7 +1689,7 @@ PVec palm_centre(const Avatar& a, bool right) {
     const HandDirs d = hand_dirs(a, right);
     const PVec h = position_of(bone(a, right ? kRightHand : kLeftHand));
     if (!d.ok) return palm(a, right ? kRightArm : kLeftArm);
-    return h + d.fingers * 0.055f + d.palm * 0.03f;
+    return h + d.fingers * 0.075f + d.palm * 0.04f;  // (inside the curled fingers, measured on the rig)
 }
 // Half of the hand's twist about the forearm goes to the forearm's twist bone: no wrung wrist.
 void relax_wrist(const Avatar& a, bool right) {
@@ -2069,16 +2069,18 @@ void late_one(Avatar& a) {
         const bool other_right = h.in_left;
         if (h.left_on_item >= 0 && hand_dirs(a, other_right).ok) {
             // TLDCoop_DLC: the other hand under the item, palm up against it (its palm, not its wrist, at the spot)
-            const PVec want = to - item_up * 0.035f;
+            const Wrap other_wrap = h.left_fist ? Wrap::Stick : Wrap::Support;  // round it, or under it
+            const PVec want = h.left_fist ? to : to - item_up * 0.035f;
             for (int i = 0; i < 3; ++i) {  // (the palm's offset depends on the hand's turn: settle it)
-                wrap_hand(a, other_right, Wrap::Support, item_dir, item_up, false);
+                wrap_hand(a, other_right, other_wrap, item_dir, item_up, false);
                 const PVec off = palm_centre(a, other_right) - position_of(bone(a, other_right ? kRightHand : kLeftHand));
                 if (i < 2)
                     reach(a, other, want - off, other_pole);
                 else
                     reach2(a, other, want - off, other_pole);  // the shoulder up once, at the end
             }
-            wrap_hand(a, other_right, Wrap::Support, item_dir, item_up);
+            wrap_hand(a, other_right, other_wrap, item_dir, item_up, false);
+            hand_shape(a, other_right, h.left_fist ? HandShape::Fist : HandShape::Grip, h.left_fist ? 1.0f : 0.55f);
             relax_wrist(a, other_right);
         } else {
             reach(a, other, to, pole_for(other_frame));

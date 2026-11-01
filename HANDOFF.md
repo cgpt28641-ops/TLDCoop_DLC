@@ -369,3 +369,4 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   aim: right elbow out, left under, spine/neck lean 6, head 8 (Hold.elbow_out/lean/head); revolver aim lean 3/head 4;
   spear set re-tuned (left palm 3 cm from the shaft). Fixed: finger bends were applied 3-4 times a frame for the
   supporting hand (wrap_hand in the settle loop) - now once.
+- 11:10 Karol: the left hand sat badly on the rifle (port arms). It held it from under, palm up, beside the barrel. Now Hold.left_fist (rifle low, spear set): the left hand closes round it (Stick, Fist); palm_centre moved into the curled fingers (fingers 0.075, palm 0.04 m: measured on the rig), so items run through the fist. Preview outputs/karabin_lewa_reka.png.

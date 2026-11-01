@@ -143,6 +143,7 @@ struct Hold {
     bool elbow_out = false;   // the right elbow raised out to the side (a rifle at the shoulder), the left one under
     float lean = 0;           // degrees the upper spine and neck lean forward
     float head = 0;           // and the head on top of that (down onto the sights)
+    bool left_fist = false;   // the other hand closes round the item (else it holds it from under, palm up)
 };
 
 // The default hold for each kind (tuned against screenshots of the body pack's characters).
@@ -191,6 +192,7 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
                 h.item_up = {0.2f, 0.2f, 1};
                 h.grip = -0.30f;
                 h.left_on_item = 0.34f;
+                h.left_fist = true;
             }
             return h;
         case HeldKind::Revolver:
@@ -245,6 +247,7 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
                 h.item_dir = {-0.20f, -0.06f, 0.97f};
                 h.grip = -0.2f;
                 h.left_on_item = 0.26f;
+                h.left_fist = true;
             } else {  // upright at the side like a staff
                 h.right_hand = {0.12f, -0.42f, 0.10f};
                 h.item_dir = {0, 1, 0.1f};
