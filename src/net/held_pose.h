@@ -151,11 +151,11 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
         case HeldKind::Torch:
         case HeldKind::Match:  // TLDCoop_DLC: as a flare
         case HeldKind::FlareRed:
-        case HeldKind::FlareBlue:  // held out before the chest, flame up and leaning forward, at head height
+        case HeldKind::FlareBlue:  // TLDCoop_DLC: upright in front of the chest, a little out to the side
             h.right = true;
-            h.right_hand = {0.10f, -0.25f, 0.38f};
-            h.item_dir = {0, 0.85f, 0.53f};
-            h.item_up = {0, -0.53f, 0.85f};
+            h.right_hand = {0.16f, -0.30f, 0.28f};
+            h.item_dir = {0.05f, 0.98f, 0.18f};
+            h.item_up = {0, -0.18f, 0.98f};
             h.grip = -0.55f;
             return h;
         case HeldKind::Lantern:  // down at the side, hanging from its handle
@@ -167,7 +167,7 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
         case HeldKind::Flashlight:  // out in front, along where they look
             h.look = true;
             h.right = true;
-            h.right_hand = {0.05f, -0.10f, 0.42f};
+            h.right_hand = {0.06f, -0.26f, 0.40f};  // TLDCoop_DLC: lower, the arm out (was up by the face)
             h.grip = -0.4f;
             return h;
         case HeldKind::Rifle:
@@ -232,10 +232,10 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
             h.right = true;
             if (flags & kHeldRaised) {  // set: low, point forward, in both hands
                 h.left = true;
-                h.right_hand = {-0.05f, -0.30f, 0.15f};
-                h.item_dir = {0, -0.24f, 0.97f};
+                h.right_hand = {-0.06f, -0.40f, -0.02f};  // TLDCoop_DLC: at the hip, the left hand forward on the shaft
+                h.item_dir = {-0.10f, -0.08f, 0.99f};
                 h.grip = -0.2f;
-                h.left_on_item = 0.28f;  // TLDCoop_DLC: (0.35: the left hand fell short)
+                h.left_on_item = 0.28f;
             } else {  // upright at the side like a staff
                 h.right_hand = {0.12f, -0.42f, 0.10f};
                 h.item_dir = {0, 1, 0.1f};

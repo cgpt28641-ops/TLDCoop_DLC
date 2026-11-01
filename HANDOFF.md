@@ -361,3 +361,6 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   Support: the other hand under, palm up, its palm placed on the spot; Palm: stone). Item grip = palm centre (pistol:
   5 cm above the fist). held_pose.h: rifle low = port arms, rifle aim / revolver aim / spear set re-tuned so the
   left hand reaches.
+- 10:30 Karol: flare must be upright; some arm poses unnatural. held_pose.h: torch/flare/match upright (dir 0.05,0.98,0.18)
+  out to the side; flashlight lower with the arm out (was up by the face); spear set at the hip, left hand forward
+  (left palm now within 3 cm of the shaft on the rig; was 11 cm short). Preview: outputs/przedmioty_w_rekach_v2.png.
