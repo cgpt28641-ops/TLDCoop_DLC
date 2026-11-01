@@ -203,6 +203,8 @@ void drain_remote_states(std::vector<net::TimedState>& out) {
     if (g_session) g_session->drain_remote_states(out);
 }
 
+std::array<uint32_t, net::kMaxPlayers> g_resync{};  // resync(): per friend
+
 std::vector<uint8_t> Together::arrived(const std::string& scene) {
     std::array<uint32_t, net::kMaxPlayers> now{};
     if (g_session && !scene.empty() && g_config.role == net::Role::Host) {
@@ -213,10 +215,18 @@ std::vector<uint8_t> Together::arrived(const std::string& scene) {
         }
     }
     std::vector<uint8_t> out;
-    for (uint8_t id = 1; id < net::kMaxPlayers; ++id)
-        if (now[id] && now[id] != link_[id]) out.push_back(id);
+    for (uint8_t id = 1; id < net::kMaxPlayers; ++id) {
+        if (!now[id]) continue;
+        if (now[id] != link_[id] || resync_[id] != g_resync[id]) out.push_back(id);
+        resync_[id] = g_resync[id];
+    }
     link_ = now;
     return out;
+}
+
+void resync(uint8_t player) {
+    for (uint8_t id = 1; id < net::kMaxPlayers; ++id)
+        if (player == 0 || player == id) ++g_resync[id];
 }
 
 bool Newest::take(const net::Packet& p, const std::string& key, uint32_t seq) {

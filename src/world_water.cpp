@@ -15,6 +15,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 
 namespace world_water {
 namespace {
@@ -68,12 +69,16 @@ std::vector<Il2CppObject*> all_sources() {
     Il2CppObject* items = get<Il2CppObject*>(list, kListItems);
     const int32_t count = get<int32_t>(list, kListSize);
     for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i)
-        if (Il2CppObject* s = il2::array_object_at(items, static_cast<size_t>(i)); alive(s)) out.push_back(s);
+        if (Il2CppObject* s = il2::array_object_at(items, static_cast<size_t>(i));
+            alive(s) && !seamless_interiors::sync_skips(s))  // TLDCoop_DLC: not a Seamless Interiors room still building
+            out.push_back(s);
     return out;
 }
 
 // TLD's persistent id for it, or "@x,y,z" (its position to the centimetre) when it has none.
 std::string id_of(Il2CppObject* source) {
+    // TLDCoop_DLC: a Seamless Interiors room's: by its building and spot (the game's ids of a room's differ per game)
+    if (std::string key = seamless_interiors::room_key(source); !key.empty()) return key;
     Il2CppObject* go = il2::invoke(api.component_go, source);
     if (!go) return std::string();
     bool warn = false;

@@ -256,6 +256,8 @@ std::string placements_text() {
 
 // TLD's own id for it (what its save names it by); name and position (cm) without one.
 std::string id_of(Il2CppObject* o) {
+    // TLDCoop_DLC: a Seamless Interiors room's: by its building and spot (the game's ids of a room's differ per game)
+    if (std::string key = seamless_interiors::room_key(o); !key.empty()) return key;
     void* args[] = {go_of(o), nullptr};
     bool warn = false;
     args[1] = &warn;
@@ -337,8 +339,8 @@ void locks_into(std::vector<Object>& out) {
 std::vector<Object> lock_objects() {
     std::vector<Object> out;
     locks_into(out);
-    // TLDCoop_DLC: a Seamless Interiors room's objects aren't the region's
-    out.erase(std::remove_if(out.begin(), out.end(), [](const Object& x) { return seamless_interiors::is_clone_object(x.o); }),
+    // TLDCoop_DLC: a Seamless Interiors room still building isn't shared yet (a ready room's objects are, by room_key)
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Object& x) { return seamless_interiors::sync_skips(x.o); }),
               out.end());
     return out;
 }
@@ -348,8 +350,8 @@ std::vector<Object> all_objects() {
     list_into(api.breakdowns, Kind::BreakDown, out);
     list_into(api.harvestables, Kind::Harvestable, out);
     locks_into(out);
-    // TLDCoop_DLC: a Seamless Interiors room's objects aren't the region's
-    out.erase(std::remove_if(out.begin(), out.end(), [](const Object& x) { return seamless_interiors::is_clone_object(x.o); }),
+    // TLDCoop_DLC: a Seamless Interiors room still building isn't shared yet (a ready room's objects are, by room_key)
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Object& x) { return seamless_interiors::sync_skips(x.o); }),
               out.end());
     return out;
 }

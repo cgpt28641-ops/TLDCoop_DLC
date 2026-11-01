@@ -22,6 +22,7 @@
 //                          u8 sleep_vote (in bed or waiting: their SleepChoice, net/sleep_vote.h),
 //                          held[40] (the gear in their hands, e.g. "GEAR_Torch"; "" empty hands), u8 held_kind
 //                          (net::HeldKind, net/held.h), u8 held_flags (kHeldLit, kHeldAiming, kHeldRaised, kHeldHigh)
+//                          ... then (TLDCoop_DLC) place[48]: the Seamless Interiors building they're inside ("" outdoors)
 //   Bye      either        (empty)
 //   Profile  client->host  name[32] body[32] u8 ready (sent on connect, every 2 s and on a change; body is an id
 //                          like "wolf"; ready: READY in the lobby, or playing)
@@ -121,7 +122,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 40;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 41;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -168,6 +169,8 @@ constexpr uint16_t kProtocolVersion = 40;  // v4: World. v5: Animals. v6: sounds
                                            // v38 (TLDCoop_DLC): Report (a bug report: every game packs its logs)
                                            // v39 (TLDCoop_DLC): Chat (a line someone typed)
                                            // v40 (TLDCoop_DLC): AnimalHandover (a friend's animals back to the host)
+                                           // v41 (TLDCoop_DLC): Seamless Interiors in co-op: State's place (the
+                                           // building a player is inside), Rooms (which rooms each game has built)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -190,7 +193,8 @@ enum class Msg : uint8_t {
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
-    BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46
+    BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
+    Rooms = 47
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -217,6 +221,9 @@ struct StateMsg {
     uint8_t emote_seq = 0;  // TLDCoop_DLC: changes with each gesture they start
     uint8_t condition = 100;   // TLDCoop_DLC: their condition, 0-100 %
     uint32_t afflictions = 0;  // TLDCoop_DLC: net::Affliction bits (net/afflictions.h)
+    // TLDCoop_DLC: the Seamless Interiors building they're inside ("" outdoors). With Seamless Interiors a building's
+    // room stands in the region scene, parked 80 m above the building: same scene is no longer same place.
+    std::string place;
 };
 constexpr uint8_t kStateStruggling = 1;  // in a fight with an animal (TLD's PlayerStruggle)
 constexpr uint8_t kStateDead = 2;        // dead, choosing their next survivor (their body lies where they died)
@@ -522,6 +529,7 @@ inline void write_state(Writer& w, const StateMsg& s) {
     w.put(s.emote_seq);
     w.put(s.condition);
     w.put(s.afflictions);
+    w.put_str(s.place, kSceneLen);
 }
 
 inline bool read_state(Reader& r, StateMsg& s) {
@@ -547,6 +555,7 @@ inline bool read_state(Reader& r, StateMsg& s) {
     s.emote_seq = r.get<uint8_t>();
     s.condition = r.get<uint8_t>();
     s.afflictions = r.get<uint32_t>();
+    s.place = r.get_str(kSceneLen);
     return r.ok();
 }
 
@@ -1240,6 +1249,32 @@ inline bool read_animal_handover(Reader& r, std::string& scene, std::vector<Hand
         a.hp = r.get<float>();
         list.push_back(a);
     }
+    return r.ok();
+}
+
+// Rooms (TLDCoop_DLC, v41), either way: the Seamless Interiors rooms built and ready in the sender's game, in its
+// region. The host's list says which rooms a friend may build (the host's game is the authority on what is in them);
+// a friend's list tells the host when to send its world lists again (a room of the friend's just came up).
+constexpr size_t kRoomsMax = 200;
+constexpr size_t kRoomIdMax = 64;
+struct RoomsMsg {
+    std::string region;
+    std::vector<std::string> ids;
+};
+
+inline void write_rooms(Writer& w, const RoomsMsg& m) {
+    w.put_str(m.region, kSceneLen);
+    const uint8_t n = static_cast<uint8_t>(m.ids.size() < kRoomsMax ? m.ids.size() : kRoomsMax);
+    w.put(n);
+    for (uint8_t i = 0; i < n; ++i) w.put_blob(m.ids[i], kRoomIdMax);
+}
+
+inline bool read_rooms(Reader& r, RoomsMsg& m) {
+    m.region = r.get_str(kSceneLen);
+    const uint8_t n = r.get<uint8_t>();
+    if (!r.ok() || n > kRoomsMax) return false;
+    m.ids.clear();
+    for (uint8_t i = 0; i < n && r.ok(); ++i) m.ids.push_back(r.get_blob(kRoomIdMax));
     return r.ok();
 }
 

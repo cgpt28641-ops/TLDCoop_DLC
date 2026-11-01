@@ -23,6 +23,7 @@
 #include "net/emotes.h"
 #include "net/interp.h"
 #include "paths.h"
+#include "seamless_interiors.h"
 
 namespace avatar {
 namespace {
@@ -2383,6 +2384,10 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
         hidden = "other player is in a menu or loading";
     else if (s.scene != local_scene)
         hidden = (other_scene = "other scene (" + s.scene + ")").c_str();
+    // TLDCoop_DLC: inside a Seamless Interiors room (80 m above its building) we aren't in. (One outdoors stays shown to
+    // a player inside: the room's walls hide them, and the host's animals still see them; the HUD leaves them out.)
+    else if (!s.place.empty() && s.place != seamless_interiors::place())
+        hidden = (other_scene = "inside " + s.place + " (a room we aren't in)").c_str();
     else if (s.flags & net::kStateDead)
         hidden = "dead (their body lies where they died)";
     if (hidden) {
@@ -3106,7 +3111,9 @@ std::vector<Seen> seen() {
         v.at_x = a->last.x;
         v.at_z = a->last.z;
         if (v.playing) v.scene = a->last.scene;
-        v.here = shown_here(*a);
+        if (v.playing) v.place = a->last.place;
+        // TLDCoop_DLC: here = in the same place: one outdoors isn't marked for a player inside a room (no windows)
+        v.here = shown_here(*a) && a->last.place == seamless_interiors::place();
         if (v.here) {
             const PVec p = position_of(target(a->root_transform));
             v.x = p.x;

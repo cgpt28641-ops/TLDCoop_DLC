@@ -279,12 +279,15 @@ void resolve_held_by() {
 // and not held by its parent. Plus: not one of the sticks or stones TLD scatters around us by itself.
 bool is_loose(Il2CppObject* gi) {
     if (!alive(gi) || get<bool>(gi, api.no_save) || get<bool>(gi, api.in_inventory)) return false;
-    // TLDCoop_DLC: a Seamless Interiors room's items (or an interior scene loading for one) aren't the region's.
-    if (seamless_interiors::is_clone_object(gi)) return false;
+    // TLDCoop_DLC: a Seamless Interiors room still building (or an interior scene loading for one) isn't shared yet; a
+    // ready room's items are, under the ids the room gave them (seamless_interiors::coop_rekey).
+    if (seamless_interiors::sync_skips(gi)) return false;
     if (get<Il2CppObject*>(gi, api.radial_parent)) return false;
     Il2CppObject* go = il2::invoke(api.component_go, gi);
     bool active = false;
-    if (!go || !il2::invoke_value(api.go_active, go, active) || !active) return false;
+    if (!go || !il2::invoke_value(api.go_active, go, active)) return false;
+    // TLDCoop_DLC: in a Seamless Interiors room closed in our game: there all the same (a friend may be in it)
+    if (!active && !seamless_interiors::active_in_closed_room(go)) return false;
     Il2CppObject* parent = il2::invoke(api.get_parent, transform_of(gi));
     if (alive(parent) && api.held_by) {
         void* args[] = {api.held_by};
@@ -1099,6 +1102,12 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     }
     const Vector3 pos{m.pos[0], m.pos[1], m.pos[2]};
     const Quaternion rot{m.rot[0], m.rot[1], m.rot[2], m.rot[3]};
+    if (seamless_interiors::unbuilt_room_at(pos.x, pos.y, pos.z)) {  // TLDCoop_DLC: it'd fall 80 m from an empty spot
+        logx::info("items: the other player's %s (%s) is in a Seamless Interiors room not built here yet; it comes with "
+                   "the host's list once the room is up",
+                   m.prefab.c_str(), short_id(m.pdid).c_str());
+        return;
+    }
     const std::string ours = our_id(m.pdid);
     Il2CppObject* go = object_by_pdid(ours);
     Il2CppObject* gi = gear_on(go);
@@ -1107,6 +1116,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         Known& k = g_known[ours];
         const bool moved = distance(k.pos, pos) > kStillMetres;
         set_pose(gi, pos, rot);
+        seamless_interiors::settle_in_room(gi);  // TLDCoop_DLC: into a room closed here
         k.prefab = m.prefab;
         k.pos = k.told = pos;
         k.rot = rot;
@@ -1140,6 +1150,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         return;
     }
     set_pose(made, pos, rot);
+    seamless_interiors::settle_in_room(made);  // TLDCoop_DLC: into a room closed here
     const std::string got = pdid_of(made);
     if (got != m.pdid && !got.empty()) {
         g_alias_in[m.pdid] = got;
@@ -1357,6 +1368,13 @@ void receive(double now) {
 void scan(double now) {
     if (!api.held_by_resolved) resolve_held_by();
     const bool first = !g_baseline;
+    // TLDCoop_DLC: a Seamless Interiors room came up in our game: what is in it is taken in as both games' (the host's
+    // lists, sent again, settle what differs), not told as new items of ours.
+    static uint32_t rooms_seen = 0;
+    const uint32_t rooms_now = seamless_interiors::rooms_generation();
+    const bool room_up = rooms_now != rooms_seen;
+    rooms_seen = rooms_now;
+    int room_items = 0;
     if (first) apply_pending();  // what the other player changed here while we were elsewhere
     const double t0 = now_ms();
     std::vector<Loose> loose = scan_loose(true);
@@ -1385,6 +1403,10 @@ void scan(double now) {
             } else if (first) {  // it was here when we came in: the other player's game has it too
                 k.told = l.pos;
                 k.shared = true;
+            } else if (room_up && seamless_interiors::is_clone_object(l.gi)) {  // TLDCoop_DLC: a room's, just up
+                k.told = l.pos;
+                k.shared = true;
+                ++room_items;
             }
             g_known.emplace(l.pdid, std::move(k));
             continue;
@@ -1489,6 +1511,9 @@ void scan(double now) {
             send_gone(it->first, it->second);
         it = g_known.erase(it);
     }
+    if (room_items)
+        logx::info("items: a Seamless Interiors room came up here: its %d item(s) taken in as both games'%s", room_items,
+                   hosting() ? "" : " (the host's list settles what differs)");
     if (first) {
         g_baseline = true;
         logx::info("items: %zu loose items in %s (%d given an id now, %d without one), scan %.1f ms", g_known.size(),

@@ -144,6 +144,8 @@ Vector3 position_of(Il2CppObject* component) {
 
 // TLD's own id for the container (what ContainerManager.Serialize saves it by); name and position (cm) without one.
 std::string id_of(Il2CppObject* c) {
+    // TLDCoop_DLC: a Seamless Interiors room's: by its building and spot (the game's ids of a room's differ per game)
+    if (std::string key = seamless_interiors::room_key(c); !key.empty()) return key;
     void* args[] = {il2::invoke(api.component_go, c), nullptr};
     bool warn = false;
     args[1] = &warn;
@@ -170,8 +172,8 @@ std::vector<Il2CppObject*> all_containers() {
         const int32_t count = get<int32_t>(list, kListSize);
         for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i) {
             Il2CppObject* c = il2::array_object_at(items, static_cast<size_t>(i));
-            if (alive(c) && !get<bool>(c, api.no_save) && !seamless_interiors::is_clone_object(c) && seen.insert(c).second)
-                out.push_back(c);  // TLDCoop_DLC: not a Seamless Interiors room's
+            if (alive(c) && !get<bool>(c, api.no_save) && !seamless_interiors::sync_skips(c) && seen.insert(c).second)
+                out.push_back(c);  // TLDCoop_DLC: not a Seamless Interiors room still building (a ready one's are shared)
         }
     }
     return out;

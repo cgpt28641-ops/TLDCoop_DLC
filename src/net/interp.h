@@ -46,8 +46,8 @@ public:
             return true;
         }
         const StateMsg& b = buf_[1];
-        if (a.scene != b.scene || !a.valid || !b.valid || distance(a, b) > kTeleportMetres) {
-            out = b;  // region change or teleport: jump, don't glide through the world
+        if (a.scene != b.scene || a.place != b.place || !a.valid || !b.valid || distance(a, b) > kTeleportMetres) {
+            out = b;  // region change, a Seamless Interiors door, or teleport: jump, don't glide through the world
             return true;
         }
         const float f = static_cast<float>((t - a.t_ms) / (b.t_ms - a.t_ms));

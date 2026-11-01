@@ -19,6 +19,7 @@
 #include "net/held.h"
 #include "net_runtime.h"
 #include "paths.h"
+#include "seamless_interiors.h"
 #include "wildlife_sync.h"
 
 namespace wildlife_targets {
@@ -224,13 +225,15 @@ struct Candidate {
 std::vector<Candidate> candidates(Il2CppObject* ai, const Vector3& at) {
     std::vector<Candidate> out;
     const game::PlayerState p = game::read_player();
-    if (p.valid) {
+    // TLDCoop_DLC: a player inside a Seamless Interiors room (80 m above its building) isn't here for the animals
+    if (p.valid && !seamless_interiors::player_inside()) {
         Candidate host;
         host.target = il2::read_field<Il2CppObject*>(ai, api.player_target);
         host.metres = distance(at, Vector3{p.position.x, p.position.y, p.position.z});
         out.push_back(host);
     }
     for (uint8_t id : avatar::shown()) {
+        if (const auto st = netrt::remote_state(id); st && !st->place.empty()) continue;  // TLDCoop_DLC: (as above)
         Candidate c;
         c.player = id;
         Vector3 there{};
@@ -271,6 +274,7 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
     const bool busy = after != nullptr;
     const Candidate* was = after ? after : memo != g_hunts_friend.end() ? find(memo->second) : nullptr;
     if (!was) was = find(0);
+    if (!was && seamless_interiors::player_inside() && !all.empty()) was = &all.front();  // TLDCoop_DLC: the host is in a room
     if (!was) return 0;  // the host isn't in the game (loading): leave TLD alone
     const Candidate* nearest = was;
     for (const Candidate& c : all)

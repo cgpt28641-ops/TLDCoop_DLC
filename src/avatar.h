@@ -65,6 +65,7 @@ struct Seen {
     bool here = false;     // their avatar is shown in our scene: x, y, z and yaw are where it's drawn
     bool dead = false;
     std::string scene;     // the scene they're in (when playing)
+    std::string place;     // TLDCoop_DLC: the Seamless Interiors building they're inside ("" outdoors)
     float x = 0, y = 0, z = 0;  // their feet, world space
     float yaw = 0;              // which way they face (Unity's yaw)
     float at_x = 0, at_z = 0;   // where their latest state has them (not where a handover draws them)

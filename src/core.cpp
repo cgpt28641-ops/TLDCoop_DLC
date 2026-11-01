@@ -400,6 +400,7 @@ void push_local_state(const std::string& scene) {
         m.held_kind = held.kind;
         m.held_flags = held.flags;
         coop_emotes::current(m.emote, m.emote_seq);  // TLDCoop_DLC
+        m.place = seamless_interiors::place();  // TLDCoop_DLC: the Seamless Interiors room we're in ("" outdoors)
         {  // TLDCoop_DLC: how we're doing, read once a second
             static double health_read = -1e18;
             static uint8_t condition = 100;

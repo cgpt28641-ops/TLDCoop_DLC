@@ -1645,6 +1645,14 @@ bool tick_hydrate(Instance& in) {
         logx::info("interiors: %s: rooms aren't saved in this build; the template's contents", in.cfg->id);
         return true;
     }
+    if (in.coop_friend) {  // milestone 2: a friend's room is the template; the host's lists bring what is in it
+        stabilize_guids(in);
+        in.hydrated = true;
+        in.closed_dirty = true;
+        purge_leaked(in);
+        logx::info("interiors: %s: a friend's room: no files of ours; its contents come from the host's game", in.cfg->id);
+        return true;
+    }
     switch (in.hydrate_step) {
         case 0:  // SI: 0/7: late runtime ids
             stabilize_guids(in);
@@ -1853,6 +1861,10 @@ void tick_hold() {
         release_hold("the room took over a minute; the player stays at the door");
         return;
     }
+    if (coop() == Coop::Friend && !host_has(*in) && now - g_hold.started > 10000) {  // milestone 2
+        release_hold("the host's game has no such room; the player stays at the door");
+        return;
+    }
     if (now >= g_hold.next_fade) {  // the game fades in after its load; black is kept
         g_hold.next_fade = now + 500;
         fade_now(true, 0);
@@ -2044,6 +2056,10 @@ bool hold_active() { return g_hold.active; }
 // The building's data folder (fixed for the visit) and whether it has any file in it.
 void ensure_dir(Instance& in) {
     if (!in.dir.empty()) return;
+    if (in.coop_friend || coop() == Coop::Friend) {  // milestone 2: a friend's rooms have no files (the host's have)
+        in.coop_friend = true;
+        return;
+    }
     in.dir = data_dir();
     if (in.dir.empty()) return;
     for (const char* kind : {"placeables", "spawned", "gear", "containers", "state"})

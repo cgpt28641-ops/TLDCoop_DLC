@@ -13,6 +13,7 @@
 #include "log.h"
 #include "net_runtime.h"
 #include "paths.h"
+#include "seamless_interiors.h"
 #include "world_mode.h"
 
 namespace world_join {
@@ -142,13 +143,24 @@ void go(const std::string& scene, const std::string& region, const std::string& 
 
 // Stand beside another player (to their right), facing them. How far from them we ended up; < 0: not in a game.
 float place_beside(const net::StateMsg& other, bool indoors) {
-    const float metres = indoors ? kBesideIndoors : kBesideOutdoors;
+    // TLDCoop_DLC: Seamless Interiors: into the room they're in if it's built here, else to its door (it's built first);
+    // out of the room we're in when they're outdoors
+    float ox = other.x, oy = other.y, oz = other.z;
+    bool at_door = false;
+    const bool was_in_room = seamless_interiors::player_inside();
+    if (bool room = false; seamless_interiors::prepare_teleport(other.place, ox, oy, oz, room)) {
+        at_door = !room;
+        indoors = room;
+    } else if (other.place.empty() && was_in_room) {
+        indoors = false;  // (TLD still counted us indoors: the room's)
+    }
+    const float metres = at_door ? 0.0f : indoors ? kBesideIndoors : kBesideOutdoors;
     const float yaw = other.yaw * 3.14159265f / 180.0f;
     const float rx = std::cos(yaw), rz = -std::sin(yaw);  // their right (Unity: yaw 0 faces +Z, 90 faces +X)
-    Vector3 pos{other.x + rx * metres, other.y, other.z + rz * metres};
+    Vector3 pos{ox + rx * metres, oy, oz + rz * metres};
     if (!indoors) pos = on_navmesh(pos);  // on a slope their height would put us inside the hill
     pos.y += 0.3f;
-    const float face = std::atan2(other.x - pos.x, other.z - pos.z);
+    const float face = at_door ? other.yaw * 3.14159265f / 180.0f : std::atan2(other.x - pos.x, other.z - pos.z);
     Quaternion rot{0, std::sin(face / 2), 0, std::cos(face / 2)};
     Il2CppObject* player = il2::invoke(api.player_manager, nullptr);
     if (!player) return -1;

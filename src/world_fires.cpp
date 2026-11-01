@@ -167,7 +167,7 @@ std::vector<Il2CppObject*> all_fires() {
     const int32_t count = get<int32_t>(list, kListSize);
     for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i)
         if (Il2CppObject* f = il2::array_object_at(items, static_cast<size_t>(i));
-            alive(f) && !seamless_interiors::is_clone_object(f))  // TLDCoop_DLC: not a Seamless Interiors room's
+            alive(f) && !seamless_interiors::sync_skips(f))  // TLDCoop_DLC: not a Seamless Interiors room still building
             out.push_back(f);
     return out;
 }
@@ -483,6 +483,22 @@ void send_list(uint8_t to) {
 
 // Compare the fires here with what both games last had; send what changed.
 void check() {
+    // TLDCoop_DLC: a Seamless Interiors room came up in our game: its fires are taken in as both games' (the host's
+    // list, sent again, brings how they burn there), not told as new fires of ours.
+    static uint32_t rooms_seen = 0;
+    if (const uint32_t rooms_now = seamless_interiors::rooms_generation(); rooms_now != rooms_seen) {
+        rooms_seen = rooms_now;
+        int taken = 0;
+        for (Il2CppObject* f : all_fires()) {
+            if (!seamless_interiors::is_clone_object(f)) continue;
+            const std::string id = id_of(f);
+            if (id.empty() || g_sig.count(id)) continue;
+            g_here[id] = f;
+            g_sig[id] = signature(f);
+            ++taken;
+        }
+        if (taken) logx::info("fires: a Seamless Interiors room came up here: its %d fire(s) taken in as both games'", taken);
+    }
     std::unordered_map<std::string, Il2CppObject*> here;
     std::vector<std::pair<std::string, Il2CppObject*>> changed;
     for (Il2CppObject* f : all_fires()) {

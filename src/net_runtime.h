@@ -61,7 +61,12 @@ public:
 
 private:
     std::array<uint32_t, net::kMaxPlayers> link_{};  // the link of each friend with us; 0: not with us
+    std::array<uint32_t, net::kMaxPlayers> resync_{};  // resync() count of each friend when we last sent our lists
 };
+
+// Host (TLDCoop_DLC): every Together counts this friend (0: every friend) as just arrived again, so each world module
+// sends its lists of our scene once more (a Seamless Interiors room came up in our game or in theirs: what is in it).
+void resync(uint8_t player);
 
 // The newest change applied per thing, per sender, so a late older one is dropped. Each player counts its own changes;
 // a new link starts over (their game may have restarted).

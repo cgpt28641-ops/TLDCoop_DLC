@@ -18,6 +18,7 @@
 #include "net/hud.h"
 #include "net/afflictions.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 
 namespace coop_hud {
 namespace {
@@ -588,9 +589,13 @@ std::string place_name(const std::string& scene) {
 // Friends in other scenes, one line each, in the top right corner (under the radar when it's on).
 void show_elsewhere(const std::vector<avatar::Seen>& all, Il2CppObject* ui_camera, float right_x, float top_y) {
     std::string text;
+    // TLDCoop_DLC: and friends in our scene but not in our place (inside a Seamless Interiors room we aren't in, or
+    // outdoors while we're in one): the building's name, or the region's
+    const std::string ours = seamless_interiors::place();
     for (const avatar::Seen& who : all) {
-        if (!who.playing || who.here || who.dead || who.scene == g_scene) continue;
-        text += (text.empty() ? "" : "\n") + upper(who.name) + " - " + upper(place_name(who.scene));
+        if (!who.playing || who.here || who.dead || (who.scene == g_scene && who.place == ours)) continue;
+        const std::string inside = who.place.empty() ? std::string() : seamless_interiors::place_scene(who.place);
+        text += (text.empty() ? "" : "\n") + upper(who.name) + " - " + upper(place_name(inside.empty() ? who.scene : inside));
     }
     Il2CppObject* label = live(g_elsewhere);
     if (text.empty()) {

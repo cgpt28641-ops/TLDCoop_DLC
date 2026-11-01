@@ -5,6 +5,7 @@
 // what milestone 1a covers. Every step logs one "interiors:" line; every missing game API is logged once at start.
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <cctype>
@@ -28,6 +29,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/protocol.h"
+#include "net_runtime.h"
 #include "paths.h"
 
 namespace seamless_interiors {
@@ -645,6 +647,8 @@ struct Instance {
     bool closed_was_open = true, closed_dirty = true;
     double closed_next_rescan = 0;
     int closed_logged = 0;
+    // milestone 2 (seamless_coop.inc)
+    bool coop_friend = false;  // built in a friend's game: no files of ours (the host's game has the room's contents)
 };
 std::vector<Instance> g_instances;
 std::string g_region;               // the region these instances belong to
@@ -712,6 +716,15 @@ bool hold_targets(const Instance& in);
 bool hold_active();
 void ensure_dir(Instance& in);
 Instance* unready_with_data(Il2CppObject* door);
+
+// Milestone 2, in seamless_coop.inc (included after it).
+enum class Coop { Solo, Host, Friend };
+Coop coop();
+bool host_has(const Instance& in);
+std::string loot_seed_save();
+void coop_room_ready(Instance& in);
+Instance* hosted_unready(Il2CppObject* door);
+void tick_coop_rooms();
 
 // --- a room's geometry (SI: Instances.cs) ------------------------------------------------------------------------------
 
@@ -1966,7 +1979,7 @@ bool inside_container(Il2CppObject* t, Il2CppObject* root) {  // SI: IsInsideCon
 void roll_loot(Instance& in) {
     Il2CppObject* m = master_of(in);
     if (!m) return;
-    const std::string seed_text = game::save_id() + "/" + in.cfg->id;
+    const std::string seed_text = loot_seed_save() + "/" + in.cfg->id;  // (a friend: the host's game's)
     alignas(16) int32_t state_before[4] = {};
     bool have_state = false;
     if (api.rnd_state) {
@@ -2369,6 +2382,7 @@ void tick_build() {
             if (!tick_hydrate(*in)) return;
             show_room_renderers(*in);
             set_stage(*in, Stage::Ready);
+            coop_room_ready(*in);  // milestone 2: its contents under ids every game shares, and the others told
             if (hold_targets(*in)) {
                 enter_from_record(*in);  // SI: Run's early activation: the player saved in this room
             } else {
@@ -2407,16 +2421,38 @@ void pick_building() {
     if (game::save_id().empty()) return;  // milestone 1b: the save's folder must be known before any room is filled
     const V3 p = player_pos();
     if (is_zero(p)) return;
+    // milestone 2: the host builds a room when any player comes near (the friends' rooms are filled from the host's);
+    // a friend builds only the rooms the host has, rolled with the host's seed.
+    const Coop role = coop();
+    if (role == Coop::Friend && loot_seed_save().empty()) return;  // the host's world id comes with its World
+    std::vector<V3> spots{p};
+    Instance* wanted_by_friend = nullptr;
+    if (role == Coop::Host)
+        for (const net::StateMsg& s : netrt::remote_states()) {
+            if (!s.valid || s.scene != g_region) continue;
+            V3 q{s.x, s.y, s.z};
+            if (!s.place.empty()) {  // inside a room of theirs: it stands 80 m above its building
+                q = q - kParkOffset;
+                if (Instance* fi = find_instance(s.place.c_str()); fi && fi->stage == Stage::Idle) wanted_by_friend = fi;
+            }
+            spots.push_back(q);
+        }
+    auto nearest = [&](const Instance& in) {
+        float d = 1e30f;
+        for (const V3& q : spots) d = std::min(d, dist(q, in.cfg->fallback));
+        return d;
+    };
     Instance* best = nullptr;
     float best_d = kBuildDistance;
     for (Instance& in : g_instances) {
         if (in.stage != Stage::Idle) continue;
-        if (hold_targets(in) || &in == g_urgent) {
+        if (role == Coop::Friend && !host_has(in)) continue;
+        if (hold_targets(in) || &in == g_urgent || &in == wanted_by_friend) {
             best = &in;
-            best_d = dist(p, in.cfg->fallback);
+            best_d = nearest(in);
             break;
         }
-        const float d = dist(p, in.cfg->fallback);
+        const float d = nearest(in);
         if (d < best_d) {
             best_d = d;
             best = &in;
@@ -2424,6 +2460,7 @@ void pick_building() {
     }
     if (!best) return;
     if (best == g_urgent) g_urgent = nullptr;
+    best->coop_friend = role == Coop::Friend;
     ensure_dir(*best);
     Instance& in = *best;
     Il2CppObject* shell = find_shell(in);
@@ -2432,14 +2469,16 @@ void pick_building() {
         logx::info("interiors: %s: its shell '%s' isn't within reach of its spot; the room stands on the config's spot",
                    in.cfg->id, in.cfg->shell);
     std::string key;
-    if (has_vanilla_data(in, key)) {
+    // (a friend: its own save's interiors don't matter; the host's room is the one everybody shares)
+    if (role != Coop::Friend && has_vanilla_data(in, key)) {
         logx::info("interiors: %s: the save already holds its interior ('%s'); its door stays the game's%s", in.cfg->id,
                    key.c_str(), in.has_data ? " (our files of it are left alone)" : "");
         set_stage(in, Stage::Vanilla);
         return;
     }
-    logx::info("interiors: %s: the player is %.0f m from %s; building its room", in.cfg->id, best_d,
-               shell ? name_of(shell).c_str() : "its spot");
+    logx::info("interiors: %s: %s %.0f m from %s; building its room%s", in.cfg->id,
+               role == Coop::Host ? "a player is" : "the player is", best_d, shell ? name_of(shell).c_str() : "its spot",
+               role == Coop::Friend ? " (the host's: its contents come from the host's game)" : "");
     g_building = &in;
     if (start_loading(in)) set_stage(in, Stage::Idle);  // a copy: prepared on the next tick
     if (in.stage == Stage::Vanilla) g_building = nullptr;
@@ -2802,6 +2841,14 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
     if (g_fade.busy) return;  // a door is already being used (SI: s_DoorFadeBusy)
     const DoorChoice c = choose(self);
     if (c.way == DoorWay::Vanilla) {
+        if (Instance* wait = hosted_unready(self)) {  // milestone 2: the host has this room; ours is coming
+            static int told_coop = 0;
+            if (told_coop++ < 20)
+                logx::info("interiors: %s: the host's game has this room and ours isn't built yet; the door waits for it",
+                           wait->cfg->id);
+            if (wait->stage == Stage::Idle) g_urgent = wait;
+            return;
+        }
         if (Instance* wait = unready_with_data(self)) {  // milestone 1b: its room holds the player's things
             static int told = 0;
             if (told++ < 20)
@@ -3166,6 +3213,7 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
 // Milestone 1b: the rooms' own save files, the player's place, closed-room time, adoption (SI: SaveData.cs,
 // Hydration.cs, FrozenTime.cs, ...).
 #include "seamless_persist.inc"
+#include "seamless_coop.inc"
 
 // --- hooks: inside (SI: WeatherPatches.cs, WindInstanceFix.cs, EvolvePatches.cs, SafehouseFixes.cs) -------------------
 
@@ -3520,6 +3568,7 @@ void on_frame(const std::string& scene, bool in_game) {
     g_engaged = engaged_now;
     if (!g_engaged || g_instances.empty()) return;
     (void)scene;
+    tick_coop_rooms();  // milestone 2: which rooms each game has
     tick_build();
     check_inside_record();  // milestone 1b: back into the room the save was made in
     tick_hold();
