@@ -473,3 +473,6 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Zwierzęta: host lub znajomy w pokoju nie jest kandydatem na cel; host w pokoju dalej symuluje region (scena się nie zmienia, więc ścieżki „host loading / different scenes” się nie włączają).
 - Dołączenie/odrodzenie obok gracza w pokoju: do jego pokoju, jeśli zbudowany u nas, inaczej pod drzwi (pokój budowany pilnie); obok gracza na zewnątrz – najpierw wyjście z naszego pokoju.
 - Pominięte: przesuwanie mebli w pokojach (pokojowe placeables są poza PlaceableManager, więc world_objects ich nie widzi), sen (bez zmian: działa w regionie), znacznik przy drzwiach dla ukrytego awatara, okna. Wyłączone SI = wszystko jak dotąd (place pusty, brak Rooms).
+
+## 2026-11-01 23:20 – crash przy starcie (Seamless Interiors)
+- Log Kerela 23:12: 0xC0000005 w UnityPlayer.dll zaraz po „DynamicGI…” → mod wyłączony na całą sesję (dlatego „co-op się nie wyświetla”). Przyczyna: LayerMask.NameToLayer wołane w resolve() przy starcie moda (Unity jeszcze nie działa). Teraz resolve_layers() w on_frame, gdy jesteśmy w grze. Build 82b3d1e.
