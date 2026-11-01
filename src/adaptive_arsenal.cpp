@@ -13,6 +13,7 @@
 #include "coop_features.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
+#include "paths.h"
 #include "log.h"
 #include "net/protocol.h"
 #include "wildlife_hits.h"
@@ -167,6 +168,12 @@ Il2CppObject* trail_material() {
     if (Il2CppObject* m = target(g_trail_material)) return m;
     if (g_material_tried) return nullptr;
     g_material_tried = true;
+    // TLDCoop_DLC: off unless asked for (coop.ini [arsenal] trail=1): Unity's shaders found here draw pink in TLD
+    // ("Sprites/Default": a big magenta wedge behind every shot)
+    if (!GetPrivateProfileIntW(L"arsenal", L"trail", 0, (paths::instance_dir() / L"coop.ini").c_str())) {
+        logx::info("arsenal: bullet trails off ([arsenal] trail=1 shows them)");
+        return nullptr;
+    }
     for (const char* name : {"Sprites/Default", "Legacy Shaders/Particles/Alpha Blended", "Particles/Standard Unlit",
                              "Unlit/Transparent", "Unlit/Color"}) {
         void* a[] = {il2::il2cpp_string_new(name)};
@@ -202,7 +209,7 @@ Il2CppObject* make_trail() {
     if (!line) return nullptr;
     void* ma[] = {material};
     il2::invoke(api.set_material, line, ma);
-    float w0 = 0.4f, w1 = 0.1f;
+    float w0 = 0.02f, w1 = 0.005f;  // TLDCoop_DLC: a thin streak (0.4 m wide was a wedge)
     void* a0[] = {&w0};
     il2::invoke(api.line_start_width, line, a0);
     void* a1[] = {&w1};

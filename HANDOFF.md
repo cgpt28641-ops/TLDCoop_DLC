@@ -397,3 +397,11 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   400 m), protocol v40; the host (apply_handover, at each capture, up to 15 s as its animals spawn) moves its own of
   the same kind (nearest, each once) to those places. Logs: "the host is back in ...", "player N ran ... while we
   were away", "N of our animal(s) took the places of the friend's", summary. Karol: no auto-update (asked).
+
+## 2026-11-01 (18:00) — pink bullet wedge
+- Karol's video: a huge magenta wedge behind revolver/rifle shots = Adaptive Arsenal's trail (LineRenderer with
+  Unity's "Sprites/Default": draws as the error shader in TLD, 0.4 m wide). Trails now off unless coop.ini
+  [arsenal] trail=1, and 2 cm -> 5 mm wide when on.
+- Self-update with a token built into the DLL (private repo) was written but NOT shipped: a credential inside a file
+  handed to friends can be dug out. Asked Karol; alternative: the host's game hands its winhttp.dll to friends over
+  the co-op link (no token, no public repo).
