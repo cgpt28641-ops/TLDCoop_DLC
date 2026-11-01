@@ -364,6 +364,11 @@ bool init() {
     return g_ready;
 }
 
+std::string g_host_scene;
+double g_host_scene_ms = 0, g_last_good_ms = 0;
+bool g_held_logged = false;
+constexpr double kSettleMs = 4000;
+
 void on_frame(const std::string& scene, bool in_game) {
     if (!g_ready) return;
     const auto role = netrt::role();
@@ -373,7 +378,23 @@ void on_frame(const std::string& scene, bool in_game) {
     if (*role == net::Role::Host) {
         if (now - g_last_publish < kPublishMs) return;
         g_last_publish = now;
-        netrt::set_world(read_world(in_game));
+        // TLDCoop_DLC: while our game loads a scene (a house's door) and its first seconds in it, its clock and weather
+        // aren't the world's yet (15:36 and a fresh 'Clear' for a moment): the others keep what they had, rather than
+        // a flash of another time of day ("the screen goes grey for 2 s when the host's region loads").
+        if (scene != g_host_scene) {
+            g_host_scene = scene;
+            g_host_scene_ms = now;
+        }
+        const bool settling = !in_game || now - g_host_scene_ms < kSettleMs;
+        if (settling && g_last_good_ms > 0 && now - g_last_good_ms < kSettleMs + 6000) {
+            if (!g_held_logged) logx::info("world: our scene is loading; the others keep our last world state");
+            g_held_logged = true;
+            return;
+        }
+        g_held_logged = false;
+        net::WorldMsg w = read_world(in_game);
+        if (w.valid && !settling) g_last_good_ms = now;
+        netrt::set_world(w);
         return;
     }
 

@@ -1166,6 +1166,27 @@ void keep_lit(const Avatar& a, HeldCopy& h, bool indoors) {
                 names.empty() ? "" : ": ", names.c_str());
         }
         set_light(l, true);
+        // TLDCoop_DLC: still dark: an object above the light is hidden (the lantern's light stayed off, frame after
+        // frame, with no script left to blame). Its parents up to the copy are shown again.
+        bool now_on = true;
+        if (il2::invoke_value(api.active_and_enabled, light, now_on) && !now_on && api.tf_parent) {
+            Il2CppObject* root = target(h.go);
+            Il2CppObject* go = il2::invoke(pv.component_go, light);
+            Il2CppObject* tf = go ? il2::invoke(api.go_transform, go) : nullptr;
+            for (int up = 0; up < 6 && tf; ++up) {
+                tf = il2::invoke(api.tf_parent, tf);
+                Il2CppObject* pgo = tf ? il2::invoke(pv.component_go, tf) : nullptr;
+                if (!pgo) break;
+                bool shown = true;
+                il2::invoke_value(api.in_hierarchy, pgo, shown);
+                if (!shown) {
+                    set_active(pgo, true);
+                    if (logged < 20) say(a, "%s: %s sat under hidden '%s': shown again", h.gear.c_str(), name_of(light).c_str(),
+                                         name_of(pgo).c_str());
+                }
+                if (pgo == root) break;
+            }
+        }
         if (logged++ < 10) say(a, "%s: %s was switched off; on again", h.gear.c_str(), name_of(light).c_str());
     }
 }
@@ -1185,9 +1206,30 @@ std::string describe_lights(const HeldCopy& h) {
             il2::invoke_value(api.light_range, light, range);
             if (api.light_get_mode) il2::invoke_value(api.light_get_mode, light, mode);
             if (api.light_get_mask) il2::invoke_value(api.light_get_mask, light, mask);
-            char buf[200];
-            snprintf(buf, sizeof(buf), "%s%s %s, intensity %.2f, range %.1f m, mode %d, mask %08x", out.empty() ? "" : "; ",
-                     name_of(light).c_str(), on ? "on" : "off", intensity, range, mode, static_cast<uint32_t>(mask));
+            // TLDCoop_DLC: why it's off: the light itself, its object, or an object above it (the first hidden one)
+            std::string why;
+            if (!on) {
+                Il2CppObject* go = il2::invoke(pv.component_go, light);
+                bool shown = true;
+                if (go) il2::invoke_value(api.in_hierarchy, go, shown);
+                if (!shown) {
+                    Il2CppObject* tf = il2::invoke(api.go_transform, go);
+                    std::string hidden = name_of(go);
+                    for (int up = 0; up < 8 && tf && api.tf_parent; ++up) {
+                        tf = il2::invoke(api.tf_parent, tf);
+                        Il2CppObject* pgo = tf ? il2::invoke(pv.component_go, tf) : nullptr;
+                        bool pshown = true;
+                        if (!pgo || !il2::invoke_value(api.in_hierarchy, pgo, pshown) || pshown) break;
+                        hidden = name_of(pgo);
+                    }
+                    why = " (hidden from '" + hidden + "' up)";
+                } else {
+                    why = " (the light itself disabled)";
+                }
+            }
+            char buf[300];
+            snprintf(buf, sizeof(buf), "%s%s %s%s, intensity %.2f, range %.1f m, mode %d, mask %08x", out.empty() ? "" : "; ",
+                     name_of(light).c_str(), on ? "on" : "off", why.c_str(), intensity, range, mode, static_cast<uint32_t>(mask));
             out += buf;
         }
     return out.empty() ? "no lights" : out;

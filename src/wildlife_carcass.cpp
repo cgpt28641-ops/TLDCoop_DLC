@@ -462,6 +462,8 @@ void drop_local(uint32_t id, Local& l, const char* why, bool destroy_it) {
     logx::info("wildlife: our carcass of the host's #%u is gone (%s)", id, why);
 }
 
+bool g_away_logged = false;
+
 void clear_locals(const char* why) {
     for (auto& [id, l] : g_locals) drop_local(id, l, why, true);
     g_locals.clear();
@@ -885,6 +887,18 @@ void on_frame(bool in_game) {
     if (g_holding && hearing) logx::info("wildlife: the host is back; our carcasses follow its again");
     g_holding = false;
     if (!joined()) g_quartered.clear();
+    // TLDCoop_DLC: the host went into a house: the carcasses stay where they lay ("the carcasses vanished for the others
+    // when the host went in"); the host's list of them follows again when it's back.
+    if (joined() && in_game && wildlife_sync::host_away_here()) {
+        if (!g_locals.empty() && !g_away_logged)
+            logx::info("wildlife: the host is in another scene; keeping our %zu carcass(es) of its animals", g_locals.size());
+        g_away_logged = true;
+        hold_locals(now);
+        std::vector<net::Packet> stale;
+        netrt::drain_packets(net::Msg::Carcasses, stale);
+        return;
+    }
+    g_away_logged = false;
     if (!joined() || !in_game || !wildlife_sync::mirroring()) {
         if (!g_locals.empty()) clear_locals("not mirroring the host's animals");
         std::vector<net::Packet> stale;

@@ -430,3 +430,11 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 ## 2026-11-01 19:40 – auto-aktualizacja usunięta (prośba Karola)
 - Usunięte src/coop_update.*, krok CI z tokenem (UPDATE_TOKEN), wininet, komunikat w menu co-op. dll-latest zostaje jako link do pobrania.
 - Sekret UPDATE_TOKEN i sam token na GitHubie Karol może usunąć (nie są już używane).
+
+## 2026-11-01 20:40 – raporty z gry 19:46–20:26 + usunięcie Adaptive Arsenal
+- Adaptive Arsenal usunięty całkowicie (prośba Karola: psuł strzelanie): pliki, test, NOTICE, menu MODS, coop.ini [arsenal], README. Bit kFeatureAdaptiveArsenal zostaje nieużywany.
+- Host wchodzi do budynku: „host loading” traktowane jak wyjście hosta (nasze zwierzęta zajmują miejsca jego kopii; po powrocie wracają do hosta). Tusze zwierząt zostają u znajomych, póki host jest w innej scenie (wildlife_sync::host_away_here).
+- Host ładuje scenę: przez 4 s po zmianie sceny host nie wysyła zegara/pogody (był błysk 15:36 / „Clear 0%” → siwy ekran / rozjaśnienie u innych).
+- Krew zwierząt: host wysyła krople krwi swoich zwierząt (BloodTrail.m_BaseAi) innym graczom.
+- Światła trzymane (lampa naftowa, flara) wszędzie „off”: keep_lit pokazuje ukryte obiekty nadrzędne światła; describe_lights loguje, dlaczego światło jest wyłączone.
+- Nadal otwarte: gdy host jest w budynku, każdy znajomy ma swoje zwierzęta (pełne rozwiązanie = „zastępca” hosta, jak w SkyCoop); „łoś stoi u jednych, u innych nie”; więcej zwierząt przy większej liczbie graczy (prośba Kerela).

@@ -33,6 +33,8 @@ bool fight_spot(float x, float y, float z, float& out_x, float& out_y, float& ou
 // Client, for wildlife_carcass: whether we show the host's animals now; a real carcass took the place of the copy of
 // the host's animal `id` (the copy hides; our own animals' hiding leaves the carcass alone); it went again.
 bool mirroring();
+// TLDCoop_DLC: the host went into another scene (a house) and our animals took over this one, where we still are
+bool host_away_here();
 void carcass_made(uint32_t id, Il2CppObject* carcass_go);
 void carcass_gone(uint32_t id, Il2CppObject* carcass_go);
 

@@ -19,13 +19,6 @@ namespace wildlife_hits {
 bool init();
 void on_frame();
 
-// TLDCoop_DLC: TLD's own vp_Bullet.Start for this bullet, past our hook (Adaptive Arsenal's bullet where it lands).
-// hit_dealt: Adaptive Arsenal dealt the hit already (arsenal_impact); TLD's bullet only shows the impact.
-void start_bullet(Il2CppObject* bullet, bool hit_dealt = false);
-// TLDCoop_DLC: Adaptive Arsenal's bullet hit what this RaycastHit says: an animal (ours, or our copy of the host's)
-// takes the hit, with `damage`. False: not an animal (TLD's bullet deals with it).
-bool arsenal_impact(Il2CppObject* bullet, const void* raycast_hit, float damage);
-
 // Test helpers (dev commands), client only: stand some metres from the nearest host animal; aim at one of its hit
 // colliders (e.g. capsule_chest) and fire the weapon in our hands through TLD's own vp_FPSShooter.Fire.
 bool approach(float metres);

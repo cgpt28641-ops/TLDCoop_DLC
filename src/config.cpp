@@ -103,11 +103,6 @@ constexpr const char* kDefaultIni =
     "; items never); the rest stay in your body for anyone to take back. 0 = keep everything.\n"
     "lose_percent=70\n"
     "\n"
-    "[arsenal]\n"
-    "; Adaptive Arsenal (built in, by Deaadman, with his permission): rifle and revolver bullets fly, with drop,\n"
-    "; spread and damage drop-off; the revolver can be aimed on the move. In co-op the HOST decides (MODS).\n"
-    "enabled=1\n"
-    "\n"
     "[report]\n"
     "; A bug report with one key: the moment is marked in the log and coop.log, coop-prev.log, coop-prev2.log and\n"
     "; coop.ini go into TLDCoop\\reports\\<time>_<name>.zip. all=1: in co-op every player's game makes its own report\n"
@@ -190,7 +185,6 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
-    WritePrivateProfileStringW(L"arsenal", L"enabled", s.adaptive_arsenal ? L"1" : L"0", ini.c_str());
     logx::info("settings saved: mode=%s transport=%s code=%s join_code=%s name=%s body=%s", s.mode.c_str(),
                s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.name.c_str(), s.body.c_str());
 }
@@ -226,7 +220,6 @@ Settings load() {
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
-    s.adaptive_arsenal = GetPrivateProfileIntW(L"arsenal", L"enabled", 1, ini.c_str()) != 0;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");

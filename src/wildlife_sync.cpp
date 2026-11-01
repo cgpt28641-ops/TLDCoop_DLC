@@ -1396,7 +1396,8 @@ void stop_mirroring(const char* why) {
     // take their places: each one the host's copy showed alive, by kind, where it was and facing as it was.
     struct Left { uint8_t kind; Vector3 pos, euler; float hp; };
     std::vector<Left> left;
-    const bool host_left = std::strcmp(why, "different scenes") == 0;
+    // (the host loading means it's leaving this scene: a house's door; if it comes back, our animals go back to it)
+    const bool host_left = std::strcmp(why, "different scenes") == 0 || std::strcmp(why, "host loading") == 0;
     if (host_left) g_took_over_scene = g_mirror_scene;
     if (host_left)
         for (auto& [id, p] : g_puppets) {
@@ -1587,6 +1588,8 @@ void carcass_made(uint32_t id, Il2CppObject* carcass_go) {
         set_active(target(it->second.go), false);
     }
 }
+
+bool host_away_here() { return !g_mirroring && !g_took_over_scene.empty(); }  // (cleared when we leave it too)
 
 void carcass_gone(uint32_t id, Il2CppObject* carcass_go) {
     g_carcasses.erase(std::remove(g_carcasses.begin(), g_carcasses.end(), carcass_go), g_carcasses.end());

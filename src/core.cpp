@@ -12,7 +12,6 @@
 
 #include "ambient_lights.h"
 #include "coop_features.h"
-#include "adaptive_arsenal.h"
 #include "custom_pictures.h"
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
 #include "dev_console.h"
@@ -173,7 +172,6 @@ void coop_off(const char* why) {
 void apply_net_settings(const config::Settings& s, bool startup) {
     ambient_lights::set_settings(s);
     dynamic_trees::set_settings(s);
-    adaptive_arsenal::set_settings(s);
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
     coop_hud::set_colours(s.hud_colours);
     coop_emotes::set_keys(s.emote_keys);
@@ -223,7 +221,6 @@ void start_networking() {
     if (!s.autostart) {
         ambient_lights::set_settings(s);
         dynamic_trees::set_settings(s);
-        adaptive_arsenal::set_settings(s);
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
         coop_hud::set_colours(s.hud_colours);
         coop_emotes::set_keys(s.emote_keys);
@@ -563,7 +560,6 @@ void on_frame() {
     TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
     TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
     TIMED("custom_pictures::on_frame", custom_pictures::on_frame(scene, in_game));
-    TIMED("adaptive_arsenal::on_frame", adaptive_arsenal::on_frame(scene, in_game));
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
     TIMED("dev_console::on_frame", dev_console::on_frame(scene, in_game));
 #endif
@@ -759,7 +755,6 @@ void on_runtime_ready() {
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC
     coop_chat::init();    // TLDCoop_DLC
-    adaptive_arsenal::init();
     world_join::init();
     coop_death::init();
     coop_lapse::init();

@@ -77,11 +77,6 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   pogodzie; sosny i cedry zmieniają się od zielonych do białych. To mod DynamicTrees (Fuar, The Illusion, Jods),
   wbudowany za zgodą autorów, **bez MelonLoadera** (tekstury w paczce: `TLDCoop\tldcoop_trees.bundle`). Włącza go
   **host** (MODS → DYNAMIC TREES), a drzewa znajomych mają śnieg hosta; w solo `coop.ini` `[trees] enabled=`.
-- **Adaptive Arsenal (wbudowane):** kule z karabinu i rewolweru lecą (każda broń ma swoją prędkość, kula opada i
-  zostawia smugę) zamiast trafiać od razu; celność zależy od umiejętności, kucania, ruchu i strzału z biodra, a
-  obrażenia maleją z odległością (pełne przy lufie, 10% na 500 m). Rewolwerem można celować w ruchu, a HUD pokazuje
-  wylatującą łuskę. To mod AdaptiveArsenal (Deaadman), wbudowany za zgodą autora, **bez MelonLoadera**. Włącza go
-  **host** (MODS → ADAPTIVE ARSENAL); w solo `coop.ini` `[arsenal] enabled=`. Usuń kopię z MelonLoadera, jeśli ją masz.
 - **JustZoom (wbudowane):** przytrzymaj **Z**, żeby przybliżyć widok; kółko myszy (z wciśniętym Z) przybliża lub
   oddala (1,1x–20x), a kamera obraca się wtedy wolniej i płynniej. To mod JustZoom (WillWunderhorn), wbudowany za
   zgodą autora, **bez MelonLoadera i ModSettings**. Każdy ustawia u siebie w `coop.ini` `[zoom]` (`enabled`, `key`,
@@ -225,7 +220,6 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[trees] enabled=1` | **Nowe.** Dynamic Trees w solo (w co-opie decyduje host: MODS). Ilość śniegu na drzewach jest zapisywana osobno dla każdego zapisu gry w `TLDCoop\dynamic_trees.ini`. |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
-| `[arsenal] enabled=1` | **Nowe.** Adaptive Arsenal w solo (w co-opie decyduje host: MODS). |
 | `[report] key=F11`, `all=1` | **Nowe.** Klawisz zgłoszenia błędu (logi pakowane do `TLDCoop\reports`); `all=1`: w co-opie zgłoszenie robią wszyscy gracze naraz. |
 | `[zoom] enabled=1`, `key=Z` | **Nowe.** JustZoom: klawisz przybliżenia; `wheel_step` (5–50) krok kółka, `speed` (1–30) szybkość przybliżania, `smooth` (1–40) płynność obrotu kamery. |
 | `[devconsole] enabled=1`, `key=F1` | **Nowe, na testy.** Konsola deweloperska i jej klawisz. |
@@ -253,8 +247,8 @@ nie działa.
 
 **DynamicTrees:** też jest już wbudowany. Usuń go z `Mods` MelonLoadera, żeby oba nie zmieniały tych samych tekstur.
 
-**AdaptiveArsenal**, **JustZoom** i **Developer Console:** też są wbudowane. Usuń je z `Mods` MelonLoadera, żeby nie działały
-podwójnie.
+**JustZoom** i **Developer Console:** też są wbudowane. Usuń je z `Mods` MelonLoadera, żeby nie działały podwójnie.
+**AdaptiveArsenal** nie jest już częścią moda (psuł strzelanie); jego kopię z `Mods` też usuń.
 
 **Pamiętaj:** wszyscy w grupie powinni mieć te same mody zmieniające rozgrywkę, np. dodające przedmioty albo
 zmieniające loot. Mody graficzne i od interfejsu mogą się różnić.
@@ -342,7 +336,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
 | `src/wildlife_*.cpp` | Wspólne zwierzęta, trafienia, tusze, cele ataków. |
 | `src/world_*.cpp` | Wspólne przedmioty, szafki, ogniska, obiekty. |
 | `src/custom_pictures.cpp` | Nasze obrazy w ramkach. |
-| `src/adaptive_arsenal.cpp`, `src/dynamic_trees.cpp`, `src/ambient_lights.cpp`, `src/just_zoom.cpp`, `src/dev_console.cpp` | Wbudowane mody. |
+| `src/dynamic_trees.cpp`, `src/ambient_lights.cpp`, `src/just_zoom.cpp`, `src/dev_console.cpp` | Wbudowane mody. |
 | `tests/` | Testy bez gry, w tym `content_test.cpp`. |
 | `bodypack/` | Jak budowane są postacie (Unity 6000.0.60f1) i animacje. |
 | `third_party/minhook` | [MinHook](https://github.com/TsudaKageyu/minhook) do przechwytywania funkcji. |
@@ -360,8 +354,6 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
   wbudowane w TLDCoop, a logika przeniesiona do C++.
 - Dynamic Trees: mod [DynamicTrees](https://github.com/Fuar11/DynamicTrees) autorstwa **Fuara**, **The Illusion** i
   **Jods** (tekstury); wbudowany za zgodą autorów (`third_party/dynamictrees/NOTICE.txt`).
-- Adaptive Arsenal: mod [AdaptiveArsenal](https://github.com/Deaadman/adaptive-arsenal) autorstwa **Deaadmana**
-  (GPL-3.0); przeniesiony do C++ i wbudowany za zgodą autora (`third_party/adaptive-arsenal/NOTICE.txt`).
 - JustZoom: mod [JustZoom](https://github.com/WillWunderhorn/JustZoom) autorstwa **WillWunderhorna**; przeniesiony
   do C++ i wbudowany za zgodą autora (`third_party/justzoom/NOTICE.txt`).
 - Developer Console: mod [TLD-Developer-Console](https://github.com/DigitalzombieTLD/TLD-Developer-Console) autorstwa

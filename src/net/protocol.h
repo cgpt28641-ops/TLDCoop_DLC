@@ -1174,7 +1174,7 @@ inline bool read_spray_mark(Reader& r, SprayMarkMsg& m) {
 // The host's game features (TLDCoop_DLC): what every game in the session follows the host on.
 constexpr uint32_t kFeatureAmbientLights = 1;  // Ambient Lights (built-in port of the MelonLoader mod)
 constexpr uint32_t kFeatureDynamicTrees = 2;   // Dynamic Trees (built in, with its authors' permission)
-constexpr uint32_t kFeatureAdaptiveArsenal = 4;  // Adaptive Arsenal (built in, with its author's permission)
+constexpr uint32_t kFeatureAdaptiveArsenal = 4;  // (was Adaptive Arsenal: removed; the bit stays unused)
 inline void write_features(Writer& w, uint32_t bits, float tree_snow) {
     w.put<uint32_t>(bits);
     w.put<float>(tree_snow);

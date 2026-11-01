@@ -105,11 +105,6 @@ constexpr ModSwitch kMods[] = {
      "Dynamic Trees: snow on the trees builds up in snowy, windy weather and goes in clear, windy weather; the pines "
      "and cedars go from green to white. You decide for everyone, and everyone's trees carry your snow. (Built in, "
      "by Fuar, The Illusion and Jods, with their permission.)"},
-    {"ADAPTIVE ARSENAL",
-     "Adaptive Arsenal: rifle and revolver bullets fly (each gun its own speed, with drop and a trail) instead of "
-     "hitting at once; your skill, stance, moving and hip fire set how true they go, and damage falls off with "
-     "distance; the revolver can be aimed on the move. You decide for everyone. (Built in, by Deaadman, with his "
-     "permission.)"},
 };
 constexpr int kModCount = static_cast<int>(sizeof(kMods) / sizeof(kMods[0]));
 constexpr int kModRows[] = {kMode, kCharacter, kNames, kRadar, kChart};  // rows with arrows (VOICE may be hidden)
@@ -1338,7 +1333,6 @@ void load_choices() {
     g.mods = false;
     g.mod_on[0] = g.settings.ambient_lights;
     g.mod_on[1] = g.settings.dynamic_trees;
-    g.mod_on[2] = g.settings.adaptive_arsenal;
     // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
     std::string ids = avatar::choosable_body_ids();
@@ -1532,7 +1526,6 @@ void close_menu(bool confirmed) {
         if (g.mode == kHost) {
             g.settings.ambient_lights = g.mod_on[0];
             g.settings.dynamic_trees = g.mod_on[1];
-            g.settings.adaptive_arsenal = g.mod_on[2];
         }
         if (by_code) g.settings.transport = "steam";  // codes run through Steam
         if (g.mode == kJoin) g.settings.join_code = g.join_code;

@@ -27,7 +27,9 @@ struct Api {
     const MethodInfo* stain = nullptr;    // BloodTrail.LeaveBloodStain(Vector3, float, float)
     const MethodInfo* cluster = nullptr;  // BloodTrail.LeaveBloodCluster(Vector3, int)
     size_t trail_size = 0;                // BloodTrail's fields end here
+    ptrdiff_t trail_ai = -1;              // BloodTrail.m_BaseAi (an animal's trail)
 } api;
+int g_animal_sent = 0;
 bool g_ready = false;
 int g_depth = 0;        // inside one of TLD's blood calls (one may make others: only the outer one is told)
 bool g_applying = false;  // leaving the other player's blood with our trail: not ours to tell
@@ -50,10 +52,16 @@ Il2CppObject* our_trail() {
     return player && api.player_trail >= 0 ? il2::read_field<Il2CppObject*>(player, api.player_trail) : nullptr;
 }
 
-// Ours, bleeding (not an animal's), and someone to tell.
+// Ours, bleeding (not an animal's), and someone to tell. TLDCoop_DLC: on the host, an animal's blood too (the host's
+// game runs the animals: a wounded deer's trail was only on the host's ground, "no blood drops for the others").
 bool ours_to_tell(Il2CppObject* self) {
-    return !g_applying && g_depth == 1 && self && self == our_trail() && netrt::status().connected &&
-           !core::settled_scene().empty();
+    if (g_applying || g_depth != 1 || !self || !netrt::status().connected || core::settled_scene().empty()) return false;
+    if (self == our_trail()) return true;
+    if (hosting() && api.trail_ai >= 0 && il2::read_field<Il2CppObject*>(self, api.trail_ai)) {
+        if (g_animal_sent++ == 0) logx::info("blood: an animal's blood goes to the others too");
+        return true;
+    }
+    return false;
 }
 
 void send(net::BloodMarkMsg m) {
@@ -120,6 +128,7 @@ bool init() {
     api.drop = il2::find_method_params(trail, "LeaveBloodDrop", {"UnityEngine.Vector3"});
     api.stain = il2::find_method_params(trail, "LeaveBloodStain", {"UnityEngine.Vector3", "System.Single", "System.Single"});
     api.cluster = il2::find_method_params(trail, "LeaveBloodCluster", {"UnityEngine.Vector3", "System.Int32"});
+    api.trail_ai = il2::field_offset(trail, "m_BaseAi");
     // Its state to keep: every field up to its last one (m_DropCount, an int).
     if (const ptrdiff_t last = il2::field_offset(trail, "m_DropCount"); last > kFieldsFrom)
         api.trail_size = static_cast<size_t>(last) + sizeof(int32_t);
