@@ -58,6 +58,7 @@ struct StateInfo {  // UnityEngine.AnimatorStateInfo
 struct Api {
     FieldInfo* ai_list = nullptr;  // static List<BaseAi> BaseAiManager.m_BaseAis
     ptrdiff_t ai_kind = -1, ai_mode = -1, ai_hp = -1, ai_animator = -1;
+    ptrdiff_t ai_wildlife_mode = -1;  // BaseAi.m_WildlifeMode (Normal 0, Aurora 1)
     const MethodInfo* spawn_manager = nullptr;  // static GameManager.GetSpawnRegionManager()
     ptrdiff_t spawn_regions = -1, region_prefab = -1, region_spawn_list = -1, region_kind = -1;
 
@@ -631,6 +632,7 @@ void capture(const std::string& scene, double now) {
         a.kind = static_cast<uint8_t>(il2::read_field<int32_t>(ai, api.ai_kind));
         a.mode = static_cast<uint8_t>(il2::read_field<int32_t>(ai, api.ai_mode));
         a.flags = a.mode == kAiModeDead ? net::kAnimalDead : 0;
+        if (api.ai_wildlife_mode >= 0 && il2::read_field<int32_t>(ai, api.ai_wildlife_mode) == 1) a.flags |= net::kAnimalAurora;
         a.hp = il2::read_field<float>(ai, api.ai_hp);
         a.x = pos.x;
         a.y = pos.y;
@@ -755,6 +757,7 @@ struct Puppet {
     std::vector<uint64_t> emitters;                     // its Wwise sound objects, same order as the host's animal
     std::unordered_map<uint32_t, uint32_t> playing;     // host playing ID -> ours
     bool carcass = false;                               // a real carcass (wildlife_carcass) has taken its place
+    bool aurora = false;                                // TLDCoop_DLC: the aurora model
 };
 
 std::map<uint32_t, Puppet> g_puppets;
@@ -813,7 +816,36 @@ Il2CppObject* prefab_from_ref(Il2CppObject* ref) {
 // TLDCoop_DLC: each kind's prefab once found (2.58 loads it from its reference; kept so that's done once).
 std::unordered_map<int, uintptr_t> g_templates;
 
-Il2CppObject* template_for(int kind) {
+// TLDCoop_DLC: an aurora animal has its own model ("the aurora wolf's skin only shows on the host"): the spawn
+// area's aurora entry, or an aurora animal of ours; else the ordinary one.
+Il2CppObject* template_for(int kind, bool aurora) {
+    const int key = kind + (aurora ? 100 : 0);
+    if (aurora) {
+        if (auto it = g_templates.find(key); it != g_templates.end()) {
+            if (Il2CppObject* go = target(it->second); alive(go)) return go;
+            il2::il2cpp_gchandle_free(it->second);
+            g_templates.erase(it);
+        }
+        Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
+        for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
+            if (il2::read_field<int32_t>(region, api.region_kind) == kind)
+                if (Il2CppObject* prefab = prefab_from_ref(region_asset(region, 1))) {
+                    g_templates[key] = hold(prefab);
+                    logx::info("wildlife: the aurora %s model comes from this scene's spawn area", kind_name(kind));
+                    return prefab;
+                }
+        if (api.ai_asset_ref >= 0 && api.ai_wildlife_mode >= 0)
+            for (Il2CppObject* ai : all_animals())
+                if (il2::read_field<int32_t>(ai, api.ai_kind) == kind && il2::read_field<int32_t>(ai, api.ai_wildlife_mode) == 1)
+                    if (Il2CppObject* prefab = prefab_from_ref(il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref))) {
+                        g_templates[key] = hold(prefab);
+                        logx::info("wildlife: the aurora %s model comes from an aurora animal here", kind_name(kind));
+                        return prefab;
+                    }
+        static int missing = 0;
+        if (!(missing & (1 << kind))) logx::info("wildlife: no aurora %s model here; the ordinary one stands in", kind_name(kind));
+        missing |= 1 << kind;
+    }
     if (auto it = g_templates.find(kind); it != g_templates.end()) {
         if (Il2CppObject* go = target(it->second); alive(go)) return go;
         il2::il2cpp_gchandle_free(it->second);
@@ -897,7 +929,7 @@ int strip(Il2CppObject* copy) {
 
 bool make_puppet(uint32_t id, const net::AnimalRec& rec, Puppet& p) {
     Il2CppObject* root = puppet_root();
-    Il2CppObject* source = template_for(rec.kind);
+    Il2CppObject* source = template_for(rec.kind, (rec.flags & net::kAnimalAurora) != 0);
     if (!root || !source) {
         if (!(g_failed_kinds & (1 << rec.kind)))
             logx::warn("wildlife: no %s to copy in this scene; the host's %s stays invisible here", kind_name(rec.kind),
@@ -920,6 +952,7 @@ bool make_puppet(uint32_t id, const net::AnimalRec& rec, Puppet& p) {
 
     p = Puppet{};
     p.kind = rec.kind;
+    p.aurora = (rec.flags & net::kAnimalAurora) != 0;
     p.go = hold(copy);
     p.transform = hold(transform_of_go(copy));
     bool include_inactive = true;
@@ -1466,7 +1499,7 @@ void mirror(const std::string& scene, double now) {
         if (part.scene != scene) continue;
         for (const net::AnimalRec& rec : part.animals) {
             auto it = g_puppets.find(rec.id);
-            if (it != g_puppets.end() && (it->second.kind != rec.kind || !alive(target(it->second.go)))) {
+            if (it != g_puppets.end() && (it->second.kind != rec.kind || it->second.aurora != ((rec.flags & net::kAnimalAurora) != 0) || !alive(target(it->second.go)))) {
                 remove_puppet(it->second);
                 g_puppets.erase(it);
                 it = g_puppets.end();
@@ -1673,6 +1706,7 @@ bool init() {
 
     if (ai_manager) api.ai_list = il2::il2cpp_class_get_field_from_name(ai_manager, "m_BaseAis");
     api.ai_kind = il2::field_offset(base_ai, "m_AiSubType");
+    api.ai_wildlife_mode = il2::field_offset_quiet(base_ai, "m_WildlifeMode");
     api.ai_mode = il2::field_offset(base_ai, "m_CurrentMode");
     api.ai_hp = il2::field_offset(base_ai, "m_CurrentHP");
     api.ai_animator = il2::field_offset(base_ai, "m_Animator");

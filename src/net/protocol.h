@@ -265,6 +265,7 @@ struct AnimalRec {
     std::string params;
 };
 constexpr uint8_t kAnimalDead = 1;
+constexpr uint8_t kAnimalAurora = 2;  // TLDCoop_DLC: an aurora animal (its own model)
 struct AnimalsMsg {
     uint32_t frame = 0;
     double t_ms = 0;  // when the host captured the frame, on its own clock
