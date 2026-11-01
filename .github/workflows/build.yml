@@ -37,7 +37,7 @@ jobs:
           $sha = "$env:GITHUB_SHA".Substring(0, 7)
           $h = "namespace {`nconstexpr unsigned char kSecret[] = {$arr};`nconstexpr size_t kSecretLen = $($t.Length);`nconstexpr unsigned char kSecretKey = $k;`nconstexpr const char* kBuild = `"$sha`";`n}`n"
           Set-Content -Path src/update_secret.inc -Value $h -Encoding ascii
-          Write-Host "build id $sha, update token: $(if ($t.Length) { 'yes' } else { 'none (secret UPDATE_TOKEN not set)' })"
+          Write-Host "::notice title=update::build id $sha, update token: $(if ($t.Length) { 'yes' } else { 'none (secret UPDATE_TOKEN not set)' })"
 
       - name: Configure and build
         shell: cmd
