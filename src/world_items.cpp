@@ -114,6 +114,12 @@ struct Api {
     ptrdiff_t snare_state = -1;                    // SnareItem.m_State (SnareState: 0 not set, 1 set, 2 broken, 3 caught)
     ptrdiff_t snare_rabbit = -1;                   // SnareItem.m_RabbitPrefab
     const MethodInfo* snare_load = nullptr;        // SnareItem.Deserialize(string)
+    // TLDCoop_DLC: lamps and the state of lights (logged: "the full lamp's fuel was gone", "the flare showed ruined")
+    ptrdiff_t lamp = -1;                           // GearItem.m_KeroseneLampItem
+    const MethodInfo* lamp_load = nullptr;         // KeroseneLampItem.Deserialize(string)
+    const MethodInfo* lamp_pct = nullptr;          // KeroseneLampItem.GetPercentFuelRemaining()
+    const MethodInfo* lamp_on = nullptr;           // KeroseneLampItem.IsOn()
+    const MethodInfo* gear_condition = nullptr;    // GearItem.GetRoundedCondition()
     const MethodInfo* snare_placed = nullptr;      // SnareItem.OnSnarePlaced(): set, rolling from now
     const MethodInfo* snare_set_state = nullptr;   // SnareItem.SetState(SnareState)
     const MethodInfo* snare_roll = nullptr;        // SnareItem.DoRoll()
@@ -168,6 +174,10 @@ std::string name_of(Il2CppObject* o) {
     return o ? text(reinterpret_cast<Il2CppString*>(il2::invoke(api.object_name, o))) : std::string();
 }
 std::string short_id(const std::string& pdid) { return pdid.size() > 8 ? pdid.substr(0, 8) : pdid; }
+
+bool alive(Il2CppObject* obj);
+// TLDCoop_DLC: a lamp's fuel and a flare's or torch's state, for the log (" [condition 100%, fuel 85%, lit]")
+std::string light_state(Il2CppObject* gi);
 
 float distance(const Vector3& a, const Vector3& b) {
     const float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
@@ -631,6 +641,53 @@ bool opened_of(Il2CppObject* gi) {
     return (alive(food) && get<bool>(food, api.food_opened)) || (alive(smash) && get<bool>(smash, api.smashed));
 }
 
+std::string light_state(Il2CppObject* gi) {
+    if (!alive(gi)) return {};
+    std::string out;
+    char buf[64];
+    Il2CppObject* lamp = api.lamp >= 0 ? get<Il2CppObject*>(gi, api.lamp) : nullptr;
+    Il2CppObject* flare = api.flare >= 0 ? get<Il2CppObject*>(gi, api.flare) : nullptr;
+    Il2CppObject* torch = api.torch >= 0 ? get<Il2CppObject*>(gi, api.torch) : nullptr;
+    if (!alive(lamp) && !alive(flare) && !alive(torch)) return {};
+    int32_t cond = -1;
+    if (api.gear_condition) il2::invoke_value(api.gear_condition, gi, cond);
+    snprintf(buf, sizeof(buf), " [condition %d%%", cond);
+    out += buf;
+    if (alive(lamp)) {
+        float pct = -1;
+        bool on = false;
+        if (api.lamp_pct) il2::invoke_value(api.lamp_pct, lamp, pct);
+        if (api.lamp_on) il2::invoke_value(api.lamp_on, lamp, on);
+        snprintf(buf, sizeof(buf), ", fuel %.0f%%%s", pct, on ? ", lit" : "");
+        out += buf;
+    }
+    if (alive(flare) && api.flare_elapsed >= 0 && api.flare_life >= 0) {
+        snprintf(buf, sizeof(buf), ", burnt %.1f of %.1f min", get<float>(flare, api.flare_elapsed), get<float>(flare, api.flare_life));
+        out += buf;
+    }
+    if (alive(torch) && api.torch_elapsed >= 0 && api.torch_life >= 0) {
+        snprintf(buf, sizeof(buf), ", burnt %.1f of %.1f min", get<float>(torch, api.torch_elapsed), get<float>(torch, api.torch_life));
+        out += buf;
+    }
+    if (burning_light(gi)) out += ", burning";
+    return out + "]";
+}
+
+// TLDCoop_DLC: the other player's record of a lamp we have lying: its fuel and whether it's lit, as loading a save does
+// ("a full lamp's fuel was all gone": ours kept what it had when it was first made here).
+void load_lamp(Il2CppObject* gi, const std::string& gear) {
+    Il2CppObject* lamp = api.lamp >= 0 ? get<Il2CppObject*>(gi, api.lamp) : nullptr;
+    const std::string text = json_string(gear, "m_KeroseneLampItemSerialized");
+    if (!alive(lamp) || !api.lamp_load || text.empty()) return;
+    float before = -1, after = -1;
+    if (api.lamp_pct) il2::invoke_value(api.lamp_pct, lamp, before);
+    void* args[] = {il2::il2cpp_string_new(text.c_str())};
+    il2::invoke(api.lamp_load, lamp, args);
+    if (api.lamp_pct) il2::invoke_value(api.lamp_pct, lamp, after);
+    if (std::fabs(after - before) >= 1)
+        logx::info("items: the other player's lamp has %.0f%% fuel (ours said %.0f%%)", after, before);
+}
+
 void load_opened(Il2CppObject* gi, const std::string& gear, Known& k) {
     if (!alive(gi)) return;
     bool changed = false;
@@ -807,8 +864,9 @@ void send_put(Il2CppObject* gi, const std::string& pdid, Known& k, double now, u
                        short_id(m.pdid).c_str(), change, m.gear.size());
     }
     else if (!(flags & net::kItemAnswer))
-        logx::info("items: %s %s (%s) at (%.1f, %.1f, %.1f); told the other player (%zu chars)", m.prefab.c_str(),
-                   was_shared ? "moved to" : "is new here,", short_id(m.pdid).c_str(), pos.x, pos.y, pos.z, m.gear.size());
+        logx::info("items: %s %s (%s) at (%.1f, %.1f, %.1f); told the other player (%zu chars)%s", m.prefab.c_str(),
+                   was_shared ? "moved to" : "is new here,", short_id(m.pdid).c_str(), pos.x, pos.y, pos.z, m.gear.size(),
+                   light_state(gi).c_str());
 }
 
 // `taken_now`: we just took it into our pack (TLD's Take it), whatever the pack says yet.
@@ -826,8 +884,9 @@ void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) 
     netrt::send_packet(w, true);
     if (taken) g_took[m.pdid] = Took{pdid, k.prefab, k.units};  // it may go to someone's take at the same moment
     if (taken && hosting()) g_claims.taken_by_host(g_scene, m.pdid, now_ms());
-    logx::info("items: %s (%s) %s; told the other player", k.prefab.c_str(), short_id(m.pdid).c_str(),
-               m.reason == net::ItemGoneReason::Taken ? "went into our pack" : "is gone from the world");
+    logx::info("items: %s (%s) %s; told the other player%s", k.prefab.c_str(), short_id(m.pdid).c_str(),
+               m.reason == net::ItemGoneReason::Taken ? "went into our pack" : "is gone from the world",
+               taken ? light_state(gi).c_str() : "");
     forget_alias(pdid);
 }
 
@@ -1051,11 +1110,12 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         k.moved_ms = now;
         k.shared = true;
         if (moved || (snare_state(gi) < 0 && !pot_of(gi)))  // (a snare's or a pot's change says itself)
-            logx::info("items: the other player's %s (%s) moved to (%.1f, %.1f, %.1f)", m.prefab.c_str(),
-                       short_id(m.pdid).c_str(), pos.x, pos.y, pos.z);
+            logx::info("items: the other player's %s (%s) moved to (%.1f, %.1f, %.1f)%s", m.prefab.c_str(),
+                       short_id(m.pdid).c_str(), pos.x, pos.y, pos.z, light_state(gi).c_str());
         load_snare(gi, m.gear, m.pdid, k);
         load_opened(gi, m.gear, k);
         load_burn(gi, m.gear, k);
+        load_lamp(gi, m.gear);
         load_pot(gi, m.gear, m.pdid);
         return;
     }
@@ -1091,12 +1151,12 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     k.snare = snare_state(made);
     k.moved_ms = now;
     k.shared = true;
-    logx::info("items: the other player's %s (%s%s%s) %s at (%.1f, %.1f, %.1f)", m.prefab.c_str(), short_id(m.pdid).c_str(),
+    logx::info("items: the other player's %s (%s%s%s) %s at (%.1f, %.1f, %.1f)%s", m.prefab.c_str(), short_id(m.pdid).c_str(),
                got != m.pdid ? ", ours: " : "", got != m.pdid ? short_id(got).c_str() : "",
                (m.flags & net::kItemAnswer) ? "was missing here; now it's"
                : (m.flags & net::kItemNotYours) ? "lies where it was again"
                                                 : "is here now",
-               pos.x, pos.y, pos.z);
+               pos.x, pos.y, pos.z, light_state(made).c_str());
 }
 
 void remove_ours(const std::string& ours, const char* why) {
@@ -1836,6 +1896,13 @@ bool init() {
         api.torch_elapsed = il2::field_offset(torch, "m_ElapsedBurnMinutes");
         api.torch_life = il2::field_offset(torch, "m_BurnLifetimeMinutes");
     }
+    if (Il2CppClass* lamp = il2::find_class(kGame, "TLD.Gear", "KeroseneLampItem")) {
+        api.lamp = il2::field_offset_quiet(gear, "m_KeroseneLampItem");
+        api.lamp_load = il2::find_method_params(lamp, "Deserialize", {"System.String"});
+        api.lamp_pct = il2::find_method_quiet(lamp, "GetPercentFuelRemaining", 0);
+        api.lamp_on = il2::find_method_quiet(lamp, "IsOn", 0);
+    }
+    api.gear_condition = il2::find_method_quiet(gear, "GetRoundedCondition", 0);
     if (Il2CppClass* snare = il2::find_class(kGame, "", "SnareItem")) {
         api.snare = il2::field_offset(gear, "m_SnareItem");
         api.snare_state = il2::field_offset(snare, "m_State");
