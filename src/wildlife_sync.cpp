@@ -523,6 +523,16 @@ void region_update_detour(Il2CppObject* region, const MethodInfo* method) {
     if (forced) *(reinterpret_cast<char*>(region) + g_region_override) = 0;
 }
 
+// TLDCoop_DLC: animals handed between the games when the host leaves a scene a friend stays in and comes back.
+std::string g_took_over_scene;  // friend: our animals took the host's places here (the host went elsewhere)
+struct Handover {
+    std::string scene;
+    std::vector<net::HandoverAnimal> list;
+    std::vector<bool> done;
+    std::unordered_set<uintptr_t> used;
+    double until = 0;
+} g_handover;  // host: a friend's animals to take the places of
+
 // Host: a friend's animals (it ran this scene while we were elsewhere) put ours in their places, by kind, as ours
 // come in (a scene just loaded spawns them over a few seconds).
 void apply_handover(const std::string& scene, double now) {
@@ -754,15 +764,6 @@ double g_last_hide_scan = 0;
 bool g_mirroring = false;
 std::string g_mirror_scene;
 std::vector<net::AnimalsMsg> g_incoming;
-// TLDCoop_DLC: animals handed between the games when the host leaves a scene a friend stays in and comes back.
-std::string g_took_over_scene;  // friend: our animals took the host's places here (the host went elsewhere)
-struct Handover {
-    std::string scene;
-    std::vector<net::HandoverAnimal> list;
-    std::vector<bool> done;
-    std::unordered_set<uintptr_t> used;
-    double until = 0;
-} g_handover;  // host: a friend's animals to take the places of
 int g_failed_kinds = 0;  // bitmask of kinds we couldn't copy (logged once)
 int g_spawns_blocked = 0;  // TLD spawns refused while mirroring (the first is logged)
 
