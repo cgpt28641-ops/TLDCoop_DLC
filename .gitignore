@@ -8,4 +8,3 @@ external/
 bodypack/project/
 bodypack/*.log
 dist/
-src/update_secret.inc

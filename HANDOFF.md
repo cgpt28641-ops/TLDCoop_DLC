@@ -426,3 +426,7 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Do sprawdzenia: czat – w logach dużo pustych linii (ENTER bez tekstu).
 - Czat nie otwiera się ENTER-em, gdy otwarta jest konsola F1 (uConsole.m_On) ani w klatce, w której się zamknęła.
 - „Zablokowana kamera i zniknął HUD” u hosta 18:49:16–18:49:33 = okno opisu F11 (wtedy wejście gry jest wstrzymane) – nie wyjście Szymona.
+
+## 2026-11-01 19:40 – auto-aktualizacja usunięta (prośba Karola)
+- Usunięte src/coop_update.*, krok CI z tokenem (UPDATE_TOKEN), wininet, komunikat w menu co-op. dll-latest zostaje jako link do pobrania.
+- Sekret UPDATE_TOKEN i sam token na GitHubie Karol może usunąć (nie są już używane).

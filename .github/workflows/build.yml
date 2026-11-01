@@ -23,22 +23,6 @@ jobs:
         with:
           arch: x64
 
-      # TLDCoop_DLC: the self-update's token (repository secret UPDATE_TOKEN: a fine-grained, read-only token for this
-      # repository) and our build's id, written into a header that isn't in the repo.
-      - name: Update token and build id
-        shell: pwsh
-        env:
-          UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
-        run: |
-          $t = [System.Text.Encoding]::ASCII.GetBytes("$env:UPDATE_TOKEN")
-          $k = Get-Random -Minimum 1 -Maximum 255
-          $b = for ($i = 0; $i -lt $t.Length; $i++) { '0x{0:x2}' -f ($t[$i] -bxor (($k + $i * 7) -band 0xff)) }
-          $arr = if ($t.Length) { ($b -join ',') } else { '0' }
-          $sha = "$env:GITHUB_SHA".Substring(0, 7)
-          $h = "namespace {`nconstexpr unsigned char kSecret[] = {$arr};`nconstexpr size_t kSecretLen = $($t.Length);`nconstexpr unsigned char kSecretKey = $k;`nconstexpr const char* kBuild = `"$sha`";`n}`n"
-          Set-Content -Path src/update_secret.inc -Value $h -Encoding ascii
-          Write-Host "::notice title=update::build id $sha, update token: $(if ($t.Length) { 'yes' } else { 'none (secret UPDATE_TOKEN not set)' })"
-
       - name: Configure and build
         shell: cmd
         run: |
