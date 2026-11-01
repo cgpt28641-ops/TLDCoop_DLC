@@ -1085,7 +1085,7 @@ bool do_respawn(const std::string& wanted) {
     s.body = body;
     config::save(s);
     g_save_at = now_ms() + kSaveAfterMs;
-    g_controls_again_at = now_ms() + 1500;
+    g_controls_again_at = now_ms() + 8000;  // TLDCoop_DLC: one more look, 8 s on (1.5 and 4 s never found anything)
     coop_notices::tell("A new survivor: " + coop_menu::body_name(body));
     logx::info("death: respawned as %s, %s; the start gear comes next, the game saves in %.0f s", body.c_str(),
                where.c_str(), kSaveAfterMs / 1000);
@@ -1266,11 +1266,8 @@ void on_frame(const std::string& scene, bool in_game) {
         g_others_dead.clear();
         return;
     }
-    if (g_controls_again_at && now_ms() >= g_controls_again_at) {  // TLDCoop_DLC: 1.5, 4 and 8 s after
-        static int round = 0;
-        round = round >= 3 ? 1 : round + 1;
-        g_controls_again_at = round == 1 ? now_ms() + 2500 : round == 2 ? now_ms() + 4000 : 0;
-        if (round >= 3) round = 0;
+    if (g_controls_again_at && now_ms() >= g_controls_again_at) {  // TLDCoop_DLC: once, 8 s after (only that one
+        g_controls_again_at = 0;                                    // ever found something: the camera's animation)
         // Only what the death left: a new fight (a wolf on the new survivor at once) or anything else TLD is doing
         // with the player now is TLD's own. Breaking it here made the player stand up mid-fight, the wolf froze in
         // the air and the arms stayed out after.
@@ -1282,8 +1279,6 @@ void on_frame(const std::string& scene, bool in_game) {
         if (fighting || mode != kNormal) {
             logx::info("death: the new survivor is busy (%s, control mode %d): the controls are TLD's now; no more "
                        "checks after this death", fighting ? "in a fight" : "not in normal play", mode);
-            g_controls_again_at = 0;
-            round = 0;
         } else if (pm) {
             controls_back(pm);
         }

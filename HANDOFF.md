@@ -331,3 +331,7 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   dll-latest release (not counted against Actions storage); the full zip artifact only on workflow_dispatch
   (retention 2 days). README Installation updated.
 - 2026-11-01: README intro said 2.58; the mod runs on 2.59 189140 S (host log). Fixed.
+
+## 2026-11-01 — one late check after a respawn
+- coop_death: controls_back at respawn (0 s) plus ONE late check 8 s after (was 1.5, 4, 8 s; in every log only the
+  8 s one found something: the camera's animation not idle). Still skipped while fighting / not Normal mode.
