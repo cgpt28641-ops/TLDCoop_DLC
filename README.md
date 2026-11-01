@@ -5,7 +5,7 @@
 To prywatna przeróbka moda [TLDCoop](https://github.com/ScarredVeins/TLDCo-Op) autorstwa **ScarredVeins**. Cała
 zasługa za sam mod należy do niego (zobacz [Autorzy](#autorzy)). Ta wersja dodaje:
 
-- **Działanie na The Long Dark 2.58** (188966 S). To poprawki
+- **Działanie na najnowszej The Long Dark 2.59** (189140 S; działa też na 2.58). Podstawą są poprawki pod 2.58
   [afkfatih](https://github.com/afkfatih/TLDCo-Op/tree/support-tld-2.58) z
   [tego zgłoszenia](https://github.com/ScarredVeins/TLDCo-Op/issues/1).
 - **Jeden gracz naraz w szafce.** Gdy ktoś przeszukuje szafkę, skrzynię czy zwłoki, inni nie mogą jej otworzyć,

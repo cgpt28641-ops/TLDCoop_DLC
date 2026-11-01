@@ -330,3 +330,4 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   overage, so nothing is charged). A full zip is ~220 MB. Now: every push to main uploads winhttp.dll to the
   dll-latest release (not counted against Actions storage); the full zip artifact only on workflow_dispatch
   (retention 2 days). README Installation updated.
+- 2026-11-01: README intro said 2.58; the mod runs on 2.59 189140 S (host log). Fixed.
