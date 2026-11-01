@@ -32,6 +32,7 @@ std::mutex g_mutex;          // the window's messages and the frame
 bool g_typing = false;
 std::wstring g_text;
 bool g_submit = false, g_cancel = false;
+bool g_enter_held = false;  // the ENTER that opened the line: its character isn't a send (it sent empty lines)
 WNDPROC g_old_proc = nullptr;
 HWND g_window = nullptr;
 
@@ -68,7 +69,7 @@ LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         logx::info("chat: the first typed character came in (WM_CHAR)");
                     }
                     const wchar_t c = static_cast<wchar_t>(wp);
-                    if (c == L'\r') g_submit = true;
+                    if (c == L'\r') { if (!g_enter_held) g_submit = true; }
                     else if (c == 27) g_cancel = true;
                     else if (c == 8) { if (!g_text.empty()) g_text.pop_back(); }
                     else if (c >= 32 && g_text.size() < kMaxChars) g_text += c;
@@ -79,6 +80,7 @@ LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case WM_SYSKEYDOWN:
                 case WM_SYSKEYUP:
                     if (wp == VK_ESCAPE && msg == WM_KEYDOWN) g_cancel = true;
+                    if (wp == VK_RETURN && msg == WM_KEYUP) g_enter_held = false;
                     return 0;  // (TranslateMessage already made the WM_CHAR)
                 default:
                     break;
@@ -137,6 +139,7 @@ void open(const std::string& prompt) {
     g_typing = true;
     g_text.clear();
     g_submit = g_cancel = false;
+    g_enter_held = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
     g_prompt = prompt;
 }
 

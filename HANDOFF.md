@@ -381,3 +381,13 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - coop_report: F11 on our side opens the box ("OPISZ BŁĄD (ENTER - zapisz, ESC - pomiń):", 120 s timeout); the
   description goes into the log and opis.txt in the zip; the others' games pack at once as before.
 - 13:30 Karol: chat doesn't work (no details, no log; his PC not reachable). Added logs: why ENTER doesn't open it (not in game / not connected / window not in front / not hooked / which TLD screen holds the input), when the line opens, the first WM_CHAR, sent/dropped, the chat box widgets made, and a warning when the line is open while TLD's HUD is hidden.
+
+## 2026-11-01 (17:30) — report 17:14 (host): chat works; bear vanished when the host went into a cabin
+- Log: chat sends/receives fine. Two faults: (1) the ENTER that opened the line often also sent it empty (its WM_CHAR
+  '\r' came after the open): now the opening ENTER's character is ignored until its key-up; (2) "chat line open but
+  TLD's HUD is hidden": TLD hides its NonEssentialHud now and then; the chat box now has its own root under the HUD
+  panel itself (TLDCoop_Chat), drawn before the names/radar's visibility check.
+- Bear: host LakeRegion -> CampOffice at 17:13:48; its game unloads the region, the friend's game stops mirroring
+  ("different scenes") and showed its own animals elsewhere. Now on that stop each live host copy is taken over by one
+  of our own animals of that kind (nearest), put where the copy was, facing the same, with its hp. Not done the other
+  way (host back in the region: its fresh animals replace the friend's).

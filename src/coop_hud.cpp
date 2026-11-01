@@ -623,9 +623,24 @@ std::vector<std::string> g_chat_lines;
 bool g_chat_typing = false;
 std::string g_chat_prompt, g_chat_text;
 uintptr_t g_chat_back = 0, g_chat_label = 0, g_chat_input = 0;
+uintptr_t g_chat_root = 0;  // under TLD's HUD itself, not its non-essential part: TLD hides that now and then
 std::string g_chat_shown, g_chat_input_shown;
 
-void show_chat(Il2CppObject* ui_camera, float px) {
+Il2CppObject* chat_root(Il2CppObject* hud) {
+    if (Il2CppObject* r = live(g_chat_root)) return r;
+    drop(g_chat_root);
+    Il2CppObject* go = hud ? new_child("TLDCoop_Chat", go_transform(go_of(hud))) : nullptr;
+    if (!go) return nullptr;
+    void* type_args[] = {api.panel_type};
+    Il2CppObject* panel = il2::invoke(api.add_component, go, type_args);
+    set_int(api.panel_set_depth, panel, kPanelDepth + 1);
+    g_chat_root = hold(go);
+    for (uintptr_t* h : {&g_chat_back, &g_chat_label, &g_chat_input}) drop(*h);
+    logx::info("hud: made the chat box's root under TLD's HUD");
+    return go;
+}
+
+void show_chat(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
     const bool any = g_chat_typing || !g_chat_lines.empty();
     Il2CppObject* back = live(g_chat_back);
     Il2CppObject* label = live(g_chat_label);
@@ -634,8 +649,9 @@ void show_chat(Il2CppObject* ui_camera, float px) {
         for (Il2CppObject* w : {back, label, input}) set_active(go_of(w), false);
         return;
     }
-    Il2CppObject* r = root();
+    Il2CppObject* r = chat_root(hud);
     if (!r) return;
+    set_active(r, true);
     if (!back) {
         back = clone_under(hud_label_back(), go_transform(r), "ChatBack");
         strip_anchor(back);
@@ -1634,19 +1650,26 @@ void late_update() {
     Il2CppObject* hud = (coop && (g_names || g_radar || g_chat_typing || !g_chat_lines.empty())) ? hud_panel() : nullptr;
     if (!hud) {
         set_active(live(g_root), false);
+        set_active(live(g_chat_root), false);
         g_showing = coop ? "names and radar off" : "not in a co-op game";
         return;
+    }
+    {  // TLDCoop_DLC: the chat box, whatever TLD does with the rest of its HUD
+        Il2CppObject* ui_camera = il2::invoke(api.ui_camera, nullptr);
+        const float height = static_cast<float>(screen_size(api.screen_height));
+        float units_a_pixel = 0;
+        Il2CppObject* cr = (g_chat_typing || !g_chat_lines.empty()) ? chat_root(hud) : live(g_chat_root);
+        void* cr_args[] = {cr};
+        if (!cr || !api.pixel_adjustment || !il2::invoke_value(api.pixel_adjustment, nullptr, units_a_pixel, cr_args) ||
+            units_a_pixel <= 0)
+            units_a_pixel = height > 0 ? 720.0f / height : 1;
+        if (alive(ui_camera)) show_chat(hud, ui_camera, 1.0f / units_a_pixel);
     }
     Il2CppObject* r = root();
     if (!r) return;
     const bool showing = hud_showing(hud);
     set_active(r, showing);
     g_showing = showing ? "shown" : "hidden with TLD's HUD";
-    {  // TLDCoop_DLC: the chat line open while TLD hides its HUD: nothing would show
-        static bool told = false;
-        if (g_chat_typing && !showing && !told) logx::warn("hud: the chat line is open but TLD's HUD is hidden: not shown");
-        told = g_chat_typing && !showing;
-    }
     if (!showing) return;
 
     Il2CppObject* game_camera = il2::invoke(api.main_camera, nullptr);
@@ -1683,7 +1706,6 @@ void late_update() {
             hide_tag(it->second);
     }
     show_elsewhere(all, ui_camera, width - kRadarMargin * px_per_unit, below_radar);
-    show_chat(ui_camera, px_per_unit);  // TLDCoop_DLC
 }
 
 void set_chat(const std::vector<std::string>& lines, bool typing, const std::string& prompt, const std::string& text) {

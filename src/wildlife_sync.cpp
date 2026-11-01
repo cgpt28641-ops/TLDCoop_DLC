@@ -1291,6 +1291,19 @@ void stop_mirroring(const char* why) {
     if (!g_mirroring) return;
     finish_fight(why, true);
     g_mirroring = false;
+    // TLDCoop_DLC: the host went into another scene (a house) and its game no longer runs this one: the animals we
+    // saw would all vanish and ours come back elsewhere ("the bear vanished when the host went into the cabin"). Ours
+    // take their places: each one the host's copy showed alive, by kind, where it was and facing as it was.
+    struct Left { uint8_t kind; Vector3 pos, euler; float hp; };
+    std::vector<Left> left;
+    const bool host_left = std::strcmp(why, "different scenes") == 0;
+    if (host_left)
+        for (auto& [id, p] : g_puppets) {
+            Il2CppObject* tf = target(p.transform);
+            if (p.carcass || !tf || (p.latest.flags & net::kAnimalDead)) continue;
+            Left l{p.kind, {}, {}, p.latest.hp};
+            if (il2::invoke_value(api.get_position, tf, l.pos) && il2::invoke_value(api.get_euler, tf, l.euler)) left.push_back(l);
+        }
     for (auto& [id, p] : g_puppets) remove_puppet(p);
     g_puppets.clear();
     int restored = 0;
@@ -1304,7 +1317,35 @@ void stop_mirroring(const char* why) {
     g_hidden.clear();
     g_incoming.clear();
     g_spawns_blocked = 0;
-    logx::info("wildlife: stopped mirroring the host's animals (%s); %d of ours back", why, restored);
+    int took = 0;
+    if (!left.empty()) {
+        std::unordered_set<Il2CppObject*> used;
+        for (const Left& l : left) {
+            Il2CppObject* best = nullptr;
+            float best_d = 1e9f;
+            for (Il2CppObject* ai : all_animals()) {
+                if (used.count(ai) || !active(go_of(ai)) || il2::read_field<int32_t>(ai, api.ai_kind) != l.kind) continue;
+                if (il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead) continue;
+                Vector3 p{};
+                if (!il2::invoke_value(api.get_position, transform_of(ai), p)) continue;
+                const float dx = p.x - l.pos.x, dz = p.z - l.pos.z, d = dx * dx + dz * dz;
+                if (d < best_d) best_d = d, best = ai;
+            }
+            if (!best) continue;
+            used.insert(best);
+            Il2CppObject* tf = transform_of(best);
+            Vector3 pos = l.pos, facing{0, l.euler.y, 0};
+            void* pa[] = {&pos};
+            void* ra[] = {&facing};
+            il2::invoke(api.set_position, tf, pa);
+            il2::invoke(api.set_euler, tf, ra);
+            if (l.hp > 0) write_field<float>(best, api.ai_hp, l.hp);
+            ++took;
+        }
+    }
+    logx::info("wildlife: stopped mirroring the host's animals (%s); %d of ours back%s", why, restored,
+               left.empty() ? "" : (", " + std::to_string(took) + " of the " + std::to_string(left.size()) +
+                                    " the host's showed took their places").c_str());
 }
 
 void mirror(const std::string& scene, double now) {
