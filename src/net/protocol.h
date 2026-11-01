@@ -121,7 +121,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 39;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 40;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -167,6 +167,7 @@ constexpr uint16_t kProtocolVersion = 39;  // v4: World. v5: Animals. v6: sounds
                                            // v37 (TLDCoop_DLC): a sleep vote for 30 minutes (SleepChoice 9)
                                            // v38 (TLDCoop_DLC): Report (a bug report: every game packs its logs)
                                            // v39 (TLDCoop_DLC): Chat (a line someone typed)
+                                           // v40 (TLDCoop_DLC): AnimalHandover (a friend's animals back to the host)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -189,7 +190,7 @@ enum class Msg : uint8_t {
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
-    BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45
+    BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1205,6 +1206,39 @@ inline bool read_chat(Reader& r, std::string& who, std::string& text) {
     who = r.get_blob(64);
     text = r.get_blob(512);
     return r.ok() && !text.empty();
+}
+
+// AnimalHandover (TLDCoop_DLC), friend -> host: the host came back into a scene the friend's game ran the animals of
+// while it was away; where they are, so the host's own (just loaded) take their places.
+struct HandoverAnimal {
+    uint8_t kind = 0;
+    float pos[3] = {}, yaw = 0, hp = 0;
+};
+constexpr size_t kMaxHandover = 64;
+inline void write_animal_handover(Writer& w, const std::string& scene, const std::vector<HandoverAnimal>& list) {
+    w.put_str(scene, kSceneLen);
+    const size_t n = list.size() < kMaxHandover ? list.size() : kMaxHandover;
+    w.put(static_cast<uint8_t>(n));
+    for (size_t i = 0; i < n; ++i) {
+        w.put(list[i].kind);
+        put_floats(w, list[i].pos, 3);
+        w.put(list[i].yaw);
+        w.put(list[i].hp);
+    }
+}
+inline bool read_animal_handover(Reader& r, std::string& scene, std::vector<HandoverAnimal>& list) {
+    scene = r.get_str(kSceneLen);
+    const uint8_t n = r.get<uint8_t>();
+    list.clear();
+    for (uint8_t i = 0; i < n && r.ok(); ++i) {
+        HandoverAnimal a;
+        a.kind = r.get<uint8_t>();
+        get_floats(r, a.pos, 3);
+        a.yaw = r.get<float>();
+        a.hp = r.get<float>();
+        list.push_back(a);
+    }
+    return r.ok();
 }
 
 // Water sources (TLDCoop_DLC): toilets, tanks... TLD's WaterSource, named by its persistent id (or its position when it

@@ -866,6 +866,7 @@ struct Session::Impl {
             case Msg::Quartered:
             case Msg::CaughtUp:
             case Msg::ItemWant:
+            case Msg::AnimalHandover:
             case Msg::ContainerWant: {
                 if (!hosting() || !linked) return;
                 keep_packet(*l, type, data, size, now);

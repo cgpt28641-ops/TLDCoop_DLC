@@ -392,3 +392,8 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   of our own animals of that kind (nearest), put where the copy was, facing the same, with its hp. Not done the other
   way (host back in the region: its fresh animals replace the friend's).
 - 17:35 Karol: Polish letters small among capitals ("LEśNICZóWKA" for a friend elsewhere): upper() was ASCII-only in coop_hud/coop_menu/coop_death; now text_upper.h utf8_upper (CharUpperBuffW).
+- 17:45 Host back in a scene a friend stayed in: the friend (wildlife_sync on_frame, g_took_over_scene set when its
+  animals took the host's places) sends Msg::AnimalHandover (46; scene, kind/pos/yaw/hp of its live animals within
+  400 m), protocol v40; the host (apply_handover, at each capture, up to 15 s as its animals spawn) moves its own of
+  the same kind (nearest, each once) to those places. Logs: "the host is back in ...", "player N ran ... while we
+  were away", "N of our animal(s) took the places of the friend's", summary. Karol: no auto-update (asked).

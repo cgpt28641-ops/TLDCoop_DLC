@@ -523,7 +523,53 @@ void region_update_detour(Il2CppObject* region, const MethodInfo* method) {
     if (forced) *(reinterpret_cast<char*>(region) + g_region_override) = 0;
 }
 
+// Host: a friend's animals (it ran this scene while we were elsewhere) put ours in their places, by kind, as ours
+// come in (a scene just loaded spawns them over a few seconds).
+void apply_handover(const std::string& scene, double now) {
+    Handover& h = g_handover;
+    if (h.list.empty()) return;
+    if (h.scene != scene || now > h.until) {
+        int done = 0;
+        for (bool d : h.done) done += d;
+        logx::info("wildlife: the friend's animals: %d of %zu taken over by ours%s", done, h.list.size(),
+                   h.scene != scene ? " (we left the scene)" : "");
+        h = Handover{};
+        return;
+    }
+    int now_done = 0;
+    for (size_t i = 0; i < h.list.size(); ++i) {
+        if (h.done[i]) continue;
+        const net::HandoverAnimal& want = h.list[i];
+        Il2CppObject* best = nullptr;
+        float best_d = 1e12f;
+        for (Il2CppObject* ai : all_animals()) {
+            const auto key = reinterpret_cast<uintptr_t>(ai);
+            if (h.used.count(key) || !active(go_of(ai))) continue;
+            if (il2::read_field<int32_t>(ai, api.ai_kind) != want.kind || il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead) continue;
+            Vector3 p{};
+            if (!il2::invoke_value(api.get_position, transform_of(ai), p)) continue;
+            const float dx = p.x - want.pos[0], dz = p.z - want.pos[2], d = dx * dx + dz * dz;
+            if (d < best_d) best_d = d, best = ai;
+        }
+        if (!best) continue;
+        h.used.insert(reinterpret_cast<uintptr_t>(best));
+        h.done[i] = true;
+        Vector3 pos{want.pos[0], want.pos[1], want.pos[2]}, facing{0, want.yaw, 0};
+        void* pa[] = {&pos};
+        void* ra[] = {&facing};
+        il2::invoke(api.set_position, transform_of(best), pa);
+        il2::invoke(api.set_euler, transform_of(best), ra);
+        if (want.hp > 0 && api.ai_hp >= 0) memcpy(reinterpret_cast<char*>(best) + api.ai_hp, &want.hp, sizeof(float));
+        ++now_done;
+    }
+    if (now_done) logx::info("wildlife: %d of our animal(s) took the places of the friend's", now_done);
+    bool all = true;
+    for (bool d : h.done) all = all && d;
+    if (all) h.until = 0;  // (summed up next time)
+}
+
 void capture(const std::string& scene, double now) {
+    apply_handover(scene, now);
     const game::PlayerState me = game::read_player();
     std::vector<net::StateMsg> friends_here = netrt::remote_states();
     friends_here.erase(std::remove_if(friends_here.begin(), friends_here.end(),
@@ -708,6 +754,15 @@ double g_last_hide_scan = 0;
 bool g_mirroring = false;
 std::string g_mirror_scene;
 std::vector<net::AnimalsMsg> g_incoming;
+// TLDCoop_DLC: animals handed between the games when the host leaves a scene a friend stays in and comes back.
+std::string g_took_over_scene;  // friend: our animals took the host's places here (the host went elsewhere)
+struct Handover {
+    std::string scene;
+    std::vector<net::HandoverAnimal> list;
+    std::vector<bool> done;
+    std::unordered_set<uintptr_t> used;
+    double until = 0;
+} g_handover;  // host: a friend's animals to take the places of
 int g_failed_kinds = 0;  // bitmask of kinds we couldn't copy (logged once)
 int g_spawns_blocked = 0;  // TLD spawns refused while mirroring (the first is logged)
 
@@ -1297,6 +1352,7 @@ void stop_mirroring(const char* why) {
     struct Left { uint8_t kind; Vector3 pos, euler; float hp; };
     std::vector<Left> left;
     const bool host_left = std::strcmp(why, "different scenes") == 0;
+    if (host_left) g_took_over_scene = g_mirror_scene;
     if (host_left)
         for (auto& [id, p] : g_puppets) {
             Il2CppObject* tf = target(p.transform);
@@ -1719,12 +1775,52 @@ void on_frame(const std::string& scene, bool in_game) {
         return;
     }
     if (*role == net::Role::Host) {
+        {  // TLDCoop_DLC: a friend's animals, to take the places of
+            static std::vector<net::Packet> in;
+            in.clear();
+            netrt::drain_packets(net::Msg::AnimalHandover, in);
+            for (const net::Packet& p : in) {
+                net::Reader r = net::packet_body(p);
+                Handover h;
+                if (!net::read_animal_handover(r, h.scene, h.list)) continue;
+                logx::info("wildlife: player %u ran '%s' while we were away: %zu animal(s) of theirs for ours to take over%s",
+                           p.from, h.scene.c_str(), h.list.size(), h.scene == scene ? "" : " (not our scene: ignored)");
+                if (h.scene != scene || h.list.empty()) continue;
+                h.done.assign(h.list.size(), false);
+                h.until = now + 15000;
+                g_handover = std::move(h);
+            }
+        }
         if (!in_game || now - g_last_capture < kCaptureMs) return;
         g_last_capture = now;
         capture(scene, now);
         return;
     }
     const auto host = netrt::remote_state();
+    if (!g_took_over_scene.empty() && g_took_over_scene != scene) g_took_over_scene.clear();  // we left it too
+    if (in_game && host && host->valid && host->scene == scene && !g_mirroring && g_took_over_scene == scene) {
+        // TLDCoop_DLC: the host is back where our animals took over: they go back to the host's game, where they are
+        std::vector<net::HandoverAnimal> list;
+        const game::PlayerState me = game::read_player();
+        for (Il2CppObject* ai : all_animals()) {
+            if (!active(go_of(ai)) || il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead) continue;
+            Vector3 p{}, e{};
+            if (!il2::invoke_value(api.get_position, transform_of(ai), p) || !il2::invoke_value(api.get_euler, transform_of(ai), e)) continue;
+            const float dx = p.x - me.position.x, dz = p.z - me.position.z;
+            if (me.valid && dx * dx + dz * dz > kRangeMetres * kRangeMetres) continue;
+            net::HandoverAnimal a;
+            a.kind = static_cast<uint8_t>(il2::read_field<int32_t>(ai, api.ai_kind));
+            a.pos[0] = p.x, a.pos[1] = p.y, a.pos[2] = p.z;
+            a.yaw = e.y;
+            a.hp = il2::read_field<float>(ai, api.ai_hp);
+            list.push_back(a);
+        }
+        net::Writer w(net::Msg::AnimalHandover, 4096);
+        net::write_animal_handover(w, scene, list);
+        netrt::send_packet(w, true);
+        logx::info("wildlife: the host is back in '%s': our %zu animal(s) there go back to its game", scene.c_str(), list.size());
+        g_took_over_scene.clear();
+    }
     if (!in_game || !host || !host->valid || host->scene != scene) {
         stop_mirroring(!in_game ? "we're not in the game" : !host ? "not connected" : !host->valid ? "host loading"
                                                                                                      : "different scenes");
