@@ -371,6 +371,8 @@ struct Avatar {
     float yaw = 0, pitch = 0;  // their facing and where they look, for the late pass
     float shown_yaw = 0;       // the way the body is turned (a handover turns it to the partner)
     std::array<uintptr_t, kBoneCount> bones{};  // the body's bones we pose (none on the capsule)
+    // TLDCoop_DLC: the rest of the rig we pose, by name: fingers, shoulders (clavicles), neck, Spine2 (gestures, grips)
+    std::unordered_map<std::string, uintptr_t> rig;
     bool fresh = false;        // their latest state is recent (they're still sending)
     net::StateMsg last;        // that state, for the HUD (seen())
     // What they do (milestone 13): the action clips on this body, the one shown, how much of the body it has.
@@ -656,6 +658,16 @@ void attach_gait(Avatar& a, Il2CppObject* body) {
 
 void drop_bones(Avatar& a) {
     for (uintptr_t& b : a.bones) drop(b);
+    for (auto& [name, h] : a.rig) drop(h);  // TLDCoop_DLC
+    a.rig.clear();
+}
+
+// TLDCoop_DLC: the bones of the rig posed by name (fingers, clavicles, neck, Spine2).
+bool rig_bone_wanted(const std::string& n) {
+    if (n.size() < 5 || n.compare(n.size() - 4, 4, "_jnt") != 0) return false;
+    for (const char* k : {"Index", "Middle", "Ring", "Pinky", "Thumb", "Shoulder_jnt", "Neck_jnt", "Spine2_jnt"})
+        if (n.find(k) != std::string::npos) return true;
+    return false;
 }
 
 // The arm bones, for holding things (late_update).
@@ -666,6 +678,7 @@ void attach_bones(Avatar& a, Il2CppObject* body) {
     for (size_t i = 0, n = il2::array_length(transforms); i < n; ++i) {
         Il2CppObject* t = il2::array_object_at(transforms, i);
         const std::string name = name_of(t);
+        if (rig_bone_wanted(name) && !a.rig.count(name)) a.rig[name] = hold(t);  // TLDCoop_DLC
         for (int b = 0; b < kBoneCount; ++b)
             if (!a.bones[b] && name == kBoneNames[b]) {
                 a.bones[b] = hold(t);
@@ -1554,6 +1567,189 @@ PVec palm(const Avatar& a, Arm arm) {
 // Elbows hang down, out and a little back.
 PVec pole_for(const net::pose::Frame& f) { return f.origin + f.out * 0.35f - f.up * 0.5f - f.forward * 0.25f; }
 
+// --- TLDCoop_DLC: hands (their turn and fingers), for gestures and grips ---------------------------------------------
+// Worked out on the body pack's rig offline (its bones and skin rendered in each pose) before going in here. The hand
+// is turned by where its knuckles are: fingers = wrist to the middle knuckle, across = the pinky's knuckle to the
+// index's, palm = out of the palm (fingers x across for the right hand, the other way for the left).
+
+Il2CppObject* rig_bone(const Avatar& a, const std::string& name) {
+    const auto it = a.rig.find(name);
+    return it != a.rig.end() ? target(it->second) : nullptr;
+}
+PVec unit(PVec v) { return net::pose::normalized(v); }
+Quat turn_about(PVec axis, float deg) {
+    const PVec ax = net::pose::normalized(axis);
+    const float h = deg * kDeg * 0.5f, s = std::sin(h);
+    return {ax.x * s, ax.y * s, ax.z * s, std::cos(h)};
+}
+void turn_bone(Il2CppObject* b, PVec axis, float deg) {
+    if (b && std::fabs(deg) > 1e-3f) set_rotation(b, turn_about(axis, deg) * rotation_of(b));
+}
+float smooth01(float x) {
+    x = x < 0 ? 0 : x > 1 ? 1 : x;
+    return x * x * (3 - 2 * x);
+}
+float ease_out_back(float x, float k) {
+    x = x < 0 ? 0 : x > 1 ? 1 : x;
+    x -= 1;
+    return 1 + x * x * ((k + 1) * x + k);
+}
+PVec lerpv(PVec a, PVec b, float t) { return a + (b - a) * t; }
+
+struct HandDirs {
+    PVec fingers, across, palm;
+    bool ok = false;
+};
+// The hand's directions now (world), from its knuckles.
+HandDirs hand_dirs(const Avatar& a, bool right) {
+    HandDirs d;
+    const std::string s = right ? "Right" : "Left";
+    Il2CppObject* hand = bone(a, right ? kRightHand : kLeftHand);
+    Il2CppObject *mid = rig_bone(a, s + "Middle1_jnt"), *ix = rig_bone(a, s + "Index1_jnt"), *pk = rig_bone(a, s + "Pinky1_jnt");
+    if (!hand || !mid || !ix || !pk) return d;
+    d.fingers = unit(position_of(mid) - position_of(hand));
+    PVec l = position_of(ix) - position_of(pk);
+    d.across = unit(l - d.fingers * net::pose::dot(l, d.fingers));
+    d.palm = net::pose::cross(d.fingers, d.across) * (right ? 1.0f : -1.0f);
+    d.ok = net::pose::length(d.fingers) > 0.5f && net::pose::length(d.across) > 0.5f;
+    return d;
+}
+// Turn the hand so its fingers point along `fingers` and its palm faces `palm` (blended by w from the clip's).
+void orient_hand(const Avatar& a, bool right, PVec fingers, PVec palm, float w = 1) {
+    const HandDirs d = hand_dirs(a, right);
+    Il2CppObject* hand = bone(a, right ? kRightHand : kLeftHand);
+    if (!d.ok || !hand) return;
+    const PVec f = unit(lerpv(d.fingers, fingers, w)), p = unit(lerpv(d.palm, palm, w));
+    const Quat delta = net::pose::look_rotation(f, p) * net::pose::inverse(net::pose::look_rotation(d.fingers, d.palm));
+    set_rotation(hand, delta * rotation_of(hand));
+}
+// Bend a finger's three joints towards the palm (degrees; negative straightens it past the clip's).
+void curl(const Avatar& a, bool right, const char* finger, float d1, float d2, float d3) {
+    const HandDirs h = hand_dirs(a, right);
+    if (!h.ok) return;
+    const std::string s = std::string(right ? "Right" : "Left") + finger;
+    const float degs[3] = {d1, d2, d3};
+    for (int k = 1; k <= 3; ++k) {
+        Il2CppObject* j = rig_bone(a, s + std::to_string(k) + "_jnt");
+        Il2CppObject* c = rig_bone(a, s + std::to_string(k + 1) + "_jnt");
+        if (!j || !c) continue;
+        const PVec ax = net::pose::cross(position_of(c) - position_of(j), h.palm);
+        if (net::pose::length(ax) > 1e-5f) turn_bone(j, ax, degs[k - 1]);
+    }
+}
+void thumb_curl(const Avatar& a, bool right, float d1, float d2, float d3) {
+    const HandDirs h = hand_dirs(a, right);
+    if (!h.ok) return;
+    const std::string s = std::string(right ? "Right" : "Left") + "Thumb";
+    const float degs[3] = {d1, d2, d3};
+    for (int k = 1; k <= 3; ++k) {
+        Il2CppObject* j = rig_bone(a, s + std::to_string(k) + "_jnt");
+        Il2CppObject* c = rig_bone(a, s + std::to_string(k < 3 ? k + 1 : k) + "_jnt");
+        Il2CppObject* p = rig_bone(a, s + std::to_string(k > 1 ? k - 1 : k) + "_jnt");
+        if (!j) continue;
+        const PVec along = k < 3 && c ? position_of(c) - position_of(j) : (p ? position_of(j) - position_of(p) : h.fingers);
+        const PVec ax = net::pose::cross(along, h.palm);
+        if (net::pose::length(ax) > 1e-5f) turn_bone(j, ax, degs[k - 1]);
+    }
+}
+enum class HandShape { Flat, Open, Point, Grip, Fist, Beckon };
+// The fingers over the clip's (`w`: how much; `extra`: a beckon's curl, 0..1).
+void hand_shape(const Avatar& a, bool right, HandShape shape, float w, float extra = 0) {
+    static const char* kFingers[] = {"Index", "Middle", "Ring", "Pinky"};
+    switch (shape) {
+        case HandShape::Flat:
+            for (const char* f : kFingers) curl(a, right, f, -14 * w, -10 * w, -6 * w);
+            thumb_curl(a, right, -8 * w, 0, 0);
+            break;
+        case HandShape::Open:
+            for (const char* f : kFingers) curl(a, right, f, 4 * w, 6 * w, 4 * w);
+            break;
+        case HandShape::Point:
+            curl(a, right, "Index", -6 * w, -4 * w, -2 * w);
+            for (const char* f : {"Middle", "Ring", "Pinky"}) curl(a, right, f, 80 * w, 95 * w, 60 * w);
+            thumb_curl(a, right, 20 * w, 25 * w, 20 * w);
+            break;
+        case HandShape::Grip:
+        case HandShape::Fist: {
+            const float c = shape == HandShape::Fist ? 1.0f : 0.75f;
+            for (const char* f : kFingers) curl(a, right, f, 70 * w * c, 85 * w * c, 55 * w * c);
+            thumb_curl(a, right, 25 * w, 30 * w, 20 * w);
+            break;
+        }
+        case HandShape::Beckon:
+            curl(a, right, "Index", (10 + 70 * extra) * w, (10 + 80 * extra) * w, (5 + 50 * extra) * w);
+            curl(a, right, "Middle", (10 + 65 * extra) * w, (10 + 75 * extra) * w, (5 + 45 * extra) * w);
+            for (const char* f : {"Ring", "Pinky"}) curl(a, right, f, (20 + 50 * extra) * w, (20 + 60 * extra) * w, (10 + 40 * extra) * w);
+            break;
+    }
+}
+// Inside the closed fist: where a handle runs.
+PVec palm_centre(const Avatar& a, bool right) {
+    const HandDirs d = hand_dirs(a, right);
+    const PVec h = position_of(bone(a, right ? kRightHand : kLeftHand));
+    if (!d.ok) return palm(a, right ? kRightArm : kLeftArm);
+    return h + d.fingers * 0.055f + d.palm * 0.03f;
+}
+// How a hand closes round an item: through the fist, index side towards its front (Stick: torch, flare, flashlight,
+// spear, bow, most things); round a grip under it, the wrist in line with it (Pistol: guns, camera); a handle at the
+// side (Hang: lantern); under it, palm up (Support: the other hand on a gun or spear); cupped (Palm: a stone).
+enum class Wrap { Stick, Pistol, Hang, Support, Palm };
+Wrap wrap_for(net::HeldKind kind) {
+    switch (kind) {
+        case net::HeldKind::Rifle:
+        case net::HeldKind::Revolver:
+        case net::HeldKind::FlareGun:
+        case net::HeldKind::Camera:
+            return Wrap::Pistol;
+        case net::HeldKind::Lantern:
+            return Wrap::Hang;
+        case net::HeldKind::Stone:
+        case net::HeldKind::NoiseMaker:
+            return Wrap::Palm;
+        default:
+            return Wrap::Stick;
+    }
+}
+// Turn the hand round an item along `dir` (its up `up`) and close the fingers on it.
+void wrap_hand(const Avatar& a, bool right, Wrap mode, PVec dir, PVec up) {
+    const float sgn = right ? 1.0f : -1.0f;
+    Il2CppObject* hand = bone(a, right ? kRightHand : kLeftHand);
+    Il2CppObject* elbow = bone(a, right ? kRightElbow : kLeftElbow);
+    if (!hand || !elbow) return;
+    const PVec fore = unit(position_of(hand) - position_of(elbow));
+    PVec f, l, p;
+    switch (mode) {
+        case Wrap::Stick:
+        case Wrap::Hang:
+            l = dir;
+            f = fore - l * net::pose::dot(fore, l);
+            f = net::pose::length(f) < 1e-3f ? up : unit(f);
+            p = net::pose::cross(f, l) * sgn;
+            break;
+        case Wrap::Pistol:
+            l = unit(up - dir * net::pose::dot(up, dir));
+            f = unit(dir - l * net::pose::dot(dir, l));
+            p = net::pose::cross(f, l) * sgn;
+            break;
+        case Wrap::Support:
+            l = dir;
+            p = unit(up - dir * net::pose::dot(up, dir));
+            f = net::pose::cross(l, p) * sgn;
+            orient_hand(a, right, f, p);
+            hand_shape(a, right, HandShape::Grip, 0.55f);
+            return;
+        case Wrap::Palm:
+            f = fore;
+            l = unit(net::pose::cross(fore, PVec{0, 1, 0})) * sgn;
+            p = net::pose::cross(f, l) * sgn;
+            orient_hand(a, right, f, p);
+            hand_shape(a, right, HandShape::Open, 1);
+            return;
+    }
+    orient_hand(a, right, f, p);
+    hand_shape(a, right, HandShape::Grip, 1);
+}
+
 // The copy, turned as the hold says (its long axis along item_dir, in frame f), with its grip at `grip`.
 void place_held(const Avatar& a, const net::pose::Hold& h, PVec grip, const net::pose::Frame& f) {
     const HeldCopy& c = a.held;
@@ -1671,43 +1867,94 @@ bool place_action_item(const Avatar& a) {
 bool gesture(Avatar& a) {
     if (a.emote == net::Emote::None || !has_bones(a) || a.shown_down || a.lying) return false;
     const float t = static_cast<float>((net::now_ms() - a.emote_start) / 1000.0);
-    const float w = net::emote_weight(a.emote, t);
-    if (w <= 0) return false;
+    const float total = net::emote_seconds(a.emote);
+    if (t < 0 || t >= total) return false;
     constexpr float kTau = 6.2831853f;
+    const PVec up{0, 1, 0};
+    // In over `rise` seconds (a little past and back when `back`), out over the last `fall`.
+    auto envelope = [&](float rise, float fall, bool back) {
+        if (t < rise) return back ? ease_out_back(t / rise, 1.2f) : smooth01(t / rise);
+        if (total - t < fall) return smooth01((total - t) / fall);
+        return 1.0f;
+    };
     if (a.emote == net::Emote::Yes || a.emote == net::Emote::No) {
         Il2CppObject* head = bone(a, kHead);
         if (!head) return false;
+        Il2CppObject* neck = rig_bone(a, "Neck_jnt");
+        const float w = envelope(0.15f, 0.25f, false), k = t / total;
         const net::pose::Frame f = net::pose::frame(position_of(head), a.shown_yaw, 0, true);
-        const bool yes = a.emote == net::Emote::Yes;
-        const float deg = w * (yes ? 14.0f : 24.0f) * std::sin(t * kTau * (yes ? 2.0f : 2.2f));
-        const PVec axis = yes ? f.out : PVec{0, 1, 0};
-        const float h = deg * kDeg * 0.5f;
-        const Quat q{axis.x * std::sin(h), axis.y * std::sin(h), axis.z * std::sin(h), std::cos(h)};
-        set_rotation(head, q * rotation_of(head));
+        if (a.emote == net::Emote::Yes) {  // down and back up, three times, each smaller; the neck takes a share
+            const float deg = 17 * (1 - 0.55f * k) * w * 0.5f * (1 - std::cos(t * kTau * 2.0f));
+            turn_bone(neck, f.out, deg * 0.35f);
+            turn_bone(head, f.out, neck ? deg * 0.65f : deg);
+        } else {  // side to side, getting smaller, the head a beat behind the neck
+            const float amp = 24 * (1 - 0.5f * k) * w;
+            turn_bone(neck, up, amp * 0.4f * std::sin(t * kTau * 2.3f));
+            turn_bone(head, up, amp * (neck ? 0.6f : 1.0f) * std::sin(t * kTau * 2.3f - 0.5f));
+        }
         return false;  // (the arms and what they hold as ever)
     }
-    const bool look = a.emote == net::Emote::Point;
-    const net::pose::Frame right =
-        net::pose::frame(position_of(bone(a, kRightUpArm)), a.shown_yaw, look ? g_pitch_sign * a.pitch : 0, true);
-    PVec to{};
+    const PVec shoulder = position_of(bone(a, kRightUpArm));
+    const net::pose::Frame f0 = net::pose::frame(shoulder, a.shown_yaw, 0, true);
+    const PVec start = position_of(bone(a, kRightHand));  // the clip's hand
+    const HandDirs h0 = hand_dirs(a, true);
+    Il2CppObject* clavicle = rig_bone(a, "RightShoulder_jnt");
+    Il2CppObject* spine2 = rig_bone(a, "Spine2_jnt");
     switch (a.emote) {
-        case net::Emote::Wave:  // up beside the head, side to side
-            to = right.at({0.20f + 0.11f * std::sin(t * kTau * 1.6f), 0.50f, 0.12f});
+        case net::Emote::Wave: {  // forearm up beside the head, swinging from the elbow, the open hand a beat behind
+            const float w = envelope(0.4f, 0.4f, true);
+            const float live = smooth01((t - 0.3f) / 0.3f) * smooth01((total - 0.35f - t) / 0.3f);
+            const float swing = t > 0.3f ? 22 * std::sin((t - 0.4f) * kTau * 1.9f) * live : 0;
+            const float lag = t > 0.3f ? 22 * std::sin((t - 0.4f) * kTau * 1.9f - 0.9f) * live : 0;
+            const float upper = net::pose::length(position_of(bone(a, kRightElbow)) - shoulder);
+            const float lower = net::pose::length(position_of(bone(a, kRightHand)) - position_of(bone(a, kRightElbow)));
+            const PVec elbow = shoulder + unit(f0.out * 0.92f - f0.up * 0.25f + f0.forward * 0.3f) * upper;
+            const float sa = (swing - 8) * kDeg;
+            const PVec fore = unit(f0.up * std::cos(sa) + f0.out * std::sin(sa) + f0.forward * 0.12f);
+            turn_bone(clavicle, f0.forward, -10 * w);  // the shoulder rises a little
+            turn_bone(spine2, f0.forward, 3 * w);      // leaning a touch away
+            reach(a, kRightArm, lerpv(start, elbow + fore * lower, w), elbow + f0.out * 0.4f - f0.up * 0.3f);
+            const float b = (swing * 0.6f + lag * 0.5f - 8) * kDeg;
+            if (h0.ok)
+                orient_hand(a, true, unit(f0.up * std::cos(b) + f0.out * std::sin(b)), unit(f0.forward - f0.out * 0.15f), w);
+            hand_shape(a, true, HandShape::Flat, w);
             break;
-        case net::Emote::Point:  // straight out where they look
-            to = right.at({0.03f, 0.04f, 0.58f});
+        }
+        case net::Emote::Point: {  // arm out where they look, index out, the shoulder brought round
+            const float w = envelope(0.3f, 0.35f, true);
+            const net::pose::Frame look = net::pose::frame(shoulder, a.shown_yaw, g_pitch_sign * a.pitch, true);
+            turn_bone(spine2, up, -8 * w);
+            turn_bone(clavicle, up, -6 * w);
+            const PVec s2 = position_of(bone(a, kRightUpArm));
+            reach(a, kRightArm, lerpv(start, s2 + unit(look.forward + f0.out * 0.08f) * 0.56f, w),
+                  s2 + f0.out * 0.3f - f0.up * 0.5f);
+            if (h0.ok) orient_hand(a, true, unit(look.forward + f0.out * 0.05f), unit(look.up * -0.75f - f0.out * 0.25f), w);
+            hand_shape(a, true, HandShape::Point, w);
             break;
-        case net::Emote::ComeHere:  // out in front, drawn in and out
-            to = right.at({0.06f, -0.02f, 0.28f + 0.16f * (0.5f + 0.5f * std::sin(t * kTau * 1.4f))});
+        }
+        case net::Emote::ComeHere: {  // palm up in front, the fingers and wrist drawing in
+            const float w = envelope(0.35f, 0.35f, false);
+            float ph = t > 0.35f ? 0.5f - 0.5f * std::cos((t - 0.35f) * kTau * 1.7f) : 0;
+            ph *= smooth01((total - 0.3f - t) / 0.3f);
+            reach(a, kRightArm, lerpv(start, f0.at({0.10f, -0.30f, 0.30f - 0.05f * ph}), w),
+                  shoulder + f0.out * 0.4f - f0.up * 0.5f - f0.forward * 0.2f);
+            const float bend = 25 * ph * kDeg;
+            if (h0.ok) orient_hand(a, true, unit(f0.forward * std::cos(bend) + f0.up * std::sin(bend) + f0.out * 0.05f), up, w);
+            hand_shape(a, true, HandShape::Beckon, w, ph);
             break;
-        case net::Emote::Stop:  // raised out in front
-            to = right.at({0.04f, 0.20f, 0.50f});
+        }
+        case net::Emote::Stop: {  // the flat hand pushed out in front, palm forward, fingers up
+            const float w = envelope(0.22f, 0.35f, true);
+            const float push = t < 0.6f ? 0.04f * smooth01(t / 0.3f) * smooth01((0.6f - t) / 0.3f) : 0;
+            reach(a, kRightArm, lerpv(start, f0.at({0.04f, -0.06f, 0.44f + push}), w), shoulder + f0.out * 0.45f - f0.up * 0.5f);
+            if (h0.ok) orient_hand(a, true, unit(f0.up + f0.forward * 0.15f - f0.out * 0.05f), f0.forward, w);
+            hand_shape(a, true, HandShape::Flat, w);
             break;
+        }
         default:
             return false;
     }
-    const PVec from = palm(a, kRightArm);
-    reach(a, kRightArm, from + (to - from) * w, pole_for(right));
+    const net::pose::Frame right = net::pose::frame(position_of(bone(a, kRightUpArm)), a.shown_yaw, 0, true);
     if (a.held.go) place_held(a, hold_of(a.held.kind, a.held_flags), palm(a, kRightArm), right);
     return true;
 }
@@ -1742,7 +1989,16 @@ void late_one(Avatar& a) {
     const net::pose::Frame& other_frame = h.in_left ? right : left;
     if (h.in_left ? h.left : h.right) reach(a, main, main_frame.at(h.in_left ? h.left_hand : h.right_hand),
                                             pole_for(main_frame));
-    const PVec grip = palm(a, main);
+    // TLDCoop_DLC: the hand turned round the item and closed on it; the item through the fist (or on top of it, a gun)
+    const Wrap wrap = wrap_for(a.held.kind);
+    const PVec level_fwd = unit(PVec{right.forward.x, 0, right.forward.z});
+    const PVec item_dir = h.hangs ? level_fwd : unit(right.dir(h.item_dir));
+    const PVec item_up = h.hangs ? PVec{0, 1, 0} : unit(right.dir(h.item_up));
+    const bool main_right = !h.in_left;
+    const bool shaped = hand_dirs(a, main_right).ok;
+    if (shaped) wrap_hand(a, main_right, wrap, item_dir, item_up);
+    PVec grip = shaped ? palm_centre(a, main_right) : palm(a, main);
+    if (shaped && wrap == Wrap::Pistol) grip = grip + hand_dirs(a, main_right).across * 0.05f;  // above the fist
     place_held(a, h, grip, right);
     if (a.held_flags & net::kHeldIgniting) {
         // TLDCoop_DLC: being lit (a flare's cap, a match on the box): the other hand strikes along it, back and forth.
@@ -1754,7 +2010,20 @@ void late_one(Avatar& a) {
     if (h.in_left ? h.right : h.left) {
         const PVec to = h.left_on_item >= 0 ? grip + right.dir(h.item_dir) * h.left_on_item
                                             : other_frame.at(h.in_left ? h.right_hand : h.left_hand);
-        reach(a, other, to, pole_for(other_frame));
+        const bool other_right = h.in_left;
+        if (h.left_on_item >= 0 && hand_dirs(a, other_right).ok) {
+            // TLDCoop_DLC: the other hand under the item, palm up against it (its palm, not its wrist, at the spot)
+            const PVec want = to - item_up * 0.035f;
+            for (int i = 0; i < 2; ++i) {
+                wrap_hand(a, other_right, Wrap::Support, item_dir, item_up);
+                const PVec off = palm_centre(a, other_right) - position_of(bone(a, other_right ? kRightHand : kLeftHand));
+                reach(a, other, want - off, pole_for(other_frame));
+            }
+            wrap_hand(a, other_right, Wrap::Support, item_dir, item_up);
+        } else {
+            reach(a, other, to, pole_for(other_frame));
+            if (hand_dirs(a, other_right).ok) hand_shape(a, other_right, HandShape::Grip, 0.6f);
+        }
     }
 }
 

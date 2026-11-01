@@ -172,16 +172,18 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
             return h;
         case HeldKind::Rifle:
             h.right = h.left = true;
+            // TLDCoop_DLC: re-tuned on the rig offline so both hands reach the rifle (the left one couldn't before)
             if (aiming) {  // at the shoulder, along where they look
                 h.look = true;
-                h.right_hand = {-0.12f, -0.05f, 0.30f};
-                h.grip = -0.45f;
-                h.left_on_item = 0.40f;
-            } else {  // low across the body, muzzle forward and down
-                h.right_hand = {-0.05f, -0.40f, 0.22f};
-                h.item_dir = {-0.23f, -0.32f, 0.92f};
-                h.grip = -0.15f;
-                h.left_on_item = 0.38f;
+                h.right_hand = {-0.12f, -0.06f, 0.24f};
+                h.grip = -0.55f;
+                h.left_on_item = 0.28f;
+            } else {  // across the body (port arms): right hand at the stock's wrist, muzzle up by the left shoulder
+                h.right_hand = {-0.04f, -0.42f, 0.20f};
+                h.item_dir = {-0.55f, 0.70f, 0.45f};
+                h.item_up = {0.2f, 0.2f, 1};
+                h.grip = -0.30f;
+                h.left_on_item = 0.34f;
             }
             return h;
         case HeldKind::Revolver:
@@ -190,7 +192,7 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
             if (aiming) {  // arm out along where they look, the other hand under it
                 h.look = true;
                 h.left = true;
-                h.right_hand = {-0.12f, -0.02f, 0.52f};
+                h.right_hand = {-0.14f, -0.03f, 0.44f};  // TLDCoop_DLC: (0.52 forward: the left hand fell short)
                 h.left_on_item = 0;
                 h.grip = -0.3f;
             } else {
@@ -233,7 +235,7 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
                 h.right_hand = {-0.05f, -0.30f, 0.15f};
                 h.item_dir = {0, -0.24f, 0.97f};
                 h.grip = -0.2f;
-                h.left_on_item = 0.35f;
+                h.left_on_item = 0.28f;  // TLDCoop_DLC: (0.35: the left hand fell short)
             } else {  // upright at the side like a staff
                 h.right_hand = {0.12f, -0.42f, 0.10f};
                 h.item_dir = {0, 1, 0.1f};
