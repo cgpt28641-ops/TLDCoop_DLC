@@ -3494,6 +3494,7 @@ void enter_region(const std::string& region) {
 }
 
 bool resolve();
+void resolve_layers();
 
 }  // namespace
 
@@ -3540,6 +3541,7 @@ void set_settings(const config::Settings& s) {
 
 void on_frame(const std::string& scene, bool in_game) {
     if (!api.ok) return;
+    if (in_game) resolve_layers();
     g_feature_on = feature_active();
     const std::string region = in_game ? active_region() : std::string();
     {  // the same region loaded again (a respawn, a save of it loaded): its rooms went with the old one
@@ -3600,6 +3602,24 @@ bool hook(const char* label, const MethodInfo* m, Fn detour, Fn* original) {
         return false;
     }
     return hooks::install_method(label, m, reinterpret_cast<void*>(detour), reinterpret_cast<void**>(original));
+}
+
+// TLDCoop_DLC: Unity's layer names can only be asked once the engine runs (LayerMask.NameToLayer during the mod's
+// start-up crashed the game: 0xC0000005 in UnityPlayer.dll, and the whole mod was switched off).
+void resolve_layers() {
+    static bool done = false;
+    if (done || !api.name_to_layer) return;
+    done = true;
+    auto layer = [](const char* n) {
+        int32_t l = -1;
+        void* a[] = {str(n)};
+        il2::invoke_value(api.name_to_layer, nullptr, l, a);
+        return l;
+    };
+    api.layer_collide_only = layer("CharacterControllerCollideOnly");
+    api.layer_trigger = layer("TriggerIgnoreRaycast");
+    api.layer_npc = layer("NPC");
+    logx::info("interiors: layers %d / %d / %d", api.layer_collide_only, api.layer_trigger, api.layer_npc);
 }
 
 bool resolve() {
@@ -3742,15 +3762,7 @@ bool resolve() {
         api.dynamic_gi_update = il2::find_method_quiet(gi, "UpdateEnvironment", 0);
     if (!api.dynamic_gi_update) logx::info("interiors: DynamicGI.UpdateEnvironment isn't in this build (skipped)");
     if (layer_mask) api.name_to_layer = il2::find_method(layer_mask, "NameToLayer", 1);
-    auto layer = [](const char* n) {
-        int32_t l = -1;
-        void* a[] = {str(n)};
-        if (api.name_to_layer) il2::invoke_value(api.name_to_layer, nullptr, l, a);
-        return l;
-    };
-    api.layer_collide_only = layer("CharacterControllerCollideOnly");
-    api.layer_trigger = layer("TriggerIgnoreRaycast");
-    api.layer_npc = layer("NPC");
+    // (the layers' numbers are asked for in game: calling into Unity at start-up crashed it, see resolve_layers)
     if (random) {
         api.rnd_state = il2::find_method(random, "get_state", 0);
         api.rnd_set_state = il2::find_method(random, "set_state", 1);
