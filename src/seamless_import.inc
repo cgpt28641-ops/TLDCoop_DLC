@@ -241,10 +241,10 @@ bool resolve_key(Instance& in, std::string& key, std::string& why) {
         key = scene;
         return true;
     }
-    std::string near;
+    std::string alike;  // (not "near": a Windows macro)
     for (const std::string& k : g_scene_keys)
-        if (k == scene || k.rfind(scene + "_", 0) == 0) near += (near.empty() ? "'" : ", '") + k + "'";
-    why = "the save holds " + (near.empty() ? std::string("a record like its interior") : near) + " but none is surely this building's (" +
+        if (k == scene || k.rfind(scene + "_", 0) == 0) alike += (alike.empty() ? "'" : ", '") + k + "'";
+    why = "the save holds " + (alike.empty() ? std::string("a record like its interior") : alike) + " but none is surely this building's (" +
           std::to_string(guids.size()) + " door id(s) of it, " + std::to_string(sharing) + " building(s) here use the scene)";
     return false;
 }
