@@ -892,6 +892,7 @@ struct Session::Impl {
             case Msg::BloodMark:
             case Msg::SprayMark:
             case Msg::Report:
+            case Msg::Chat:
             case Msg::Sleep:
             case Msg::Give: {
                 if (!linked) return;

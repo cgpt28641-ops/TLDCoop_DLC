@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "config.h"
+#include "coop_chat.h"
 #include "coop_notices.h"
 #include "log.h"
 #include "net/emotes.h"
@@ -88,7 +89,7 @@ bool run_tar(const fs::path& dir, const fs::path& zip) {
     return code == 0 && fs::exists(zip);
 }
 
-void pack(std::string stamp) {
+void pack(std::string stamp, std::string description) {
     std::error_code ec;
     const fs::path base = paths::instance_dir();
     const fs::path reports = base / L"reports";
@@ -97,6 +98,14 @@ void pack(std::string stamp) {
     int copied = 0;
     for (const wchar_t* f : {L"coop.log", L"coop-prev.log", L"coop-prev2.log", L"coop.ini"})
         if (fs::exists(base / f, ec) && copy_shared(base / f, dir / f)) ++copied;
+    if (!description.empty()) {  // what the player wrote about it
+        if (FILE* out = _wfsopen((dir / L"opis.txt").c_str(), L"wb", _SH_DENYWR)) {
+            fwrite("\xEF\xBB\xBF", 1, 3, out);  // (UTF-8 for Notepad)
+            fwrite(description.data(), 1, description.size(), out);
+            fclose(out);
+            ++copied;
+        }
+    }
     const fs::path zip = reports / fs::path(stamp + ".zip");
     std::string made;
     if (run_tar(dir, zip)) {
@@ -122,8 +131,19 @@ void make(uint32_t id, const std::string& who, bool ours) {
              t.wSecond, safe(g_name).c_str());
     logx::info("==================== REPORT #%08x: %s pressed the report key%s ====================", id,
                ours ? "we" : who.c_str(), ours ? "" : " (their report, made here too)");
-    coop_notices::tell(ours ? "Bug report: saving the logs..." : who + " reported a bug: saving our logs too...");
-    std::thread(pack, std::string(stamp)).detach();
+    if (!ours) {
+        coop_notices::tell(who + " reported a bug: saving our logs too...");
+        std::thread(pack, std::string(stamp), std::string()).detach();
+        return;
+    }
+    // ours: a line about what happened first (the box opens; ENTER saves, ESC skips), then the logs are packed
+    const std::string st = stamp;
+    coop_chat::ask("OPISZ BŁĄD (ENTER - zapisz, ESC - pomiń):", [st, id](const std::string& description) {
+        if (!description.empty())
+            logx::info("==================== REPORT #%08x: what happened: %s ====================", id, description.c_str());
+        coop_notices::tell("Bug report: saving the logs...");
+        std::thread(pack, st, description).detach();
+    });
 }
 
 void send(uint32_t id, const std::string& who, int except = -1) {

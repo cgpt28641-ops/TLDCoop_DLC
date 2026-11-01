@@ -370,3 +370,13 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   spear set re-tuned (left palm 3 cm from the shaft). Fixed: finger bends were applied 3-4 times a frame for the
   supporting hand (wrap_hand in the settle loop) - now once.
 - 11:10 Karol: the left hand sat badly on the rifle (port arms). It held it from under, palm up, beside the barrel. Now Hold.left_fist (rifle low, spear set): the left hand closes round it (Stick, Fist); palm_centre moved into the curled fingers (fingers 0.075, palm 0.04 m: measured on the rig), so items run through the fist. Preview outputs/karabin_lewa_reka.png.
+
+## 2026-11-01 (12:00) — chat (ENTER) and the bug report's description
+- src/coop_chat.cpp: subclasses the Unity window's WndProc (EnumWindows, UnityWndClass): while typing, WM_CHAR builds
+  the line (UTF-16 -> UTF-8, Polish letters), WM_KEY* are swallowed; InputManager.s_IgnoreInput held true while
+  typing. ENTER opens it (in game, connected, no TLD screen: InputManager.m_CurrentContext null). Msg::Chat (45,
+  {who, text}), host relays; protocol v39. Lines 15 s, 6 at once (8 while typing).
+- coop_hud: chat box bottom left in TLD's look (a clone of TLD's hover-text box behind TLD's hover-text labels);
+  coop_hud::set_chat each frame.
+- coop_report: F11 on our side opens the box ("OPISZ BŁĄD (ENTER - zapisz, ESC - pomiń):", 120 s timeout); the
+  description goes into the log and opis.txt in the zip; the others' games pack at once as before.

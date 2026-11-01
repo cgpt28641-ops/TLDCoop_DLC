@@ -32,6 +32,10 @@ void on_frame(const std::string& scene, bool in_game);
 // Every frame after the camera and the avatars have moved (GameManager.LateUpdate): names and the radar.
 void late_update();
 
+// TLDCoop_DLC: the chat box (bottom left, in TLD's look: its hover text and the box behind it): recent lines, and the
+// line being typed with its prompt (`typing`). Set every frame by coop_chat; drawn in late_update.
+void set_chat(const std::vector<std::string>& lines, bool typing, const std::string& prompt, const std::string& text);
+
 // What's shown now, for the log and dev `hud`.
 std::string describe();
 

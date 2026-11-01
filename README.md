@@ -64,6 +64,8 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
 - **Wspólne oznaczenia:** oznaczenia sprayem (a więc i znaczniki na mapie, które z nich powstają) widzą wszyscy.
 - **Kopia zapasowa:** przed każdą grą w co-op zapisy są kopiowane do `TLDCoop\backups` (5 ostatnich kopii,
   ustawienie `backups=` w `coop.ini`).
+- **Czat:** **ENTER** otwiera linię czatu (na dole po lewej, w wyglądzie gry), ENTER wysyła, ESC zamyka. Polskie
+  litery działają, a postać nie chodzi, gdy piszesz. Wiadomości widzą wszyscy gracze.
 - **Gesty:** machanie (F5), wskazywanie (F6), „chodź tu” (F7), „stój” (F8), kiwanie głową na tak (F3) i na nie (F4).
   Klawisze można zmienić w `coop.ini`, sekcja `[emotes]`.
 - **Ambient Lights (wbudowane):** w budynkach światło z okien zmienia się z porą dnia i pogodą (ciepłe rano od
@@ -143,7 +145,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v38**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v39**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
@@ -294,8 +296,8 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
 - **Znajomi wyglądają jak kolorowe kapsuły:** u osoby, która widzi kapsuły, brakuje
   `TLDCoop\tldcoop_bodies.bundle`. Skopiuj go z zipa.
 - **Zgłaszanie błędu jednym klawiszem:** gdy widzisz błąd, wciśnij **F11** od razu, w tej chwili. Mod zaznaczy ten
-  moment w logu i spakuje `coop.log`, `coop-prev.log`, `coop-prev2.log` i `coop.ini` do
-  `TLDCoop\reports\<data_godzina>_<nick>.zip`. W co-opie gra **każdego** gracza robi w tej samej chwili własne
+  moment w logu, otworzy okienko na krótki opis (ENTER zapisuje, ESC pomija) i spakuje `coop.log`, `coop-prev.log`,
+  `coop-prev2.log`, `coop.ini` i opis (`opis.txt`) do `TLDCoop\reports\<data_godzina>_<nick>.zip`. W co-opie gra **każdego** gracza robi w tej samej chwili własne
   zgłoszenie, więc wyślij zipy od wszystkich. Nic nie jest wysyłane automatycznie. Klawisz: `coop.ini` `[report]`.
 - **Zgłaszanie błędu ręcznie:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Przy starcie gry poprzedni log
   zostaje jako `coop-prev.log` (a jeszcze wcześniejszy jako `coop-prev2.log`), więc po crashu i ponownym

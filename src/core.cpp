@@ -20,6 +20,7 @@
 #include "dynamic_trees.h"
 #include "just_zoom.h"
 #include "coop_report.h"
+#include "coop_chat.h"
 #include "avatar.h"
 #include "config.h"
 #include "dumper.h"
@@ -577,6 +578,7 @@ void on_frame() {
     if (g_net_enabled) TIMED("netrt::set_ready", netrt::set_ready(in_game || coop_menu::lobby_ready()));  // the lobby's READY / START
     TIMED("coop_notices::on_frame", coop_notices::on_frame(in_game));
     TIMED("coop_hud::on_frame", coop_hud::on_frame(scene, in_game));
+    TIMED("coop_chat::on_frame", coop_chat::on_frame(in_game));
     TIMED("coop_report::on_frame", coop_report::on_frame());
     TIMED("coop_emotes::on_frame", coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed()));
     TIMED("dev_commands::on_frame", dev_commands::on_frame(in_game));
@@ -756,6 +758,7 @@ void on_runtime_ready() {
     custom_pictures::init();
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC
+    coop_chat::init();    // TLDCoop_DLC
     adaptive_arsenal::init();
     world_join::init();
     coop_death::init();

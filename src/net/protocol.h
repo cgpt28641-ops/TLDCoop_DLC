@@ -121,7 +121,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 38;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 39;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -166,6 +166,7 @@ constexpr uint16_t kProtocolVersion = 38;  // v4: World. v5: Animals. v6: sounds
                                            // v36 (TLDCoop_DLC): Features: Dynamic Trees, the host's snow on trees
                                            // v37 (TLDCoop_DLC): a sleep vote for 30 minutes (SleepChoice 9)
                                            // v38 (TLDCoop_DLC): Report (a bug report: every game packs its logs)
+                                           // v39 (TLDCoop_DLC): Chat (a line someone typed)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -188,7 +189,7 @@ enum class Msg : uint8_t {
     ItemPut = 22, ItemGone = 23, ItemList = 24, ItemWant = 25, ContainerPut = 26, ContainerWant = 27, ObjectPut = 28,
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
-    BloodMark = 41, SprayMark = 42, Features = 43, Report = 44
+    BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1193,6 +1194,17 @@ inline bool read_report(Reader& r, uint32_t& id, std::string& who) {
     id = r.get<uint32_t>();
     who = r.get_blob(64);
     return r.ok() && id != 0;
+}
+
+// Chat (TLDCoop_DLC), either way (the host passes a friend's on): who said it and what (UTF-8).
+inline void write_chat(Writer& w, const std::string& who, const std::string& text) {
+    w.put_blob(who, 64);
+    w.put_blob(text, 512);
+}
+inline bool read_chat(Reader& r, std::string& who, std::string& text) {
+    who = r.get_blob(64);
+    text = r.get_blob(512);
+    return r.ok() && !text.empty();
 }
 
 // Water sources (TLDCoop_DLC): toilets, tanks... TLD's WaterSource, named by its persistent id (or its position when it

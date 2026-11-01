@@ -614,6 +614,71 @@ void show_elsewhere(const std::vector<avatar::Seen>& all, Il2CppObject* ui_camer
     place_on_screen(transform_of(label), ui_camera, right_x, top_y);
 }
 
+// --- TLDCoop_DLC: the chat box ------------------------------------------------------------------------------------
+// Bottom left, above TLD's status: TLD's hover text for the lines, TLD's hover text box behind them.
+
+constexpr int kChatFont = 18, kChatInputFont = 20, kPivotBottomLeft = 6;
+constexpr float kChatLeft = 28, kChatBottom = 170, kChatPad = 10, kChatWidth = 560;
+std::vector<std::string> g_chat_lines;
+bool g_chat_typing = false;
+std::string g_chat_prompt, g_chat_text;
+uintptr_t g_chat_back = 0, g_chat_label = 0, g_chat_input = 0;
+std::string g_chat_shown, g_chat_input_shown;
+
+void show_chat(Il2CppObject* ui_camera, float px) {
+    const bool any = g_chat_typing || !g_chat_lines.empty();
+    Il2CppObject* back = live(g_chat_back);
+    Il2CppObject* label = live(g_chat_label);
+    Il2CppObject* input = live(g_chat_input);
+    if (!any) {
+        for (Il2CppObject* w : {back, label, input}) set_active(go_of(w), false);
+        return;
+    }
+    Il2CppObject* r = root();
+    if (!r) return;
+    if (!back) {
+        back = clone_under(hud_label_back(), go_transform(r), "ChatBack");
+        strip_anchor(back);
+        set_int(api.widget_set_pivot, back, kPivotBottomLeft);
+        g_chat_back = hold(back);
+    }
+    if (!label) {
+        label = make_label(go_transform(r), "Chat", kChatFont, kPivotBottomLeft);
+        g_chat_label = hold(label);
+        g_chat_shown.clear();
+    }
+    if (!input) {
+        input = make_label(go_transform(r), "ChatInput", kChatInputFont, kPivotBottomLeft);
+        g_chat_input = hold(input);
+        g_chat_input_shown.clear();
+    }
+    std::string text;
+    for (const std::string& l : g_chat_lines) text += (text.empty() ? "" : "\n") + l;
+    const std::string typed = g_chat_typing ? g_chat_prompt + " " + g_chat_text + "_" : std::string();
+    set_active(go_of(label), !text.empty());
+    set_active(go_of(input), g_chat_typing);
+    if (text != g_chat_shown) {
+        set_text(label, text);
+        g_chat_shown = text;
+    }
+    if (typed != g_chat_input_shown) {
+        set_text(input, typed);
+        g_chat_input_shown = typed;
+    }
+    // the typed line at the bottom, the chat above it; the box behind both
+    const float x = kChatLeft * px, y = kChatBottom * px;
+    const float input_h = g_chat_typing ? std::max(printed(input).y, 22.0f) + 6 : 0;
+    place_on_screen(transform_of(input), ui_camera, x + kChatPad * px, y + kChatPad * px);
+    place_on_screen(transform_of(label), ui_camera, x + kChatPad * px, y + kChatPad * px + input_h * px);
+    const Vector2 lp = text.empty() ? Vector2{0, 0} : printed(label), ip = printed(input);
+    const float w = std::max({kChatWidth, lp.x + 2 * kChatPad, (g_chat_typing ? ip.x : 0) + 2 * kChatPad});
+    const float h = lp.y + input_h + 2 * kChatPad;
+    set_active(go_of(back), true);
+    set_int(api.widget_set_width, back, static_cast<int>(w));
+    set_int(api.widget_set_height, back, static_cast<int>(h));
+    place_on_screen(transform_of(back), ui_camera, x, y);
+}
+
 // --- TLD's map ---------------------------------------------------------------------------------------------------
 
 constexpr ptrdiff_t kListItems = 0x10, kListSize = 0x18;  // List<T>: its array, its count
@@ -1558,7 +1623,8 @@ void late_update() {
     if (coop) show_map_marks(all);  // TLD's map is open over the game: its HUD is hidden then
     else hide_marks();
 
-    Il2CppObject* hud = (coop && (g_names || g_radar)) ? hud_panel() : nullptr;
+    // TLDCoop_DLC: (the chat box too, whatever the names and radar)
+    Il2CppObject* hud = (coop && (g_names || g_radar || g_chat_typing || !g_chat_lines.empty())) ? hud_panel() : nullptr;
     if (!hud) {
         set_active(live(g_root), false);
         g_showing = coop ? "names and radar off" : "not in a co-op game";
@@ -1605,6 +1671,14 @@ void late_update() {
             hide_tag(it->second);
     }
     show_elsewhere(all, ui_camera, width - kRadarMargin * px_per_unit, below_radar);
+    show_chat(ui_camera, px_per_unit);  // TLDCoop_DLC
+}
+
+void set_chat(const std::vector<std::string>& lines, bool typing, const std::string& prompt, const std::string& text) {
+    g_chat_lines = lines;
+    g_chat_typing = typing;
+    g_chat_prompt = prompt;
+    g_chat_text = text;
 }
 
 std::string describe() {
