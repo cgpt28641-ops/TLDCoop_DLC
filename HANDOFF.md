@@ -424,3 +424,5 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Adaptive Arsenal (host): pomija warstwę CharacterControllerCollideOnly; trafienie w zwierzę bez strefy trafień = zwykłe obrażenia; log „a bullet of ours hit 'X'” dla pudeł.
 - SkyCoop przejrzany (lista mechanik dla Karola w czacie).
 - Do sprawdzenia: czat – w logach dużo pustych linii (ENTER bez tekstu).
+- Czat nie otwiera się ENTER-em, gdy otwarta jest konsola F1 (uConsole.m_On) ani w klatce, w której się zamknęła.
+- „Zablokowana kamera i zniknął HUD” u hosta 18:49:16–18:49:33 = okno opisu F11 (wtedy wejście gry jest wstrzymane) – nie wyjście Szymona.

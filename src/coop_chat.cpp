@@ -32,6 +32,15 @@ std::mutex g_mutex;          // the window's messages and the frame
 bool g_typing = false;
 std::wstring g_text;
 bool g_submit = false, g_cancel = false;
+// TLDCoop_DLC: the F1 console's ENTER (a command sent) isn't a chat ENTER ("the chat opens when I send a command"):
+// not while the console is open, nor in the frame it closed.
+FieldInfo* g_console_on = nullptr;  // static uConsole.m_On
+bool g_console_was_on = false;
+bool console_on() {
+    bool on = false;
+    if (g_console_on) il2::il2cpp_field_static_get_value(g_console_on, &on);
+    return on;
+}
 bool g_enter_held = false;  // the ENTER that opened the line: its character isn't a send (it sent empty lines)
 WNDPROC g_old_proc = nullptr;
 HWND g_window = nullptr;
@@ -162,6 +171,8 @@ void init() {
         g_ignore_input = il2::il2cpp_class_get_field_from_name(im, "s_IgnoreInput");
         g_input_context = il2::il2cpp_class_get_field_from_name(im, "m_CurrentContext");
     }
+    if (Il2CppClass* con = il2::find_class("Assembly-CSharp.dll", "", "uConsole"))
+        g_console_on = il2::il2cpp_class_get_field_from_name(con, "m_On");
     g_name = config::load().name;
 }
 
@@ -186,6 +197,9 @@ void on_frame(bool in_game) {
 
     // ENTER opens the chat (in a co-op game, nothing of TLD's open, not already typing)
     const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+    const bool console = console_on() || g_console_was_on;
+    g_console_was_on = console_on();
+    if (enter && console) g_enter_down = true;  // (held on after the console closes: still not ours)
     if (enter && !g_enter_down && !g_typing) {
         // (each reason it doesn't open is logged: "chat doesn't work" with nothing else to go on)
         Il2CppObject* ctx = nullptr;
