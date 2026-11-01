@@ -438,3 +438,8 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Krew zwierząt: host wysyła krople krwi swoich zwierząt (BloodTrail.m_BaseAi) innym graczom.
 - Światła trzymane (lampa naftowa, flara) wszędzie „off”: keep_lit pokazuje ukryte obiekty nadrzędne światła; describe_lights loguje, dlaczego światło jest wyłączone.
 - Nadal otwarte: gdy host jest w budynku, każdy znajomy ma swoje zwierzęta (pełne rozwiązanie = „zastępca” hosta, jak w SkyCoop); „łoś stoi u jednych, u innych nie”; więcej zwierząt przy większej liczbie graczy (prośba Kerela).
+
+## 2026-11-01 21:20 – zwierzęta zorzy; start portu Seamless Interiors
+- Host wysyła flagę kAnimalAurora (BaseAi.m_WildlifeMode == 1); kopia u znajomych bierze model zorzy (region_asset(region, 1) albo zwierzę zorzy na miejscu).
+- Raporty 20:48–21:04: Kerel miał stary build (z Arsenalem); u hosta i Szymona światło lampy/flary działa („sat under hidden 'FX'”).
+- Karol chce Seamless Interiors (karsontr13/TLD-Seamless-Interiors, zgoda autora) przeniesione BEZ MelonLoadera, jak najdokładniej, na 2.59. ~60k linii C#. Plan etapami: rdzeń (wejście bez ładowania, host zostaje w regionie) → widok przez drzwi/okna → reszta. Klon w scratchpad/si, plan w scratchpad/si_port_plan.md.
