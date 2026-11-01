@@ -62,6 +62,11 @@ LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_typing) {
             switch (msg) {
                 case WM_CHAR: {
+                    static bool told = false;
+                    if (!told) {
+                        told = true;
+                        logx::info("chat: the first typed character came in (WM_CHAR)");
+                    }
                     const wchar_t c = static_cast<wchar_t>(wp);
                     if (c == L'\r') g_submit = true;
                     else if (c == 27) g_cancel = true;
@@ -178,8 +183,22 @@ void on_frame(bool in_game) {
 
     // ENTER opens the chat (in a co-op game, nothing of TLD's open, not already typing)
     const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
-    if (enter && !g_enter_down && !g_typing && in_game && connected && game_focused() && !tld_screen_open() && g_old_proc)
-        open("CZAT:");
+    if (enter && !g_enter_down && !g_typing) {
+        // (each reason it doesn't open is logged: "chat doesn't work" with nothing else to go on)
+        Il2CppObject* ctx = nullptr;
+        if (g_input_context) il2::il2cpp_field_static_get_value(g_input_context, &ctx);
+        const char* why = !in_game ? "not in the game" : !connected ? "not connected (co-op off or the link is down)"
+                        : !game_focused() ? "the game window isn't in front" : !g_old_proc ? "the game window isn't hooked"
+                        : nullptr;
+        if (why) {
+            logx::info("chat: ENTER, but no chat: %s", why);
+        } else if (ctx) {
+            logx::info("chat: ENTER, but no chat: TLD's %s has the input", il2::class_name_of(ctx).c_str());
+        } else {
+            open("CZAT:");
+            logx::info("chat: ENTER: the chat line is open");
+        }
+    }
     g_enter_down = enter;
 
     // what was typed
@@ -196,6 +215,7 @@ void on_frame(bool in_game) {
     if (g_typing && !in_game && !g_ask) cancel = true;
     if (submit || cancel) {
         const std::string said = submit ? utf8(text) : std::string();
+        logx::info("chat: the line %s (%zu chars)%s", submit ? "sent" : "dropped", said.size(), g_ask ? " (an answer)" : "");
         close();
         if (g_ask) {
             auto done = std::move(g_ask);

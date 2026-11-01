@@ -652,6 +652,13 @@ void show_chat(Il2CppObject* ui_camera, float px) {
         g_chat_input = hold(input);
         g_chat_input_shown.clear();
     }
+    {
+        static bool told_typing = false;
+        if (g_chat_typing && !told_typing)
+            logx::info("hud: chat box up for typing (back %s, label %s, input %s)", back ? "made" : "MISSING",
+                       label ? "made" : "MISSING", input ? "made" : "MISSING");
+        told_typing = g_chat_typing;
+    }
     std::string text;
     for (const std::string& l : g_chat_lines) text += (text.empty() ? "" : "\n") + l;
     const std::string typed = g_chat_typing ? g_chat_prompt + " " + g_chat_text + "_" : std::string();
@@ -1635,6 +1642,11 @@ void late_update() {
     const bool showing = hud_showing(hud);
     set_active(r, showing);
     g_showing = showing ? "shown" : "hidden with TLD's HUD";
+    {  // TLDCoop_DLC: the chat line open while TLD hides its HUD: nothing would show
+        static bool told = false;
+        if (g_chat_typing && !showing && !told) logx::warn("hud: the chat line is open but TLD's HUD is hidden: not shown");
+        told = g_chat_typing && !showing;
+    }
     if (!showing) return;
 
     Il2CppObject* game_camera = il2::invoke(api.main_camera, nullptr);

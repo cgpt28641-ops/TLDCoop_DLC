@@ -380,3 +380,4 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   coop_hud::set_chat each frame.
 - coop_report: F11 on our side opens the box ("OPISZ BŁĄD (ENTER - zapisz, ESC - pomiń):", 120 s timeout); the
   description goes into the log and opis.txt in the zip; the others' games pack at once as before.
+- 13:30 Karol: chat doesn't work (no details, no log; his PC not reachable). Added logs: why ENTER doesn't open it (not in game / not connected / window not in front / not hooked / which TLD screen holds the input), when the line opens, the first WM_CHAR, sent/dropped, the chat box widgets made, and a warning when the line is open while TLD's HUD is hidden.
