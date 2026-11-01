@@ -40,8 +40,9 @@ void host_frame() {
     if (changed || now - g_last_send >= kResendMs) {
         netrt::send_packet(w, true);
         if (changed)
-            logx::info("features: told everyone: ambient lights %s, dynamic trees %s",
-                       g_own & net::kFeatureAmbientLights ? "on" : "off", g_own & net::kFeatureDynamicTrees ? "on" : "off");
+            logx::info("features: told everyone: ambient lights %s, dynamic trees %s, seamless interiors %s",
+                       g_own & net::kFeatureAmbientLights ? "on" : "off", g_own & net::kFeatureDynamicTrees ? "on" : "off",
+                       g_own & net::kFeatureSeamlessInteriors ? "on" : "off");
         g_sent_bits = g_own;
         g_last_send = now;
         for (const net::PlayerInfo& p : st.players)
@@ -66,8 +67,9 @@ void client_frame() {
         float snow = -1;
         if (!net::read_features(r, bits, snow)) continue;
         if (!g_host_known || bits != g_host_bits)
-            logx::info("features: the host has ambient lights %s, dynamic trees %s; so do we",
-                       bits & net::kFeatureAmbientLights ? "on" : "off", bits & net::kFeatureDynamicTrees ? "on" : "off");
+            logx::info("features: the host has ambient lights %s, dynamic trees %s, seamless interiors %s; so do we",
+                       bits & net::kFeatureAmbientLights ? "on" : "off", bits & net::kFeatureDynamicTrees ? "on" : "off",
+                       bits & net::kFeatureSeamlessInteriors ? "on" : "off");
         g_host_known = true;
         g_host_bits = bits;
         g_host_snow = snow;

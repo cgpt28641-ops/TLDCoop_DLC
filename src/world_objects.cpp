@@ -21,6 +21,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 #include "world_containers.h"
 #include "coop_notices.h"
 
@@ -227,6 +228,7 @@ std::unordered_set<uintptr_t> set_members() {
     void* args[] = {api.random_type, &inactive_too};
     Il2CppObject* sets = il2::invoke(api.find_all, nullptr, args);
     for (size_t i = 0; i < il2::array_length(sets); ++i) {
+        if (seamless_interiors::is_clone_object(il2::array_object_at(sets, i))) continue;  // TLDCoop_DLC: a room's
         Il2CppObject* members = get<Il2CppObject*>(il2::array_object_at(sets, i), api.set_members);
         for (size_t k = 0; k < il2::array_length(members); ++k)
             out.insert(reinterpret_cast<uintptr_t>(il2::array_object_at(members, k)));
@@ -335,6 +337,9 @@ void locks_into(std::vector<Object>& out) {
 std::vector<Object> lock_objects() {
     std::vector<Object> out;
     locks_into(out);
+    // TLDCoop_DLC: a Seamless Interiors room's objects aren't the region's
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Object& x) { return seamless_interiors::is_clone_object(x.o); }),
+              out.end());
     return out;
 }
 
@@ -343,6 +348,9 @@ std::vector<Object> all_objects() {
     list_into(api.breakdowns, Kind::BreakDown, out);
     list_into(api.harvestables, Kind::Harvestable, out);
     locks_into(out);
+    // TLDCoop_DLC: a Seamless Interiors room's objects aren't the region's
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Object& x) { return seamless_interiors::is_clone_object(x.o); }),
+              out.end());
     return out;
 }
 
@@ -804,6 +812,7 @@ void load_spawns(const net::ObjectListMsg& m) {
         void* args[] = {api.random_type, &inactive_too};
         Il2CppObject* sets = il2::invoke(api.find_all, nullptr, args);
         for (size_t i = 0; i < il2::array_length(sets); ++i) {
+            if (seamless_interiors::is_clone_object(il2::array_object_at(sets, i))) continue;  // TLDCoop_DLC: a room's
             Il2CppObject* members = get<Il2CppObject*>(il2::array_object_at(sets, i), api.set_members);
             for (size_t k = 0; k < il2::array_length(members); ++k) {
                 Il2CppObject* go = il2::array_object_at(members, k);
@@ -843,6 +852,7 @@ int keep_host_rolls() {
     for (size_t i = 0; i < il2::array_length(containers); ++i) {
         Il2CppObject* c = il2::array_object_at(containers, i);
         if (!alive(c) || get<bool>(c, api.container_rolled)) continue;
+        if (seamless_interiors::is_clone_object(c)) continue;  // TLDCoop_DLC: a Seamless Interiors room's
         void* type[] = {api.placeable_type};
         if (!alive(il2::invoke(api.get_component, c, type))) continue;
         put<bool>(c, api.container_rolled, true);

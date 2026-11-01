@@ -218,6 +218,7 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[emotes] wave=F5 ...` | **Nowe.** Klawisze gestów: `wave`, `point`, `come`, `stop`, `yes`, `no` (F1..F12, A..Z, 0..9, NUM0..NUM9, `off`). |
 | `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host: ekran co-opa → MODS). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze). |
 | `[trees] enabled=1` | **Nowe.** Dynamic Trees w solo (w co-opie decyduje host: MODS). Ilość śniegu na drzewach jest zapisywana osobno dla każdego zapisu gry w `TLDCoop\dynamic_trees.ini`. |
+| `[interiors] enabled=0` | **Nowe, w budowie (domyślnie wyłączone).** Seamless Interiors (karsontr13, za zgodą autora): drzwi budynku wpuszczają do środka bez ekranu ładowania. W co-opie decyduje host (MODS). Na razie pokoje wracają do stanu wyjściowego przy każdej wizycie w regionie — nie zostawiaj rzeczy w ich szafkach. |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
 | `[report] key=F11`, `all=1` | **Nowe.** Klawisz zgłoszenia błędu (logi pakowane do `TLDCoop\reports`); `all=1`: w co-opie zgłoszenie robią wszyscy gracze naraz. |
@@ -337,6 +338,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
 | `src/world_*.cpp` | Wspólne przedmioty, szafki, ogniska, obiekty. |
 | `src/custom_pictures.cpp` | Nasze obrazy w ramkach. |
 | `src/dynamic_trees.cpp`, `src/ambient_lights.cpp`, `src/just_zoom.cpp`, `src/dev_console.cpp` | Wbudowane mody. |
+| `src/seamless_interiors.cpp`, `src/seamless_configs.inc` | Seamless Interiors (w budowie); lista budynków generowana przez `tools/seamless/gen_configs.py` z `third_party/seamless-interiors`. |
 | `tests/` | Testy bez gry, w tym `content_test.cpp`. |
 | `bodypack/` | Jak budowane są postacie (Unity 6000.0.60f1) i animacje. |
 | `third_party/minhook` | [MinHook](https://github.com/TsudaKageyu/minhook) do przechwytywania funkcji. |

@@ -40,6 +40,7 @@
 #include "coop_emotes.h"
 #include "dev_commands.h"
 #include "paths.h"
+#include "seamless_interiors.h"
 #include "steam_dispatch.h"
 #include "test_harness.h"
 #include "ui_inspect.h"
@@ -172,6 +173,7 @@ void coop_off(const char* why) {
 void apply_net_settings(const config::Settings& s, bool startup) {
     ambient_lights::set_settings(s);
     dynamic_trees::set_settings(s);
+    seamless_interiors::set_settings(s);
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
     coop_hud::set_colours(s.hud_colours);
     coop_emotes::set_keys(s.emote_keys);
@@ -221,6 +223,7 @@ void start_networking() {
     if (!s.autostart) {
         ambient_lights::set_settings(s);
         dynamic_trees::set_settings(s);
+        seamless_interiors::set_settings(s);
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
         coop_hud::set_colours(s.hud_colours);
         coop_emotes::set_keys(s.emote_keys);
@@ -559,6 +562,7 @@ void on_frame() {
     TIMED("coop_features::on_frame", coop_features::on_frame());
     TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
     TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
+    TIMED("seamless_interiors::on_frame", seamless_interiors::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("custom_pictures::on_frame", custom_pictures::on_frame(scene, in_game));
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
     TIMED("dev_console::on_frame", dev_console::on_frame(scene, in_game));
@@ -655,6 +659,7 @@ void game_manager_late_update_detour(Il2CppObject* self, const MethodInfo* metho
         }
         just_zoom::late_update(game::is_gameplay_scene(sc));
     }
+    seamless_interiors::on_late_frame();  // TLDCoop_DLC: a room's snow and snow planes, after TLD moved them
     if (g_net_enabled) avatar::late_update();
     coop_hud::late_update();  // after the avatars moved: names over their heads, the radar
 }
@@ -665,6 +670,9 @@ using AwakeFn = void (*)(Il2CppObject* self, const MethodInfo* method);
 AwakeFn g_game_manager_awake = nullptr;
 
 void game_manager_awake_detour(Il2CppObject* self, const MethodInfo* method) {
+    // TLDCoop_DLC: first: the GameManager of an interior scene loaded for a Seamless Interiors room must not wake (it
+    // would take the scene over); it's destroyed and neither TLD's Awake nor ours runs.
+    if (seamless_interiors::skip_game_manager_awake(self)) return;
     g_game_manager_awake(self, method);
     if (g_net_enabled || test_harness::runs_unfocused()) keep_running_in_background();
 }
@@ -751,6 +759,7 @@ void on_runtime_ready() {
     world_spray::init();
     ambient_lights::init();
     dynamic_trees::init();
+    seamless_interiors::init();  // TLDCoop_DLC
     custom_pictures::init();
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC

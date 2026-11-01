@@ -16,6 +16,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 
 namespace world_fires {
 namespace {
@@ -165,7 +166,9 @@ std::vector<Il2CppObject*> all_fires() {
     Il2CppObject* items = get<Il2CppObject*>(list, kListItems);
     const int32_t count = get<int32_t>(list, kListSize);
     for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i)
-        if (Il2CppObject* f = il2::array_object_at(items, static_cast<size_t>(i)); alive(f)) out.push_back(f);
+        if (Il2CppObject* f = il2::array_object_at(items, static_cast<size_t>(i));
+            alive(f) && !seamless_interiors::is_clone_object(f))  // TLDCoop_DLC: not a Seamless Interiors room's
+            out.push_back(f);
     return out;
 }
 

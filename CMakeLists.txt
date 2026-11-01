@@ -38,6 +38,7 @@ add_library(tldcoop SHARED
   src/ambient_lights.cpp
   src/coop_features.cpp
   src/dynamic_trees.cpp
+  src/seamless_interiors.cpp  # TLDCoop_DLC: Seamless Interiors (karsontr13), with permission
   src/custom_pictures.cpp
   src/coop_chat.cpp  # TLDCoop_DLC: chat (ENTER) and the bug report's description box
   src/coop_report.cpp  # TLDCoop_DLC: a bug report with one key (F11)

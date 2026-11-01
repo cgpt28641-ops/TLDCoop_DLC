@@ -21,6 +21,7 @@
 #include "net/claims.h"
 #include "net/uniques.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 
 namespace world_items {
 namespace {
@@ -278,6 +279,8 @@ void resolve_held_by() {
 // and not held by its parent. Plus: not one of the sticks or stones TLD scatters around us by itself.
 bool is_loose(Il2CppObject* gi) {
     if (!alive(gi) || get<bool>(gi, api.no_save) || get<bool>(gi, api.in_inventory)) return false;
+    // TLDCoop_DLC: a Seamless Interiors room's items (or an interior scene loading for one) aren't the region's.
+    if (seamless_interiors::is_clone_object(gi)) return false;
     if (get<Il2CppObject*>(gi, api.radial_parent)) return false;
     Il2CppObject* go = il2::invoke(api.component_go, gi);
     bool active = false;

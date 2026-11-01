@@ -20,6 +20,7 @@
 #include "log.h"
 #include "net/protocol.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 
 namespace ambient_lights {
 namespace {
@@ -486,6 +487,9 @@ FloatFn g_gimble_light = nullptr;
 
 // GameLights.UpdateAmbience: TLD's indoor ambient light, quieter and in the light set's colours.
 void set_ambient_detour(Il2CppObject* self, float tod, float multiplier, const MethodInfo* method) {
+    // TLDCoop_DLC: a Seamless Interiors room's own indoor ambient light stays out of the region's (SI: in its outdoor
+    // lighting mode a room's TodAmbientLight never writes the global ambient light).
+    if (seamless_interiors::is_clone_object(self)) return;
     g_tld_lit = true;
     if (self && api.amb_day >= 0) {
         if (acting() && g_cfg) {

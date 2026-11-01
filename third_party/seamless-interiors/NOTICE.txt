@@ -1,0 +1,9 @@
+Seamless Interiors by karsontr13 — https://github.com/karsontr13/TLD-Seamless-Interiors (MelonLoader mod for The Long
+Dark; walking into a building without a loading screen). The repository states no license. TLDCoop_DLC carries a C++
+port of it (src/seamless_interiors.cpp, src/seamless_interiors.h), made from its source (SI 2.4.1, commit
+2d75c70d9d2f45a0c396fca5f427815040154c46), with the author's permission (given to Karol). No MelonLoader or files of
+the mod are needed.
+
+SeamlessInteriorsMod.Configs.cs here is the mod's own building list, copied unchanged from that commit; the build does
+not compile it: tools/seamless/gen_configs.py turns it into src/seamless_configs.inc. Do not redistribute it separately
+from TLDCoop_DLC without the author's permission.

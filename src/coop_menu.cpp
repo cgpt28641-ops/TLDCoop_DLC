@@ -105,6 +105,10 @@ constexpr ModSwitch kMods[] = {
      "Dynamic Trees: snow on the trees builds up in snowy, windy weather and goes in clear, windy weather; the pines "
      "and cedars go from green to white. You decide for everyone, and everyone's trees carry your snow. (Built in, "
      "by Fuar, The Illusion and Jods, with their permission.)"},
+    {"SEAMLESS INTERIORS",
+     "Seamless Interiors: a building's door takes you in and out without a loading screen. Still being finished: "
+     "rooms start fresh on every visit to a region, so don't leave things in their containers. You decide for "
+     "everyone in your game. (Built in, by karsontr13, with his permission; coop.ini [interiors].)"},
 };
 constexpr int kModCount = static_cast<int>(sizeof(kMods) / sizeof(kMods[0]));
 constexpr int kModRows[] = {kMode, kCharacter, kNames, kRadar, kChart};  // rows with arrows (VOICE may be hidden)
@@ -1333,6 +1337,7 @@ void load_choices() {
     g.mods = false;
     g.mod_on[0] = g.settings.ambient_lights;
     g.mod_on[1] = g.settings.dynamic_trees;
+    g.mod_on[2] = g.settings.seamless_interiors;
     // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
     std::string ids = avatar::choosable_body_ids();
@@ -1526,6 +1531,7 @@ void close_menu(bool confirmed) {
         if (g.mode == kHost) {
             g.settings.ambient_lights = g.mod_on[0];
             g.settings.dynamic_trees = g.mod_on[1];
+            g.settings.seamless_interiors = g.mod_on[2];
         }
         if (by_code) g.settings.transport = "steam";  // codes run through Steam
         if (g.mode == kJoin) g.settings.join_code = g.join_code;

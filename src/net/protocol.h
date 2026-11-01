@@ -90,7 +90,7 @@
 //                          sender's world (TLD's BloodTrail: kind 0 a drop at x y z, 1 a stain (a b: its scale's range),
 //                          2 a cluster of `count` drops); the others' games leave the same (TLDCoop_DLC)
 //   Features host->client  u32 bits (kFeature*), f32 tree snow (0-100): what the host's game has on that every game
-//                          follows (Ambient Lights, Dynamic Trees) and how much snow its trees carry, on connect,
+//                          follows (Ambient Lights, Dynamic Trees, Seamless Interiors) and how much snow its trees carry, on connect,
 //                          when it changes and every few seconds (TLDCoop_DLC)
 //   SprayMark either       scene[48], decal id (u16 n + n), u8 gone, then (not gone) decal name (u16 n + n), f32 pos
 //                          xyz, normal xyz, scale xyz, yaw, colour rgba, i32 projectile, u8 indoors: a spray paint
@@ -1176,6 +1176,7 @@ inline bool read_spray_mark(Reader& r, SprayMarkMsg& m) {
 constexpr uint32_t kFeatureAmbientLights = 1;  // Ambient Lights (built-in port of the MelonLoader mod)
 constexpr uint32_t kFeatureDynamicTrees = 2;   // Dynamic Trees (built in, with its authors' permission)
 constexpr uint32_t kFeatureAdaptiveArsenal = 4;  // (was Adaptive Arsenal: removed; the bit stays unused)
+constexpr uint32_t kFeatureSeamlessInteriors = 8;  // Seamless Interiors (built in, with its author's permission)
 inline void write_features(Writer& w, uint32_t bits, float tree_snow) {
     w.put<uint32_t>(bits);
     w.put<float>(tree_snow);

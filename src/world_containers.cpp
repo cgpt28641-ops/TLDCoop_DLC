@@ -20,6 +20,7 @@
 #include "net/container_locks.h"
 #include "net/uniques.h"
 #include "net_runtime.h"
+#include "seamless_interiors.h"
 
 namespace world_containers {
 namespace {
@@ -169,7 +170,8 @@ std::vector<Il2CppObject*> all_containers() {
         const int32_t count = get<int32_t>(list, kListSize);
         for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i) {
             Il2CppObject* c = il2::array_object_at(items, static_cast<size_t>(i));
-            if (alive(c) && !get<bool>(c, api.no_save) && seen.insert(c).second) out.push_back(c);
+            if (alive(c) && !get<bool>(c, api.no_save) && !seamless_interiors::is_clone_object(c) && seen.insert(c).second)
+                out.push_back(c);  // TLDCoop_DLC: not a Seamless Interiors room's
         }
     }
     return out;

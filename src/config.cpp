@@ -98,6 +98,11 @@ constexpr const char* kDefaultIni =
     "; in snowy, windy weather and goes in clear, windy weather. In co-op the HOST decides for everyone (MODS).\n"
     "enabled=1\n"
     "\n"
+    "[interiors]\n"
+    "; Seamless Interiors (built in, by karsontr13, with his permission): a building's door takes you in and out\n"
+    "; without a loading screen. Being finished: off by default. In co-op the HOST decides for everyone (MODS).\n"
+    "enabled=0\n"
+    "\n"
     "[death]\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
     "; items never); the rest stay in your body for anyone to take back. 0 = keep everything.\n"
@@ -185,6 +190,7 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
+    WritePrivateProfileStringW(L"interiors", L"enabled", s.seamless_interiors ? L"1" : L"0", ini.c_str());
     logx::info("settings saved: mode=%s transport=%s code=%s join_code=%s name=%s body=%s", s.mode.c_str(),
                s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.name.c_str(), s.body.c_str());
 }
@@ -220,6 +226,7 @@ Settings load() {
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
+    s.seamless_interiors = GetPrivateProfileIntW(L"interiors", L"enabled", 0, ini.c_str()) != 0;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
