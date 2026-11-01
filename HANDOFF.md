@@ -342,3 +342,22 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   open) into TLDCoop\reports\<stamp>_<name>.zip with System32\tar.exe -a (a background thread; a folder if tar fails).
   [report] all=1: Msg::Report (44, {u32 id, name}) to everyone; the host passes a friend's on; each game makes its
   own report with the same id. Protocol v38. Notices on the HUD. README updated.
+
+## 2026-11-01 — gestures and grips redone (worked out on the rig offline)
+- Karol: "all gestures look bad, items sit badly in the hands". Before: only a two-bone reach of the right arm to a
+  point; the hand kept the clip's (limp) turn and fingers; items placed at "palm" by the shoulder frame.
+- Offline preview (scratchpad pv/: extract.py reads tldcoop_bodies' Transforms, skinned meshes and legacy idle clip;
+  rig.py does FK + skinning + a painter's renderer; pose_new.py is the Python twin of the new C++). Renders checked
+  for every gesture over time and every hold (items as cylinders).
+- avatar.cpp: Avatar.rig (fingers, clavicles, Neck, Spine2 by name). Hand turned by its knuckles (fingers = wrist ->
+  Middle1, across = Pinky1 -> Index1, palm = fingers x across, mirrored for the left), orient_hand / curl /
+  thumb_curl / hand_shape (Flat, Open, Point, Grip, Fist, Beckon). All clips but "down" key every finger, so the
+  additive bends reset each frame; gestures skip over action clips (they might not).
+- Gestures: wave = upper arm out, forearm up swinging from the elbow (22 deg, 1.9 Hz), flat hand a beat behind,
+  clavicle up, spine away; point = arm along the look, index out, spine/clavicle turned; come = palm up, wrist and
+  fingers drawing in; stop = flat hand pushed forward, palm out; yes/no = neck+head share, decaying. In with a little
+  overshoot (ease-out-back), out eased.
+- Holds: wrap per kind (Stick: through the fist index-side forward; Pistol: round a grip under the gun; Hang;
+  Support: the other hand under, palm up, its palm placed on the spot; Palm: stone). Item grip = palm centre (pistol:
+  5 cm above the fist). held_pose.h: rifle low = port arms, rifle aim / revolver aim / spear set re-tuned so the
+  left hand reaches.

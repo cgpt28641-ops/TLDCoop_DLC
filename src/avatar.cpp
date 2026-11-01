@@ -687,6 +687,7 @@ void attach_bones(Avatar& a, Il2CppObject* body) {
     }
     if (arms != kArmBones) say(a, "only %d of the %d arm bones found: held items sit at the body", arms, kArmBones);
     if (!heads) say(a, "no head bone found: their nods and head shakes won't show");
+    if (a.rig.size() < 30) say(a, "only %zu finger/shoulder/neck bones found: hands stay as the clip has them", a.rig.size());
     if (others != kBoneCount - kArmBones - 1)
         say(a, "only %d of the %d hip, spine and leg bones found: they won't crouch", others, kBoneCount - kArmBones - 1);
 }
@@ -1865,7 +1866,8 @@ bool place_action_item(const Avatar& a) {
 // TLDCoop_DLC: their gesture over the clip: the right arm reaches where the gesture has it (blended in and out), or
 // the head nods or shakes. Returns false when there's none to show now.
 bool gesture(Avatar& a) {
-    if (a.emote == net::Emote::None || !has_bones(a) || a.shown_down || a.lying) return false;
+    // (not over an action's clip: those don't set the fingers each frame, so a bend would add up)
+    if (a.emote == net::Emote::None || !has_bones(a) || a.shown_down || a.lying || !a.action.empty()) return false;
     const float t = static_cast<float>((net::now_ms() - a.emote_start) / 1000.0);
     const float total = net::emote_seconds(a.emote);
     if (t < 0 || t >= total) return false;

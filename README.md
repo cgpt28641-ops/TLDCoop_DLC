@@ -306,7 +306,7 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
 - **Pociąg z Iron Road** (`TLD.SteamTrain.*`) nie jest jeszcze synchronizowany między graczami.
 - **Unikalne przedmioty z Iron Road** (np. woskowe cylindry) nie są jeszcze na liście unikalnych. Może się zdarzyć,
   że tylko jeden gracz podniesie dany przedmiot.
-- **Gesty** są na razie liczone w kodzie (ruch ręki i głowy). Ładne, gotowe animacje wymagają zbudowania ich w Unity.
+- **Gesty** są liczone w kodzie (ramię, łokieć, nadgarstek, palce, bark, tułów, szyja i głowa), dopracowane na podglądzie modelu postaci. Prawdziwe animacje wymagałyby zbudowania ich w Unity.
 - **Odrodzenie w miejscu ostatniego snu** (zamiast w miejscu śmierci): w planach.
 - **Lampy naftowe** w rękach znajomego: do sprawdzenia w grze.
 - **Temperatura powietrza** może się różnić między graczami przy tej samej pogodzie, bo gra liczy ją lokalnie dla
