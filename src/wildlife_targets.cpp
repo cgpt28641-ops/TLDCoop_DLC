@@ -812,7 +812,7 @@ void finish_fight(uint32_t id, Fight& f, const net::AttackResultMsg* result) {
         }
         net::FightOutcome outcome = result ? result->outcome : net::FightOutcome::NoFight;
         if (result) apply_fight_damage(ai, *result);
-        if (outcome != net::FightOutcome::NoFight && il2::read_field<float>(ai, api.hp) <= 1e-4f)
+        if (il2::read_field<float>(ai, api.hp) <= 1e-4f)  // their fight, or someone's shots meanwhile, killed it
             outcome = net::FightOutcome::Died;
         if (outcome == net::FightOutcome::Died) write_field<float>(ai, api.hp, 0);  // dead there, dead here
         Il2CppObject *go = nullptr, *transform = nullptr, *target = nullptr;
@@ -852,7 +852,24 @@ void on_frame() {
         g_fights.erase(it);
     }
     const double now = now_ms();
+    const std::vector<uint8_t> shown = avatar::shown();
     for (auto it = g_fights.begin(); it != g_fights.end();) {
+        // TLDCoop_DLC: the friend it had down left the game (or their link dropped): the fight ends now, rather than the
+        // bear standing over the empty spot for 45 s, deaf to shots ("it bites a player who left and ignores bullets").
+        if (std::find(shown.begin(), shown.end(), it->second.player) == shown.end() &&
+            now - it->second.started_ms > 1500) {
+            logx::info("wildlife: the player in the fight with #%u is gone; it gives up", it->first);
+            finish_fight(it->first, it->second, nullptr);
+            it = g_fights.erase(it);
+            continue;
+        }
+        // Shot dead by someone else while it had a friend down: it dies now (their game lets go when it hears).
+        if (Il2CppObject* ai = il2::il2cpp_gchandle_get_target(it->second.ai); ai && il2::read_field<float>(ai, api.hp) <= 1e-4f) {
+            logx::info("wildlife: #%u was killed during the other player's fight with it", it->first);
+            finish_fight(it->first, it->second, nullptr);
+            it = g_fights.erase(it);
+            continue;
+        }
         if (now - it->second.started_ms < kFightTimeoutMs && hosting()) {
             Fight& f = it->second;
             if (now - f.traced_ms >= 1000 && f.traces < 6) {  // the first seconds: where it is, what it plays

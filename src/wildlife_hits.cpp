@@ -284,17 +284,25 @@ bool arsenal_hit(Il2CppObject* bullet, const void* hit, float damage) {
     Il2CppObject* ai = nullptr;
     for (Il2CppObject* t = tf; t && !ai && api.base_ai_type; t = api.get_parent ? il2::invoke(api.get_parent, t) : nullptr)
         ai = component(t, api.base_ai_type);
-    if (!ai) return false;
+    if (!ai) {
+        static int logged = 0;
+        if (logged < 60) {
+            ++logged;
+            logx::info("wildlife: a bullet of ours hit '%s' at (%.1f, %.1f, %.1f)", name_of(tf).c_str(), point.x, point.y, point.z);
+        }
+        return false;
+    }
     if (il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead) return true;
-    if (!ld) return false;  // (TLD's own bullet deals it)
-    const float bleed = lz_call(api.bleed_minutes, ld, ws);
-    float dealt = damage * lz_call(api.damage_scale, ld, ws);
-    const bool crit = !il2::read_field<bool>(ai, api.ai_ignore_crits) && roll_kill(ld, ws);
+    // TLDCoop_DLC: a part of the animal without its own hit zone (its movement capsule): plain body damage, rather than
+    // a bullet that does nothing ("the wolf took no damage from Shatsca").
+    const float bleed = ld ? lz_call(api.bleed_minutes, ld, ws) : 0.0f;
+    float dealt = damage * (ld ? lz_call(api.damage_scale, ld, ws) : 1.0f);
+    const bool crit = ld && !il2::read_field<bool>(ai, api.ai_ignore_crits) && roll_kill(ld, ws);
     if (crit) dealt = std::numeric_limits<float>::infinity();
     const game::PlayerState p = game::read_player();
     Vector3 from{p.position.x, p.position.y, p.position.z};
     void* anim_args[] = {&point, &from, ld};
-    il2::invoke(api.setup_damage_anim, ai, anim_args);
+    if (ld) il2::invoke(api.setup_damage_anim, ai, anim_args);
     int32_t src = kDamageSourcePlayer;
     void* damage_args[] = {&dealt, const_cast<float*>(&bleed), &src, il2::il2cpp_string_new(name_of(tf).c_str())};
     il2::invoke(il2::virtual_method(ai, api.apply_damage), ai, damage_args);

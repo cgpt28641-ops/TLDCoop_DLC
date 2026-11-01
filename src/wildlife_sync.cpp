@@ -112,6 +112,9 @@ struct Api {
     const MethodInfo* apply_wounds = nullptr;     // DamageEventTable.MaybeApplyAttack(BaseAi, ApplyAttackOpts)
     const MethodInfo* get_struggle = nullptr;     // static GameManager.GetPlayerStruggleComponent()
     const MethodInfo* struggle_begin = nullptr;   // PlayerStruggle.Begin(GameObject)
+    const MethodInfo* make_partner_flee = nullptr; // PlayerStruggle.MakePartnerFlee()
+    const MethodInfo* moose_complete = nullptr;    // PlayerStruggle.OnMooseButtHeadAttackComplete()
+    const MethodInfo* break_struggle = nullptr;    // PlayerStruggle.BreakStruggle()
     const MethodInfo* get_condition = nullptr;    // static GameManager.GetConditionComponent()
     const MethodInfo* add_health = nullptr;       // Condition.AddHealth(float, DamageSource, bool)
     ptrdiff_t region_refs = -1;                   // SpawnRegion.m_SpawnsPrefabReferences (legacy)
@@ -1088,6 +1091,8 @@ struct LocalFight {
     float hp_begin = 0;        // the stand-in's health when the fight began (the host's animal's)
     bool saw_struggle = false; // the stand-in has been in TLD's Struggle mode
     bool reported = false;     // the host has been told how it ended
+    uint8_t kind = 0;          // kKinds index
+    int unstick = 0;           // how far the stuck-fight rescue has gone (0 none, 1 moose finish, 2 flee, 3 break)
 } g_fight;
 
 struct Quaternion {
@@ -1252,7 +1257,7 @@ bool start_fight(const net::AttackMsg& a, double now) {
     Il2CppObject* struggle = il2::invoke(api.get_struggle, nullptr);
     void* begin_args[] = {go};
     il2::invoke(api.struggle_begin, struggle, begin_args);
-    g_fight = {true, a.animal, hold(ai), now, made_for_it, il2::read_field<float>(ai, api.ai_hp), false, false};
+    g_fight = {true, a.animal, hold(ai), now, made_for_it, il2::read_field<float>(ai, api.ai_hp), false, false, a.kind, 0};
     logx::info("wildlife: the host's %s #%u jumped us: fighting it here (with %s)", kind_name(a.kind), a.animal,
                made_for_it ? "one made for the fight" : "one of ours");
     return true;
@@ -1283,6 +1288,20 @@ void watch_fight() {
     if (!g_fight.active || g_fight.reported) return;
     Il2CppObject* ai = target(g_fight.ai);
     if (!ai || !alive(ai)) return;
+    // TLDCoop_DLC: someone else killed the host's animal while it had us down ("the wolf was shot dead and I was still
+    // fighting it"): our stand-in lets go at once, the way TLD ends a fight when a struggling animal is scared off.
+    if (g_fight.saw_struggle) {
+        const auto puppet = g_puppets.find(g_fight.animal);
+        const bool gone = puppet == g_puppets.end() || puppet->second.carcass ||
+                          (puppet->second.latest.flags & net::kAnimalDead) || puppet->second.latest.hp <= 0;
+        if (gone && api.make_partner_flee) {
+            g_fight.reported = true;  // the host already knows how it ended
+            Il2CppObject* struggle = il2::invoke(api.get_struggle, nullptr);
+            if (struggle) il2::invoke(api.make_partner_flee, struggle, nullptr);
+            logx::info("wildlife: the host's #%u died while fighting us (someone else killed it): letting go", g_fight.animal);
+            return;
+        }
+    }
     const int32_t mode = il2::read_field<int32_t>(ai, api.ai_mode);
     if (mode == kAiModeStruggle && !g_fight.saw_struggle) {
         // A stand-in spawned for the fight resets its health in its first Start (a frame after start_fight wrote the
@@ -1293,6 +1312,30 @@ void watch_fight() {
         g_fight.hp_begin = il2::read_field<float>(ai, api.ai_hp);
     } else if (mode != kAiModeStruggle && g_fight.saw_struggle) {
         report_fight(ai, "it left the fight");
+    }
+}
+
+// TLDCoop_DLC: a fight TLD never ends here ("I see the sky and nothing else" after a moose knocked us down): a moose's
+// fight ends on an animation event of its own (OnMooseButtHeadAttackComplete), which a stand-in can miss. After a
+// while TLD is made to end it the way it would itself: the moose's charge completes, then the animal is scared off,
+// last the struggle is broken. The host gives up waiting at 45 s; we act before that.
+void unstick_fight(double now) {
+    if (!g_fight.active || !game::in_struggle()) return;
+    const double t = now - g_fight.started_ms;
+    Il2CppObject* struggle = il2::invoke(api.get_struggle, nullptr);
+    if (!struggle) return;
+    if (g_fight.unstick < 1 && g_fight.kind == 5 && t > 12000) {
+        g_fight.unstick = 1;
+        if (api.moose_complete) il2::invoke(api.moose_complete, struggle, nullptr);
+        logx::info("wildlife: the moose fight with #%u didn't end by itself after 12 s: finishing its charge", g_fight.animal);
+    } else if (g_fight.unstick < 2 && t > 35000) {
+        g_fight.unstick = 2;
+        if (api.make_partner_flee) il2::invoke(api.make_partner_flee, struggle, nullptr);
+        logx::info("wildlife: the fight with #%u still runs after 35 s: the animal is made to flee", g_fight.animal);
+    } else if (g_fight.unstick < 3 && t > 40000) {
+        g_fight.unstick = 3;
+        if (api.break_struggle) il2::invoke(api.break_struggle, struggle, nullptr);
+        logx::info("wildlife: the fight with #%u still runs after 40 s: breaking it off", g_fight.animal);
     }
 }
 
@@ -1323,6 +1366,7 @@ void handle_attacks(double now, bool can_fight) {
         }
     }
     watch_fight();
+    unstick_fight(now);
     if (g_fight.active && now - g_fight.started_ms > 1500 && !game::in_struggle()) finish_fight("struggle ended", true);
     if (g_fight.active && now - g_fight.started_ms > kLocalFightTimeoutMs) finish_fight("took too long", true);
 }
@@ -1689,6 +1733,9 @@ bool init() {
     api.apply_wounds = il2::find_method(il2::find_class(kGame, "", "DamageEventTable"), "MaybeApplyAttack", 2);
     api.get_struggle = il2::find_method(game_manager, "GetPlayerStruggleComponent", 0);
     api.struggle_begin = il2::find_method_params(il2::find_class(kGame, "", "PlayerStruggle"), "Begin", {"UnityEngine.GameObject"});
+    api.make_partner_flee = il2::find_method_quiet(il2::find_class(kGame, "", "PlayerStruggle"), "MakePartnerFlee", 0);
+    api.moose_complete = il2::find_method_quiet(il2::find_class(kGame, "", "PlayerStruggle"), "OnMooseButtHeadAttackComplete", 0);
+    api.break_struggle = il2::find_method_quiet(il2::find_class(kGame, "", "PlayerStruggle"), "BreakStruggle", 0);
     api.get_condition = il2::find_method(game_manager, "GetConditionComponent", 0);
     api.region_refs = il2::field_offset_quiet(spawn_region, "m_SpawnsPrefabReferences");
     api.region_center = il2::field_offset(spawn_region, "m_Center");

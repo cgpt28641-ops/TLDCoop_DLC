@@ -447,7 +447,8 @@ void build_mask() {
         const std::string n = s ? il2::to_utf8(reinterpret_cast<Il2CppString*>(s)) : std::string();
         if (n.empty()) continue;
         const bool skip = n == "Ignore Raycast" || n == "UI" || n == "Player" || n.find("Trigger") != std::string::npos ||
-                          n.find("NoCollide") != std::string::npos || n.find("Weapon") != std::string::npos;
+                          n.find("NoCollide") != std::string::npos || n.find("Weapon") != std::string::npos ||
+                          n.find("CharacterController") != std::string::npos;  // animals' movement capsules, not their bodies
         (skip ? dropped : kept) += " " + std::to_string(i) + ":" + n;
         if (!skip) mask |= 1 << i;
     }
