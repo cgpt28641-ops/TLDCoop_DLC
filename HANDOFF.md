@@ -411,3 +411,8 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   ApplyDamage, MaybeFleeOrAttackFromProjectileHit, skill point): host/alone on the BaseAi above the collider; a
   friend on its copy of the host's animal sends the Hit as before. TLD's bullet is then restarted with Damage 0 for
   the impact only (spawn_impact_detour skips it). Log: "wildlife: our rifle hit WILDLIFE_x (collider): N damage".
+- 18:10 Self-update shipped at Karol's explicit request ("only trusted people will have it"): src/coop_update.cpp
+  as described above (main menu, 3 s in, background thread; GET releases/tags/dll-latest with the built-in
+  read-only token; build id from the notes vs kBuild; download asset, MZ check, .new -> swap, .old deleted next
+  start; message on the co-op screen and HUD). CI step "Update token and build id" writes src/update_secret.inc
+  (gitignored) from secret UPDATE_TOKEN. Until Karol adds that secret the updater stays off ("no update token").

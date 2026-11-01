@@ -21,6 +21,7 @@
 #include "just_zoom.h"
 #include "coop_report.h"
 #include "coop_chat.h"
+#include "coop_update.h"
 #include "avatar.h"
 #include "config.h"
 #include "dumper.h"
@@ -579,6 +580,7 @@ void on_frame() {
     TIMED("coop_notices::on_frame", coop_notices::on_frame(in_game));
     TIMED("coop_hud::on_frame", coop_hud::on_frame(scene, in_game));
     TIMED("coop_chat::on_frame", coop_chat::on_frame(in_game));
+    TIMED("coop_update::on_frame", coop_update::on_frame(scene, in_game));
     TIMED("coop_report::on_frame", coop_report::on_frame());
     TIMED("coop_emotes::on_frame", coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed()));
     TIMED("dev_commands::on_frame", dev_commands::on_frame(in_game));
@@ -759,6 +761,7 @@ void on_runtime_ready() {
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC
     coop_chat::init();    // TLDCoop_DLC
+    coop_update::init();  // TLDCoop_DLC
     adaptive_arsenal::init();
     world_join::init();
     coop_death::init();

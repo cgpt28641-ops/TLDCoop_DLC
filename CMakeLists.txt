@@ -40,6 +40,7 @@ add_library(tldcoop SHARED
   src/dynamic_trees.cpp
   src/custom_pictures.cpp
   src/adaptive_arsenal.cpp
+  src/coop_update.cpp  # TLDCoop_DLC: self-update from the private release (token from CI)
   src/coop_chat.cpp  # TLDCoop_DLC: chat (ENTER) and the bug report's description box
   src/coop_report.cpp  # TLDCoop_DLC: a bug report with one key (F11)
   src/just_zoom.cpp  # TLDCoop_DLC: JustZoom (WillWunderhorn), with permission
@@ -87,7 +88,7 @@ add_library(tldcoop SHARED
 # TLDCoop_DLC: TLD's developer console, for testing; to be removed (src/dev_console.h)
 target_compile_definitions(tldcoop PRIVATE TLDCOOP_DEV_CONSOLE)
 set_target_properties(tldcoop PROPERTIES OUTPUT_NAME winhttp)
-target_link_libraries(tldcoop PRIVATE minhook tldnet)
+target_link_libraries(tldcoop PRIVATE minhook tldnet wininet)
 
 # Fake second player for solo testing.
 add_executable(tldbot src/bot/main.cpp)

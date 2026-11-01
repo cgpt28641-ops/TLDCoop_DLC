@@ -15,6 +15,7 @@
 #include "avatar.h"
 #include "config.h"
 #include "core.h"
+#include "coop_update.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
@@ -1501,6 +1502,7 @@ bool open_menu(Il2CppObject* screen_panel) {
     show_clone(clone, panel_go, part(clone, m, kGrid));
     g.open = true;
     sync_keys();
+    if (const std::string u = coop_update::message(); !u.empty()) g.notice = u;  // TLDCoop_DLC: a new version is in
     refresh();
     logx::info("menu: co-op setup opened for %s (mode %s, character %s, %zu arrows, confirm %s)",
                kPurposeTitles[static_cast<int>(g_purpose)], kModes[g.mode], g.bodies[g.body].c_str(),
