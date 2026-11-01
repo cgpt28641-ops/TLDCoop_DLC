@@ -19,6 +19,7 @@
 #include "dynamic_trees.h"
 #include "just_zoom.h"
 #include "coop_report.h"
+#include "coop_save.h"
 #include "coop_chat.h"
 #include "avatar.h"
 #include "config.h"
@@ -581,6 +582,7 @@ void on_frame() {
     TIMED("coop_hud::on_frame", coop_hud::on_frame(scene, in_game));
     TIMED("coop_chat::on_frame", coop_chat::on_frame(in_game));
     TIMED("coop_report::on_frame", coop_report::on_frame());
+    TIMED("coop_save::on_frame", coop_save::on_frame(in_game));
     TIMED("coop_emotes::on_frame", coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed()));
     TIMED("dev_commands::on_frame", dev_commands::on_frame(in_game));
     TIMED("test_harness::on_frame", test_harness::on_frame(scene));
@@ -764,6 +766,7 @@ void on_runtime_ready() {
     custom_pictures::init();
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC
+    coop_save::init();    // TLDCoop_DLC: ZAPISZ GRĘ in ESC's menu
     coop_chat::init();    // TLDCoop_DLC
     world_join::init();
     coop_death::init();
