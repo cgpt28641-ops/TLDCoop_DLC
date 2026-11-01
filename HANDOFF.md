@@ -335,3 +335,10 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 ## 2026-11-01 — one late check after a respawn
 - coop_death: controls_back at respawn (0 s) plus ONE late check 8 s after (was 1.5, 4, 8 s; in every log only the
   8 s one found something: the camera's animation not idle). Still skipped while fighting / not Normal mode.
+
+## 2026-11-01 — bug report key (F11)
+- src/coop_report.cpp: F11 (coop.ini [report] key; GetAsyncKeyState, game in front, 10 s debounce) logs
+  "==== REPORT #id ====" and packs coop.log, coop-prev.log, coop-prev2.log, coop.ini (copied with _SH_DENYNO: the log is
+  open) into TLDCoop\reports\<stamp>_<name>.zip with System32\tar.exe -a (a background thread; a folder if tar fails).
+  [report] all=1: Msg::Report (44, {u32 id, name}) to everyone; the host passes a friend's on; each game makes its
+  own report with the same id. Protocol v38. Notices on the HUD. README updated.

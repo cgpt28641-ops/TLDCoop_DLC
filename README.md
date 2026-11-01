@@ -143,7 +143,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v37**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v38**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
@@ -224,6 +224,7 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
 | `[arsenal] enabled=1` | **Nowe.** Adaptive Arsenal w solo (w co-opie decyduje host: MODS). |
+| `[report] key=F11`, `all=1` | **Nowe.** Klawisz zgłoszenia błędu (logi pakowane do `TLDCoop\reports`); `all=1`: w co-opie zgłoszenie robią wszyscy gracze naraz. |
 | `[zoom] enabled=1`, `key=Z` | **Nowe.** JustZoom: klawisz przybliżenia; `wheel_step` (5–50) krok kółka, `speed` (1–30) szybkość przybliżania, `smooth` (1–40) płynność obrotu kamery. |
 | `[devconsole] enabled=1`, `key=F1` | **Nowe, na testy.** Konsola deweloperska i jej klawisz. |
 | `backups=5` | Ile kopii zapasowych zapisów trzymać w `TLDCoop\backups` (`0` żadnej). |
@@ -292,7 +293,11 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
   ponownie i zmień nazwę jego pliku na `winmm.dll`.
 - **Znajomi wyglądają jak kolorowe kapsuły:** u osoby, która widzi kapsuły, brakuje
   `TLDCoop\tldcoop_bodies.bundle`. Skopiuj go z zipa.
-- **Zgłaszanie błędu:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Przy starcie gry poprzedni log
+- **Zgłaszanie błędu jednym klawiszem:** gdy widzisz błąd, wciśnij **F11** od razu, w tej chwili. Mod zaznaczy ten
+  moment w logu i spakuje `coop.log`, `coop-prev.log`, `coop-prev2.log` i `coop.ini` do
+  `TLDCoop\reports\<data_godzina>_<nick>.zip`. W co-opie gra **każdego** gracza robi w tej samej chwili własne
+  zgłoszenie, więc wyślij zipy od wszystkich. Nic nie jest wysyłane automatycznie. Klawisz: `coop.ini` `[report]`.
+- **Zgłaszanie błędu ręcznie:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Przy starcie gry poprzedni log
   zostaje jako `coop-prev.log` (a jeszcze wcześniejszy jako `coop-prev2.log`), więc po crashu i ponownym
   uruchomieniu log z crashem to `coop-prev.log`. Linie `[FAULT]` pokazują, w którym miejscu gra się wywaliła.
 
