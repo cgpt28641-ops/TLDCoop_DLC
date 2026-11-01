@@ -416,3 +416,11 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
   read-only token; build id from the notes vs kBuild; download asset, MZ check, .new -> swap, .old deleted next
   start; message on the co-op screen and HUD). CI step "Update token and build id" writes src/update_secret.inc
   (gitignored) from secret UPDATE_TOKEN. Until Karol adds that secret the updater stays off ("no update token").
+
+## 2026-11-01 (wieczór) – raporty F11 z gry na 3 osoby (build 8235358)
+- Walka: gdy ktoś inny zabije zwierzę, które nas trzyma, nasza walka kończy się od razu (PlayerStruggle.MakePartnerFlee) – raport Kerela.
+- Walka z łosiem „zawieszona” (Szymon: „widzę niebo i nic więcej”): po 12 s OnMooseButtHeadAttackComplete, po 35 s MakePartnerFlee, po 40 s BreakStruggle.
+- Host: walka zwierzęcia z graczem, który wyszedł z gry, kończy się od razu (wcześniej niedźwiedź stał 45 s i nie reagował). Zwierzę zastrzelone przez kogoś w trakcie walki ginie od razu.
+- Adaptive Arsenal (host): pomija warstwę CharacterControllerCollideOnly; trafienie w zwierzę bez strefy trafień = zwykłe obrażenia; log „a bullet of ours hit 'X'” dla pudeł.
+- SkyCoop przejrzany (lista mechanik dla Karola w czacie).
+- Do sprawdzenia: czat – w logach dużo pustych linii (ENTER bez tekstu).
