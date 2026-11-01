@@ -139,6 +139,10 @@ struct Hold {
     Vec3 item_up{0, 1, 0};    // and its up, for its roll
     bool hangs = false;       // it hangs straight down from the hand whatever the arm does (a lantern)
     float grip = 0;           // where along it the hand is: -1 its back (or bottom) end, 0 its middle, 1 its front
+    // TLDCoop_DLC: the body into it (worked out on the rig offline)
+    bool elbow_out = false;   // the right elbow raised out to the side (a rifle at the shoulder), the left one under
+    float lean = 0;           // degrees the upper spine and neck lean forward
+    float head = 0;           // and the head on top of that (down onto the sights)
 };
 
 // The default hold for each kind (tuned against screenshots of the body pack's characters).
@@ -173,11 +177,14 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
         case HeldKind::Rifle:
             h.right = h.left = true;
             // TLDCoop_DLC: re-tuned on the rig offline so both hands reach the rifle (the left one couldn't before)
-            if (aiming) {  // at the shoulder, along where they look
+            if (aiming) {  // at the shoulder, along where they look: right elbow out, cheek down on the stock
                 h.look = true;
-                h.right_hand = {-0.12f, -0.06f, 0.24f};
-                h.grip = -0.55f;
-                h.left_on_item = 0.28f;
+                h.right_hand = {-0.10f, -0.08f, 0.18f};
+                h.grip = -0.62f;
+                h.left_on_item = 0.30f;
+                h.elbow_out = true;
+                h.lean = 6;
+                h.head = 8;
             } else {  // across the body (port arms): right hand at the stock's wrist, muzzle up by the left shoulder
                 h.right_hand = {-0.04f, -0.42f, 0.20f};
                 h.item_dir = {-0.55f, 0.70f, 0.45f};
@@ -194,6 +201,8 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
                 h.left = true;
                 h.right_hand = {-0.14f, -0.03f, 0.44f};  // TLDCoop_DLC: (0.52 forward: the left hand fell short)
                 h.left_on_item = 0;
+                h.lean = 3;
+                h.head = 4;
                 h.grip = -0.3f;
             } else {
                 h.right_hand = {0.05f, -0.50f, 0.15f};
@@ -232,10 +241,10 @@ inline Hold hold_for(HeldKind kind, uint8_t flags) {
             h.right = true;
             if (flags & kHeldRaised) {  // set: low, point forward, in both hands
                 h.left = true;
-                h.right_hand = {-0.06f, -0.40f, -0.02f};  // TLDCoop_DLC: at the hip, the left hand forward on the shaft
-                h.item_dir = {-0.10f, -0.08f, 0.99f};
+                h.right_hand = {-0.06f, -0.38f, 0.10f};  // TLDCoop_DLC: at the hip, the left hand forward on the shaft
+                h.item_dir = {-0.20f, -0.06f, 0.97f};
                 h.grip = -0.2f;
-                h.left_on_item = 0.28f;
+                h.left_on_item = 0.26f;
             } else {  // upright at the side like a staff
                 h.right_hand = {0.12f, -0.42f, 0.10f};
                 h.item_dir = {0, 1, 0.1f};

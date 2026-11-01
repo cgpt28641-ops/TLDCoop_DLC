@@ -364,3 +364,8 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - 10:30 Karol: flare must be upright; some arm poses unnatural. held_pose.h: torch/flare/match upright (dir 0.05,0.98,0.18)
   out to the side; flashlight lower with the arm out (was up by the face); spear set at the hip, left hand forward
   (left palm now within 3 cm of the shaft on the rig; was 11 cm short). Preview: outputs/przedmioty_w_rekach_v2.png.
+- 10:50 "more realistic": a raised arm lifts its clavicle (lift_shoulder: (elevation-55)*0.3, max 16 deg; reach2 =
+  reach, lift, reach); half the hand's twist about the forearm goes to Forearm_jnt (relax_wrist, once a frame); rifle
+  aim: right elbow out, left under, spine/neck lean 6, head 8 (Hold.elbow_out/lean/head); revolver aim lean 3/head 4;
+  spear set re-tuned (left palm 3 cm from the shaft). Fixed: finger bends were applied 3-4 times a frame for the
+  supporting hand (wrap_hand in the settle loop) - now once.

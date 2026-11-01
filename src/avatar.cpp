@@ -665,7 +665,7 @@ void drop_bones(Avatar& a) {
 // TLDCoop_DLC: the bones of the rig posed by name (fingers, clavicles, neck, Spine2).
 bool rig_bone_wanted(const std::string& n) {
     if (n.size() < 5 || n.compare(n.size() - 4, 4, "_jnt") != 0) return false;
-    for (const char* k : {"Index", "Middle", "Ring", "Pinky", "Thumb", "Shoulder_jnt", "Neck_jnt", "Spine2_jnt"})
+    for (const char* k : {"Index", "Middle", "Ring", "Pinky", "Thumb", "Shoulder_jnt", "Neck_jnt", "Spine2_jnt", "Forearm_jnt"})
         if (n.find(k) != std::string::npos) return true;
     return false;
 }
@@ -687,7 +687,7 @@ void attach_bones(Avatar& a, Il2CppObject* body) {
     }
     if (arms != kArmBones) say(a, "only %d of the %d arm bones found: held items sit at the body", arms, kArmBones);
     if (!heads) say(a, "no head bone found: their nods and head shakes won't show");
-    if (a.rig.size() < 30) say(a, "only %zu finger/shoulder/neck bones found: hands stay as the clip has them", a.rig.size());
+    if (a.rig.size() < 32) say(a, "only %zu finger/shoulder/neck bones found: hands stay as the clip has them", a.rig.size());
     if (others != kBoneCount - kArmBones - 1)
         say(a, "only %d of the %d hip, spine and leg bones found: they won't crouch", others, kBoneCount - kArmBones - 1);
 }
@@ -1691,6 +1691,43 @@ PVec palm_centre(const Avatar& a, bool right) {
     if (!d.ok) return palm(a, right ? kRightArm : kLeftArm);
     return h + d.fingers * 0.055f + d.palm * 0.03f;
 }
+// Half of the hand's twist about the forearm goes to the forearm's twist bone: no wrung wrist.
+void relax_wrist(const Avatar& a, bool right) {
+    Il2CppObject* e = bone(a, right ? kRightElbow : kLeftElbow);
+    Il2CppObject* h = bone(a, right ? kRightHand : kLeftHand);
+    Il2CppObject* fa = rig_bone(a, right ? "RightForearm_jnt" : "LeftForearm_jnt");
+    if (!e || !h || !fa) return;
+    const Quat qe = rotation_of(e);
+    const Quat rel = net::pose::inverse(qe) * rotation_of(h);
+    const PVec ax = unit(net::pose::rotate(net::pose::inverse(qe), position_of(h) - position_of(e)));
+    const float along = rel.x * ax.x + rel.y * ax.y + rel.z * ax.z;
+    const float n = std::sqrt(along * along + rel.w * rel.w);
+    if (n < 1e-6f) return;
+    float deg = 2 * std::atan2(along / n, rel.w / n) / kDeg;
+    if (deg > 180) deg -= 360;
+    if (deg < -180) deg += 360;
+    turn_bone(fa, position_of(h) - position_of(e), 0.5f * deg);
+}
+// A raised arm takes its shoulder (clavicle) up with it: degrees it went up.
+float lift_shoulder(const Avatar& a, bool right) {
+    Il2CppObject* cl = rig_bone(a, right ? "RightShoulder_jnt" : "LeftShoulder_jnt");
+    if (!cl) return 0;
+    const PVec sh = position_of(bone(a, right ? kRightUpArm : kLeftUpArm)), el = position_of(bone(a, right ? kRightElbow : kLeftElbow));
+    float c = net::pose::dot(unit(el - sh), PVec{0, -1, 0});
+    c = c < -1 ? -1 : c > 1 ? 1 : c;
+    const float elev = std::acos(c) / kDeg;
+    const float deg = std::min(16.0f, std::max(0.0f, (elev - 55) * 0.3f));
+    if (deg <= 0) return 0;
+    const net::pose::Frame f = net::pose::frame(sh, a.shown_yaw, 0, true);
+    turn_bone(cl, f.forward, right ? -deg : deg);
+    return deg;
+}
+// reach, the shoulder up with a raised arm, then reach again from where the shoulder is now.
+void reach2(const Avatar& a, Arm arm, PVec to, PVec pole) {
+    reach(a, arm, to, pole);
+    if (lift_shoulder(a, arm.hand == kRightHand) > 0) reach(a, arm, to, pole);
+}
+
 // How a hand closes round an item: through the fist, index side towards its front (Stick: torch, flare, flashlight,
 // spear, bow, most things); round a grip under it, the wrist in line with it (Pistol: guns, camera); a handle at the
 // side (Hang: lantern); under it, palm up (Support: the other hand on a gun or spear); cupped (Palm: a stone).
@@ -1712,7 +1749,7 @@ Wrap wrap_for(net::HeldKind kind) {
     }
 }
 // Turn the hand round an item along `dir` (its up `up`) and close the fingers on it.
-void wrap_hand(const Avatar& a, bool right, Wrap mode, PVec dir, PVec up) {
+void wrap_hand(const Avatar& a, bool right, Wrap mode, PVec dir, PVec up, bool shape = true) {
     const float sgn = right ? 1.0f : -1.0f;
     Il2CppObject* hand = bone(a, right ? kRightHand : kLeftHand);
     Il2CppObject* elbow = bone(a, right ? kRightElbow : kLeftElbow);
@@ -1737,18 +1774,18 @@ void wrap_hand(const Avatar& a, bool right, Wrap mode, PVec dir, PVec up) {
             p = unit(up - dir * net::pose::dot(up, dir));
             f = net::pose::cross(l, p) * sgn;
             orient_hand(a, right, f, p);
-            hand_shape(a, right, HandShape::Grip, 0.55f);
+            if (shape) hand_shape(a, right, HandShape::Grip, 0.55f);
             return;
         case Wrap::Palm:
             f = fore;
             l = unit(net::pose::cross(fore, PVec{0, 1, 0})) * sgn;
             p = net::pose::cross(f, l) * sgn;
             orient_hand(a, right, f, p);
-            hand_shape(a, right, HandShape::Open, 1);
+            if (shape) hand_shape(a, right, HandShape::Open, 1);
             return;
     }
     orient_hand(a, right, f, p);
-    hand_shape(a, right, HandShape::Grip, 1);
+    if (shape) hand_shape(a, right, HandShape::Grip, 1);  // (the bends add to the clip's: once a frame)
 }
 
 // The copy, turned as the hold says (its long axis along item_dir, in frame f), with its grip at `grip`.
@@ -1916,6 +1953,7 @@ bool gesture(Avatar& a) {
             turn_bone(clavicle, f0.forward, -10 * w);  // the shoulder rises a little
             turn_bone(spine2, f0.forward, 3 * w);      // leaning a touch away
             reach(a, kRightArm, lerpv(start, elbow + fore * lower, w), elbow + f0.out * 0.4f - f0.up * 0.3f);
+            (void)clavicle;
             const float b = (swing * 0.6f + lag * 0.5f - 8) * kDeg;
             if (h0.ok)
                 orient_hand(a, true, unit(f0.up * std::cos(b) + f0.out * std::sin(b)), unit(f0.forward - f0.out * 0.15f), w);
@@ -1928,8 +1966,8 @@ bool gesture(Avatar& a) {
             turn_bone(spine2, up, -8 * w);
             turn_bone(clavicle, up, -6 * w);
             const PVec s2 = position_of(bone(a, kRightUpArm));
-            reach(a, kRightArm, lerpv(start, s2 + unit(look.forward + f0.out * 0.08f) * 0.56f, w),
-                  s2 + f0.out * 0.3f - f0.up * 0.5f);
+            reach2(a, kRightArm, lerpv(start, s2 + unit(look.forward + f0.out * 0.08f) * 0.56f, w),
+                   s2 + f0.out * 0.3f - f0.up * 0.5f);
             if (h0.ok) orient_hand(a, true, unit(look.forward + f0.out * 0.05f), unit(look.up * -0.75f - f0.out * 0.25f), w);
             hand_shape(a, true, HandShape::Point, w);
             break;
@@ -1948,7 +1986,7 @@ bool gesture(Avatar& a) {
         case net::Emote::Stop: {  // the flat hand pushed out in front, palm forward, fingers up
             const float w = envelope(0.22f, 0.35f, true);
             const float push = t < 0.6f ? 0.04f * smooth01(t / 0.3f) * smooth01((0.6f - t) / 0.3f) : 0;
-            reach(a, kRightArm, lerpv(start, f0.at({0.04f, -0.06f, 0.44f + push}), w), shoulder + f0.out * 0.45f - f0.up * 0.5f);
+            reach2(a, kRightArm, lerpv(start, f0.at({0.04f, -0.06f, 0.44f + push}), w), shoulder + f0.out * 0.45f - f0.up * 0.5f);
             if (h0.ok) orient_hand(a, true, unit(f0.up + f0.forward * 0.15f - f0.out * 0.05f), f0.forward, w);
             hand_shape(a, true, HandShape::Flat, w);
             break;
@@ -1956,6 +1994,7 @@ bool gesture(Avatar& a) {
         default:
             return false;
     }
+    relax_wrist(a, true);
     const net::pose::Frame right = net::pose::frame(position_of(bone(a, kRightUpArm)), a.shown_yaw, 0, true);
     if (a.held.go) place_held(a, hold_of(a.held.kind, a.held_flags), palm(a, kRightArm), right);
     return true;
@@ -1984,13 +2023,25 @@ void late_one(Avatar& a) {
         place_held(a, h, has_bones(a) ? palm(a, arm) : f.at({0.3f, -0.25f, 0.35f}), f);
         return;
     }
+    if (h.lean != 0 || h.head != 0) {  // TLDCoop_DLC: into the aim (spine and neck forward, the head down to the sights)
+        const net::pose::Frame f = net::pose::frame(position_of(bone(a, kRightUpArm)), a.shown_yaw, 0, true);
+        turn_bone(rig_bone(a, "Spine2_jnt"), f.out, h.lean);
+        turn_bone(rig_bone(a, "Neck_jnt"), f.out, h.lean);
+        turn_bone(bone(a, kHead), f.out, h.head);
+    }
     const net::pose::Frame right = net::pose::frame(position_of(bone(a, kRightUpArm)), a.shown_yaw, pitch, true);
     const net::pose::Frame left = net::pose::frame(position_of(bone(a, kLeftUpArm)), a.shown_yaw, pitch, false);
     const Arm main = h.in_left ? kLeftArm : kRightArm, other = h.in_left ? kRightArm : kLeftArm;
     const net::pose::Frame& main_frame = h.in_left ? left : right;
     const net::pose::Frame& other_frame = h.in_left ? right : left;
-    if (h.in_left ? h.left : h.right) reach(a, main, main_frame.at(h.in_left ? h.left_hand : h.right_hand),
-                                            pole_for(main_frame));
+    // TLDCoop_DLC: a rifle at the shoulder: the right elbow raised out, the left one under the fore-end
+    const PVec main_pole = h.elbow_out && !h.in_left
+                               ? main_frame.origin + main_frame.out * 0.5f - main_frame.up * 0.05f - main_frame.forward * 0.15f
+                               : pole_for(main_frame);
+    const PVec other_pole = h.elbow_out && !h.in_left
+                                ? other_frame.origin - other_frame.up * 0.6f + other_frame.forward * 0.1f - other_frame.out * 0.05f
+                                : pole_for(other_frame);
+    if (h.in_left ? h.left : h.right) reach2(a, main, main_frame.at(h.in_left ? h.left_hand : h.right_hand), main_pole);
     // TLDCoop_DLC: the hand turned round the item and closed on it; the item through the fist (or on top of it, a gun)
     const Wrap wrap = wrap_for(a.held.kind);
     const PVec level_fwd = unit(PVec{right.forward.x, 0, right.forward.z});
@@ -1998,7 +2049,10 @@ void late_one(Avatar& a) {
     const PVec item_up = h.hangs ? PVec{0, 1, 0} : unit(right.dir(h.item_up));
     const bool main_right = !h.in_left;
     const bool shaped = hand_dirs(a, main_right).ok;
-    if (shaped) wrap_hand(a, main_right, wrap, item_dir, item_up);
+    if (shaped) {
+        wrap_hand(a, main_right, wrap, item_dir, item_up);
+        relax_wrist(a, main_right);
+    }
     PVec grip = shaped ? palm_centre(a, main_right) : palm(a, main);
     if (shaped && wrap == Wrap::Pistol) grip = grip + hand_dirs(a, main_right).across * 0.05f;  // above the fist
     place_held(a, h, grip, right);
@@ -2016,12 +2070,16 @@ void late_one(Avatar& a) {
         if (h.left_on_item >= 0 && hand_dirs(a, other_right).ok) {
             // TLDCoop_DLC: the other hand under the item, palm up against it (its palm, not its wrist, at the spot)
             const PVec want = to - item_up * 0.035f;
-            for (int i = 0; i < 2; ++i) {
-                wrap_hand(a, other_right, Wrap::Support, item_dir, item_up);
+            for (int i = 0; i < 3; ++i) {  // (the palm's offset depends on the hand's turn: settle it)
+                wrap_hand(a, other_right, Wrap::Support, item_dir, item_up, false);
                 const PVec off = palm_centre(a, other_right) - position_of(bone(a, other_right ? kRightHand : kLeftHand));
-                reach(a, other, want - off, pole_for(other_frame));
+                if (i < 2)
+                    reach(a, other, want - off, other_pole);
+                else
+                    reach2(a, other, want - off, other_pole);  // the shoulder up once, at the end
             }
             wrap_hand(a, other_right, Wrap::Support, item_dir, item_up);
+            relax_wrist(a, other_right);
         } else {
             reach(a, other, to, pole_for(other_frame));
             if (hand_dirs(a, other_right).ok) hand_shape(a, other_right, HandShape::Grip, 0.6f);
