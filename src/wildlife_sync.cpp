@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <string>
@@ -13,13 +15,18 @@
 #include <utility>
 #include <vector>
 
+#include "avatar.h"
 #include "config.h"
+#include "coop_features.h"
 #include "game_state.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/interp.h"
+#include "net/wildlife_own.h"
 #include "net_runtime.h"
+#include "paths.h"
+#include "seamless_interiors.h"
 
 namespace wildlife_sync {
 namespace {
@@ -135,6 +142,13 @@ struct Api {
     const MethodInfo* get_name = nullptr;    // Object.get_name
     Il2CppObject* arrow_type = nullptr;
     const MethodInfo* arrow_detach = nullptr;  // ArrowItem.DetachIntoWorld()
+    // TLDCoop_DLC (v44): wildlife ownership's handovers.
+    ptrdiff_t ai_current_target = -1, ai_player_target = -1;  // BaseAi.m_CurrentTarget, m_PlayerTarget (AiTarget)
+    const MethodInfo* ai_serialize = nullptr;    // BaseAi.Serialize(): TLD's save record of the animal
+    const MethodInfo* ai_deserialize = nullptr;  // BaseAi.Deserialize(string)
+    const MethodInfo* ai_set_pos_rot = nullptr;  // BaseAi.SetPositionAndRotation(Vector3, Quaternion)
+    const MethodInfo* ai_clear_target = nullptr; // BaseAi.ClearTarget()
+    const MethodInfo* ai_apply_damage = nullptr; // virtual BaseAi.ApplyDamage(float, float, DamageSource, string)
 } api;
 
 bool g_ready = false;
@@ -768,6 +782,10 @@ struct Puppet {
     bool carcass = false;                               // a real carcass (wildlife_carcass) has taken its place
     bool aurora = false;                                // TLDCoop_DLC: the aurora model
     bool params_dirty = false;                          // TLDCoop_DLC: a new record came: its parameters to apply
+    // TLDCoop_DLC (v44), wildlife ownership: drawn ahead of its owner's records; which handover they come from
+    net::wild::Predictor pred;
+    uint16_t epoch = 0;
+    bool own = false;
 };
 
 std::map<uint32_t, Puppet> g_puppets;
@@ -1099,11 +1117,9 @@ void apply_states(Puppet& p, double now) {
 std::vector<net::AnimalSound> g_sounds_in;
 int g_sounds_played = 0;
 
-void play_host_sounds() {
-    g_sounds_in.clear();
-    netrt::drain_animal_sounds(g_sounds_in);
+void play_sounds(const std::vector<net::AnimalSound>& sounds) {
     if (!g_post_id || !g_stop_playing || !g_action_id) return;
-    for (const net::AnimalSound& s : g_sounds_in) {
+    for (const net::AnimalSound& s : sounds) {
         const auto it = g_puppets.find(s.animal);
         if (it == g_puppets.end()) continue;
         Puppet& p = it->second;
@@ -1126,6 +1142,12 @@ void play_host_sounds() {
             g_action_id(s.event, s.action, object, s.fade_ms, s.curve, ours);
         }
     }
+}
+
+void play_host_sounds() {
+    g_sounds_in.clear();
+    netrt::drain_animal_sounds(g_sounds_in);
+    play_sounds(g_sounds_in);
 }
 
 // --- the host's animals attacking us (milestone 7c) -------------------------------------------------------------------
@@ -1657,6 +1679,8 @@ void mirror(const std::string& scene, double now) {
     }
 }
 
+#include "wildlife_owner.inc"
+
 // While we mirror the host's animals, TLD's own spawning stays off: every spawn it makes at runtime (topping up a
 // region, respawning) goes through SpawnRegion.Spawn, and anything it made would only be hidden again. Animals
 // restored from the save at load are hidden once by hide_our_animals.
@@ -1680,6 +1704,11 @@ using SpawnFn = bool (*)(Il2CppObject* self, int32_t wildlife_mode, const Method
 SpawnFn g_spawn = nullptr;
 
 bool spawn_detour(Il2CppObject* self, int32_t wildlife_mode, const MethodInfo* method) {
+    if (own_mode()) {  // TLDCoop_DLC (v44): only the game the host chose for this scene spawns
+        if (i_control(game::active_scene())) return g_spawn(self, wildlife_mode, method);
+        if (g_spawns_blocked++ == 0) logx::info("wildlife: TLD's own spawning is off here (another game spawns in this scene)");
+        return false;
+    }
     if (g_mirroring) {
         if (g_spawns_blocked++ == 0) logx::info("wildlife: TLD's own spawning is off while the host's animals are shown");
         return false;
@@ -1709,9 +1738,28 @@ float host_animal_hp(Il2CppObject* ai) { return il2::read_field<float>(ai, api.a
 
 bool mirroring() { return g_mirroring; }
 
+bool ownership() { return g_ready && own_mode(); }
+uint8_t owner_of(uint32_t id) {
+    if (g_owned.count(id)) return self_id();
+    const auto it = g_registry.find(id);
+    return it == g_registry.end() ? net::kNoPlayer : it->second.owner;
+}
+bool owned_here(Il2CppObject* ai) { return ai && g_ids.count(reinterpret_cast<uintptr_t>(ai)) != 0; }
+bool copies_shown() {
+    const auto role = netrt::role();
+    return role && (*role == net::Role::Client || ownership());
+}
+std::string describe_owners() { return describe_ownership(); }
+
 void carcass_made(uint32_t id, Il2CppObject* carcass_go) {
     if (carcass_go) g_carcasses.push_back(carcass_go);
     g_carcass_ids.insert(id);
+    if (const auto d = g_dying.find(id); d != g_dying.end()) {  // TLDCoop_DLC (v44): ours that died: the host's carcass now
+        if (Il2CppObject* ai = target(d->second.ai); ai && alive(ai)) set_active(go_of(ai), false);
+        drop(d->second.ai);
+        g_dying.erase(d);
+        logx::info("wildlife: the host's carcass of #%u takes the place of ours", id);
+    }
     if (auto it = g_puppets.find(id); it != g_puppets.end()) {
         it->second.carcass = true;
         free_stuck_arrows(target(it->second.go));
@@ -1903,6 +1951,25 @@ bool init() {
     api.ai_bleeding = il2::field_offset(base_ai, "m_BleedingOut");
     api.ai_bleed_elapsed = il2::field_offset(base_ai, "m_ElapsedBleedingOutMinutes");
     api.ai_bleed_limit = il2::field_offset(base_ai, "m_DeathAfterBleeingOutMinutes");
+    api.ai_current_target = il2::field_offset_quiet(base_ai, "m_CurrentTarget");
+    api.ai_player_target = il2::field_offset_quiet(base_ai, "m_PlayerTarget");
+    api.ai_serialize = il2::find_method_quiet(base_ai, "Serialize", 0);
+    api.ai_deserialize = il2::find_method_quiet(base_ai, "Deserialize", 1);
+    api.ai_set_pos_rot = il2::find_method_params_quiet(base_ai, "SetPositionAndRotation",
+                                                       {"UnityEngine.Vector3", "UnityEngine.Quaternion"});
+    api.ai_clear_target = il2::find_method_quiet(base_ai, "ClearTarget", 0);
+    api.ai_apply_damage = il2::find_method_params_quiet(base_ai, "ApplyDamage",
+                                                        {"System.Single", "System.Single", "DamageSource", "System.String"});
+    {
+        const auto ini = paths::instance_dir() / L"coop.ini";
+        g_own_config = GetPrivateProfileIntW(L"wildlife", L"ownership", 1, ini.c_str()) != 0;
+        coop_features::set_own(net::kFeatureWildOwnership, g_own_config);
+        logx::info("wildlife: ownership %s ([wildlife] ownership=%d; the host's counts)%s", g_own_config ? "on" : "off",
+                   g_own_config ? 1 : 0,
+                   g_own_config && !(api.ai_serialize && api.ai_deserialize && api.ai_set_pos_rot)
+                       ? "; TLD's record of an animal can't be handed over (older game?): its basics only"
+                       : "");
+    }
 
     const bool spawn_api = (api.region_prefab >= 0 && api.instantiate_spawn_legacy) ||
                            (api.region_spawn_list >= 0 && api.spawn_entry_asset && api.instantiate_spawn);
@@ -1942,15 +2009,36 @@ void on_frame(const std::string& scene, bool in_game) {
     install_sound_hooks();
     const auto role = netrt::role();
     const double now = now_ms();
+    const bool own = own_mode();  // TLDCoop_DLC (v44)
     {
-        // Host: hand over what our animals said since the last frame.
+        // Host: hand over what our animals said since the last frame. (Ownership: every owner, its own animals'.)
         std::vector<net::AnimalSound> sounds;
         {
             std::lock_guard lock(g_sound_mutex);
-            g_sound_host = role && *role == net::Role::Host;
+            g_sound_host = own || (role && *role == net::Role::Host);
             sounds.swap(g_sounds_out);
         }
-        if (!sounds.empty() && g_sound_host) netrt::send_animal_sounds(sounds);
+        if (!sounds.empty() && own) own_send_sounds(sounds);
+        else if (!sounds.empty() && g_sound_host) netrt::send_animal_sounds(sounds);
+    }
+    if (own != g_own_was) {
+        // The host's choice came (or went): the other way's animals are put away first.
+        if (own) {
+            stop_mirroring("wildlife ownership on");
+            g_took_over_scene.clear();
+            g_handover = Handover{};
+        } else {
+            own_reset("wildlife ownership off", true);
+            g_mirroring = false;
+            g_registry.clear();
+            g_controllers.clear();
+        }
+        logx::info("wildlife: ownership %s", own ? "on (each animal is run by one game, the host decides which)" : "off");
+        g_own_was = own;
+    }
+    if (own && role) {
+        own_frame(scene, in_game, now);
+        return;
     }
     if (!role) {
         stop_mirroring("co-op off");

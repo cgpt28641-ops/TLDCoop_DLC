@@ -752,6 +752,9 @@ void run(const std::string& line) {
     } else if (cmd == "sounds") {
         std::istringstream lines(wildlife_sync::describe_sounds());
         for (std::string l; std::getline(lines, l);) logx::info("dev: %s", l.c_str());
+    } else if (cmd == "owners") {  // TLDCoop_DLC (v44): wildlife ownership: who runs which animal
+        std::istringstream lines(wildlife_sync::describe_owners());
+        for (std::string l; std::getline(lines, l);) logx::info("dev: %s", l.c_str());
     } else if (cmd == "info") {
         cmd_info(me);
     } else if (cmd == "animals") {

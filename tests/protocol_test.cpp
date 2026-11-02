@@ -132,6 +132,63 @@ int main() {
     }
     round_trip("Animals", Msg::Animals, animals, write_animals, read_animals);
 
+    {  // v44: wildlife ownership
+        WildFrameMsg frame;
+        frame.owner = 2;
+        frame.frame = 17;
+        frame.t_ms = 5.5;
+        frame.part = 0;
+        frame.parts = 1;
+        frame.scene = "LakeRegion";
+        for (uint32_t i = 0; i < 2; ++i) {
+            AnimalRec a = animals.animals[i];
+            a.epoch = static_cast<uint16_t>(3 + i);
+            a.target = i ? kNoPlayer : 1;
+            a.flags = kAnimalBleeding | kAnimalWounded;
+            a.bleed_elapsed = 12.5f, a.bleed_limit = 40;
+            frame.animals.push_back(a);
+        }
+        round_trip("WildFrame", Msg::WildFrame, frame, write_wild_frame, read_wild_frame);
+        if (wild_rec_size(frame.animals[0]) + wild_rec_size(frame.animals[1]) + kWildFrameHeader !=
+            [&] { Writer w(Msg::WildFrame); write_wild_frame(w, frame); return w.size(); }())
+            fail("WildFrame size", "wild_rec_size / kWildFrameHeader don't add up to what is written");
+
+        WildCtlMsg controllers;
+        controllers.op = WildOp::Controllers;
+        controllers.scenes = {{"LakeRegion", 1, 0}, {"CoastalRegion", kNoPlayer, 1}};
+        round_trip("WildCtl Controllers", Msg::WildCtl, controllers, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg release;
+        release.op = WildOp::Release;
+        release.id = 0x2000005, release.to = 3, release.epoch = 9;
+        round_trip("WildCtl Release", Msg::WildCtl, release, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg take;
+        take.op = WildOp::Take;
+        take.id = 0x1000002, take.to = 0, take.epoch = 10, take.flags = kTakeDead;
+        take.scene = "LakeRegion";
+        take.state = frame.animals[0];
+        take.text = "{\"m_CurrentMode\":15,\"m_CurrentHP\":80}";
+        round_trip("WildCtl Take", Msg::WildCtl, take, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg refuse;
+        refuse.op = WildOp::Refuse;
+        refuse.id = 77, refuse.epoch = 2;
+        round_trip("WildCtl Refuse", Msg::WildCtl, refuse, write_wild_ctl, read_wild_ctl);
+
+        WildHitMsg wild_hit;
+        wild_hit.op = WildHitOp::Hit;
+        wild_hit.who = 2;
+        wild_hit.hit.animal = 0x3000001;
+        wild_hit.hit.weapon = Weapon::Arrow;
+        wild_hit.hit.collider = "capsule_chest";
+        wild_hit.hit.damage = 40;
+        round_trip("WildHit (hit)", Msg::WildHit, wild_hit, write_wild_hit, read_wild_hit);
+        WildHitMsg wild_thrown;
+        wild_thrown.op = WildHitOp::Thrown;
+        wild_thrown.who = 0;
+        wild_thrown.thrown.item = ThrownItem::Flare;
+        wild_thrown.thrown.pos[1] = 3;
+        round_trip("WildHit (thrown)", Msg::WildHit, wild_thrown, write_wild_hit, read_wild_hit);
+    }
+
     std::vector<AnimalSound> sounds(2);
     sounds[0] = {5, 1, SoundOp::Post, 1001, 2002, 3, 400, 2};
     sounds[1] = {6, 2, SoundOp::Action, 1003, 2004, 1, 250, 4};

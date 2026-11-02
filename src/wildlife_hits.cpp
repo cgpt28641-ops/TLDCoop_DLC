@@ -189,9 +189,25 @@ void send_hit(uint32_t animal, net::Weapon weapon, Il2CppObject* ld, Il2CppObjec
     void* args[] = {&point};
     il2::invoke_value(api.to_local, collider_transform, local, args);
     h.local[0] = local.x, h.local[1] = local.y, h.local[2] = local.z;
-    net::Writer w(net::Msg::Hit);
-    net::write_hit(w, h);
-    netrt::send_packet(w, true);
+    if (is_host()) {
+        // TLDCoop_DLC (v44), wildlife ownership: the host shot a copy: to the game that runs the animal.
+        const uint8_t owner = wildlife_sync::owner_of(animal);
+        if (owner == net::kNoPlayer || owner == 0) {
+            logx::info("wildlife: our shot hit a copy of #%u, which nobody runs now; lost", animal);
+            return;
+        }
+        net::WildHitMsg m;
+        m.op = net::WildHitOp::Hit;
+        m.who = 0;
+        m.hit = h;
+        net::Writer w(net::Msg::WildHit);
+        net::write_wild_hit(w, m);
+        netrt::send_packet_to(owner, w, true);
+    } else {
+        net::Writer w(net::Msg::Hit);
+        net::write_hit(w, h);
+        netrt::send_packet(w, true);
+    }
     char bleeding[48] = "";
     if (bleed > 0) snprintf(bleeding, sizeof(bleeding), ", bleeds out in %.0f min", bleed);
     logx::info("wildlife: our %s hit the host's #%u (%s): %.1f damage%s%s%s", weapon_name(weapon), animal,
@@ -206,7 +222,7 @@ SpawnImpactFn g_spawn_impact = nullptr;
 
 void spawn_impact_detour(Il2CppObject* self, void* hit, const MethodInfo* method) {
     g_spawn_impact(self, hit, method);
-    if (!g_ready || !hit || !is_client()) return;
+    if (!g_ready || !hit || !wildlife_sync::copies_shown()) return;
     int32_t collider_id = 0;
     memcpy(&collider_id, static_cast<char*>(hit) + kRaycastHitCollider, sizeof(collider_id));
     void* id_args[] = {&collider_id};
@@ -257,7 +273,7 @@ using ArrowDamageFn = Il2CppObject* (*)(Il2CppObject* self, Il2CppObject* victim
 ArrowDamageFn g_arrow_damage = nullptr;
 
 bool copy_hit(Il2CppObject* victim_go, uint32_t& animal, Il2CppObject*& tf, Il2CppObject*& ld) {
-    if (!g_ready || !victim_go || !is_client()) return false;
+    if (!g_ready || !victim_go || !wildlife_sync::copies_shown()) return false;
     tf = il2::invoke(api.go_transform, victim_go);
     bool dead = false;
     if (!tf || !wildlife_sync::puppet_at(tf, animal, dead)) return false;
@@ -316,7 +332,7 @@ ThrownFn g_thrown = nullptr;
 
 void thrown_detour(Il2CppObject* item, Il2CppObject* contacts, const MethodInfo* method) {
     g_thrown(item, contacts, method);
-    if (!g_ready || !item || !is_client()) return;
+    if (!g_ready || !item || !wildlife_sync::copies_shown()) return;
     net::ThrownMsg t;
     if (il2::read_field<Il2CppObject*>(item, api.gear_stone)) t.item = net::ThrownItem::Stone;
     else if (Il2CppObject* flare = il2::read_field<Il2CppObject*>(item, api.gear_flare)) {
@@ -341,9 +357,19 @@ void thrown_detour(Il2CppObject* item, Il2CppObject* contacts, const MethodInfo*
             memcpy(t.contact, contact, sizeof(t.contact));  // ContactPoint.m_Point
         }
     }
-    net::Writer w(net::Msg::Thrown);
-    net::write_thrown(w, t);
-    netrt::send_packet(w, true);
+    if (is_host()) {  // TLDCoop_DLC (v44), wildlife ownership: every friend's game scares its own animals
+        net::WildHitMsg m;
+        m.op = net::WildHitOp::Thrown;
+        m.who = 0;
+        m.thrown = t;
+        net::Writer w(net::Msg::WildHit);
+        net::write_wild_hit(w, m);
+        netrt::send_packet(w, true);
+    } else {
+        net::Writer w(net::Msg::Thrown);
+        net::write_thrown(w, t);
+        netrt::send_packet(w, true);
+    }
     static const char* kItems[] = {"?", "stone", "flare", "torch", "noise maker"};
     logx::info("wildlife: our thrown %s landed at (%.1f, %.1f, %.1f)%s", kItems[static_cast<int>(t.item)], at.x, at.y,
                at.z, t.animal ? (" on the host's #" + std::to_string(t.animal)).c_str() : "");
@@ -374,8 +400,7 @@ void apply_hit(const net::HitMsg& h, uint8_t from) {
     const bool kill = (h.flags & net::kHitCritical) && !il2::read_field<bool>(ai, api.ai_ignore_crits);
     if (kill) damage = std::numeric_limits<float>::infinity();
     const float hp_before = wildlife_sync::host_animal_hp(ai);
-    const bool done = wildlife_targets::as_friends_doing(ai, from, [&](const wildlife_targets::FriendStandIn& who) {
-        Vector3 source{who.position[0], who.position[1], who.position[2]};
+    auto hit_it = [&](Vector3 source) {
         void* anim_args[] = {&world, &source, ld};
         il2::invoke(api.setup_damage_anim, ai, anim_args);
         float bleed = h.bleed_minutes;
@@ -385,7 +410,18 @@ void apply_hit(const net::HitMsg& h, uint8_t from) {
         int32_t ws = static_cast<int32_t>(h.weapon);
         void* react_args[] = {&ws};
         il2::invoke(il2::virtual_method(ai, api.react_to_hit), ai, react_args);
+    };
+    bool done = wildlife_targets::as_friends_doing(ai, from, [&](const wildlife_targets::FriendStandIn& who) {
+        hit_it(Vector3{who.position[0], who.position[1], who.position[2]});
     });
+    if (!done && !is_host() && wildlife_sync::ownership()) {
+        // TLDCoop_DLC (v44): a friend's game runs this animal; the shot comes from where the shooter stands (it reacts
+        // as to our own player: a friend's game knows no other)
+        Vector3 source = world;
+        if (const auto st = netrt::remote_state(from); st && st->valid) source = Vector3{st->x, st->y, st->z};
+        hit_it(source);
+        done = true;
+    }
     if (!done) {
         logx::warn("wildlife: the other player's hit on #%u can't be applied (their avatar isn't shown)", h.animal);
         return;
@@ -413,6 +449,7 @@ void apply_thrown(const net::ThrownMsg& t, uint8_t from) {
     int scared = 0;
     bool stunned = false;
     for (Il2CppObject* ai : all_animals()) {
+        if (wildlife_sync::ownership() && !wildlife_sync::owned_here(ai)) continue;  // TLDCoop_DLC (v44): ours only
         const int32_t mode = il2::read_field<int32_t>(ai, api.ai_mode);
         if (mode == kAiModeDead || mode == kAiModeStruggle || mode == kAiModeStunned) continue;
         const bool hit = t.animal && wildlife_sync::host_animal_id(ai) == t.animal;
@@ -463,11 +500,15 @@ void apply_thrown(const net::ThrownMsg& t, uint8_t from) {
         }
         if (!hit && metres > reach) continue;
         if (rand() % 100 >= chance) continue;
-        wildlife_targets::as_friends_doing(ai, from, [&](const wildlife_targets::FriendStandIn&) {
-            Vector3 landed = at;
+        if (!wildlife_targets::as_friends_doing(ai, from, [&](const wildlife_targets::FriendStandIn&) {
+                Vector3 landed = at;
+                void* args[] = {&landed};
+                il2::invoke(api.flee_from, ai, args);
+            }) && wildlife_sync::ownership()) {
+            Vector3 landed = at;  // TLDCoop_DLC (v44): a friend's game (no stand-ins there)
             void* args[] = {&landed};
             il2::invoke(api.flee_from, ai, args);
-        });
+        }
         int32_t reason = t.item == net::ThrownItem::Stone ? kFleeThrownStone : t.item == net::ThrownItem::NoiseMaker ? kFleeNoiseMaker : 0;
         if (reason && !il2::read_field<int32_t>(ai, api.ai_flee_reason))
             memcpy(reinterpret_cast<char*>(ai) + api.ai_flee_reason, &reason, sizeof(reason));
@@ -964,20 +1005,58 @@ bool init() {
 void on_frame() {
     if (!g_ready) return;
     run_shot();
-    if (!is_host()) return;
+    const bool own = wildlife_sync::ownership();  // TLDCoop_DLC (v44)
+    if (!is_host()) {
+        std::vector<net::Packet> packets;
+        netrt::drain_packets(net::Msg::WildHit, packets);  // shots on the animals we run, passed on by the host
+        for (const net::Packet& p : packets) {
+            net::Reader r = net::packet_body(p);
+            net::WildHitMsg m;
+            if (!own || !net::read_wild_hit(r, m)) continue;
+            if (m.op == net::WildHitOp::Thrown)  // (thrown where the thrower is: our scene only)
+                if (const auto st = netrt::remote_state(m.who); !st || !st->valid || st->scene != game::active_scene()) continue;
+            if (m.op == net::WildHitOp::Hit) apply_hit(m.hit, m.who);
+            else apply_thrown(m.thrown, m.who);
+        }
+        return;
+    }
     std::vector<net::Packet> packets;
     netrt::drain_packets(net::Msg::Hit, packets);
     for (const net::Packet& p : packets) {
         net::Reader r = net::packet_body(p);
         net::HitMsg h;
-        if (net::read_hit(r, h)) apply_hit(h, p.from);
+        if (!net::read_hit(r, h)) continue;
+        const uint8_t owner = own ? wildlife_sync::owner_of(h.animal) : 0;
+        if (owner == 0 || owner == net::kNoPlayer || owner == p.from) {
+            apply_hit(h, p.from);
+            continue;
+        }
+        // TLDCoop_DLC (v44): another friend runs it: passed on to them
+        net::WildHitMsg m;
+        m.op = net::WildHitOp::Hit;
+        m.who = p.from;
+        m.hit = h;
+        net::Writer w(net::Msg::WildHit);
+        net::write_wild_hit(w, m);
+        netrt::send_packet_to(owner, w, true);
+        logx::info("wildlife: player %u's hit on #%u passed on to player %u, who runs it", p.from, h.animal, owner);
     }
     packets.clear();
     netrt::drain_packets(net::Msg::Thrown, packets);
     for (const net::Packet& p : packets) {
         net::Reader r = net::packet_body(p);
         net::ThrownMsg t;
-        if (net::read_thrown(r, t)) apply_thrown(t, p.from);
+        if (!net::read_thrown(r, t)) continue;
+        apply_thrown(t, p.from);
+        if (own) {  // TLDCoop_DLC (v44): the other friends' games scare the animals they run
+            net::WildHitMsg m;
+            m.op = net::WildHitOp::Thrown;
+            m.who = p.from;
+            m.thrown = t;
+            net::Writer w(net::Msg::WildHit);
+            net::write_wild_hit(w, m);
+            netrt::send_packet_except(p.from, w, true);
+        }
     }
 }
 

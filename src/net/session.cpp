@@ -923,6 +923,10 @@ struct Session::Impl {
             case Msg::Chat:
             case Msg::Rooms:
             case Msg::RoomPlace:
+            case Msg::WildFrame:
+            case Msg::WildCtl:
+            case Msg::WildSounds:
+            case Msg::WildHit:
             case Msg::Sleep:
             case Msg::Give: {
                 if (!linked) return;

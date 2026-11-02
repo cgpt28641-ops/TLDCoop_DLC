@@ -21,8 +21,9 @@ namespace wildlife_sync {
 bool init();
 void on_frame(const std::string& scene, bool in_game);
 std::string describe_sounds();  // what the Wwise hooks see (for the 'sounds' dev command)
-uint32_t host_animal_id(Il2CppObject* ai);  // host: the id an animal goes by in Animals (0 = not shared)
-Il2CppObject* host_animal(uint32_t id);     // host: the animal (BaseAi) with that id, if it's still shared
+uint32_t host_animal_id(Il2CppObject* ai);  // host: the id an animal goes by in Animals (0 = not shared); v44: any
+                                            // game, the animals it runs
+Il2CppObject* host_animal(uint32_t id);     // host: the animal (BaseAi) with that id, if it's still shared (v44: ours)
 float host_animal_hp(Il2CppObject* ai);     // BaseAi.m_CurrentHP
 // Client: whether this Transform belongs to one of our copies of the host's animals (its hit colliders), and which;
 // dead = the host's animal is dead.
@@ -36,6 +37,16 @@ bool mirroring();
 // TLDCoop_DLC: the host went into another scene (a house) and our animals took over this one, where we still are
 bool host_away_here();
 void carcass_made(uint32_t id, Il2CppObject* carcass_go);
+// TLDCoop_DLC (v44), [wildlife] ownership=1 (the host's): each animal is run by one game, shown as a copy in the others
+// (wildlife_owner.inc). ownership(): it's on now. owner_of(id): who runs animal `id` (us, or the host's registry;
+// net::kNoPlayer unknown). owned_here(ai): one of ours that we run (host_animal / host_animal_id then work in any
+// game). copies_shown(): this game shows copies others' weapons may hit (a friend; or anyone with ownership).
+bool ownership();
+uint8_t owner_of(uint32_t id);
+bool owned_here(Il2CppObject* ai);
+bool copies_shown();
+std::string describe_owners();  // dev command 'owners'
+
 void carcass_gone(uint32_t id, Il2CppObject* carcass_go);
 
 }  // namespace wildlife_sync

@@ -109,6 +109,19 @@
 //                          time `choice`, `hours` of it.
 //                          End (host): it is over (end Done, or Woken: player `who` woke, `why`). Woke (a friend):
 //                          our part of sleep `id` ended early (`why`), or we weren't in bed for its Start
+//   WildFrame either       (v44, [wildlife] ownership=1) one game's own animals, 10 Hz, as Animals but from any owner:
+//                          u8 owner, u32 frame, f64 capture time, u8 part, u8 parts, scene[48], u8 count, then per
+//                          animal u32 id, u16 epoch, u8 kind, u8 mode, u8 flags, u8 target, f32 x y z yaw pitch roll
+//                          hp, f32 bleed elapsed, f32 bleed limit, u8 layers + (i32 state, f32 time) each, u16 n + n
+//                          bytes animator parameters. A friend sends its own to the host, the host passes them on.
+//   WildCtl  either        (v44) u8 op: Controllers (host: per scene the game that lets TLD spawn, and whether the
+//                          registry has nothing there), Release (host -> owner: hand animal id to player `to`),
+//                          Take (the state of the animal for its new owner: the old owner -> host -> new owner, or
+//                          the host's registry when the old owner is gone; TLD's own BaseAi.Serialize() inside),
+//                          Refuse (new owner -> host: it couldn't take it)
+//   WildSounds either      (v44) as AnimalSounds, from any owner (the host passes a friend's on)
+//   WildHit  host->client  (v44) u8 op (1 hit, 2 thrown), u8 who (the shooter), then a Hit or Thrown body: a shot on
+//                          an animal another game runs, passed on to its owner
 
 #include <cstddef>
 #include <cmath>
@@ -122,7 +135,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 43;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 44;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -175,6 +188,9 @@ constexpr uint16_t kProtocolVersion = 43;  // v4: World. v5: Animals. v6: sounds
                                            // Seamless Interiors room)
                                            // v43 (TLDCoop_DLC): no new message; the rooms are turned to their buildings
                                            // (Stage 2): a player inside stands elsewhere in the world than in v42
+                                           // v44 (TLDCoop_DLC): wildlife ownership (each animal run by one game, the
+                                           // host the arbiter): WildFrame, WildCtl, WildSounds, WildHit; Features'
+                                           // kFeatureWildOwnership
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -198,7 +214,7 @@ enum class Msg : uint8_t {
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
     BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
-    Rooms = 47, RoomPlace = 48
+    Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -274,9 +290,18 @@ struct AnimalRec {
     // Every non-trigger animator parameter, in the controller's order: float / int as 4 bytes, bool as 1. Both
     // games load the same controller, so the order is the same on both sides.
     std::string params;
+    // v44, WildFrame only (wildlife ownership): which handover of the animal this is from (a late record of an older
+    // owner loses), the player it is after (kNoPlayer none), and its bleeding (BaseAi.m_ElapsedBleedingOutMinutes,
+    // m_DeathAfterBleeingOutMinutes).
+    uint16_t epoch = 0;
+    uint8_t target = 0xFF;
+    float bleed_elapsed = 0, bleed_limit = 0;
 };
 constexpr uint8_t kAnimalDead = 1;
 constexpr uint8_t kAnimalAurora = 2;  // TLDCoop_DLC: an aurora animal (its own model)
+constexpr uint8_t kAnimalBleeding = 4;  // v44: BaseAi.m_BleedingOut (WildFrame)
+constexpr uint8_t kAnimalWounded = 8;   // v44: BaseAi.m_Wounded (WildFrame)
+constexpr uint8_t kNoPlayer = 0xFF;
 struct AnimalsMsg {
     uint32_t frame = 0;
     double t_ms = 0;  // when the host captured the frame, on its own clock
@@ -1192,6 +1217,7 @@ constexpr uint32_t kFeatureAmbientLights = 1;  // Ambient Lights (built-in port 
 constexpr uint32_t kFeatureDynamicTrees = 2;   // Dynamic Trees (built in, with its authors' permission)
 constexpr uint32_t kFeatureAdaptiveArsenal = 4;  // (was Adaptive Arsenal: removed; the bit stays unused)
 constexpr uint32_t kFeatureSeamlessInteriors = 8;  // Seamless Interiors (built in, with its author's permission)
+constexpr uint32_t kFeatureWildOwnership = 16;  // (v44) [wildlife] ownership=1: each animal is run by one game
 inline void write_features(Writer& w, uint32_t bits, float tree_snow) {
     w.put<uint32_t>(bits);
     w.put<float>(tree_snow);
@@ -1546,6 +1572,209 @@ inline bool read_give(Reader& r, GiveMsg& m) {
     m.prefab = r.get_blob(kGearPrefabMax);
     m.record = r.get_long_blob(kGearTextMax);
     return r.ok() && m.op >= GiveOp::Offer && m.op <= GiveOp::Failed;
+}
+
+// --- wildlife ownership (v44, TLDCoop_DLC) -------------------------------------------------------------------------
+
+// WildFrame: one owner's animals (see the header). Records as AnimalRec, with epoch, target and bleeding.
+struct WildFrameMsg {
+    uint8_t owner = 0;
+    uint32_t frame = 0;
+    double t_ms = 0;  // the owner's clock
+    uint8_t part = 0, parts = 1;
+    std::string scene;
+    std::vector<AnimalRec> animals;
+    double received_ms = 0;  // not sent
+};
+inline size_t wild_rec_size(const AnimalRec& a) { return 4 + 2 + 4 + 36 + 1 + a.layers.size() * 8 + 2 + a.params.size(); }
+constexpr size_t kWildFrameHeader = 7 + 1 + 4 + 8 + 2 + kSceneLen + 1;
+
+inline void write_wild_rec(Writer& w, const AnimalRec& a) {
+    w.put(a.id);
+    w.put(a.epoch);
+    w.put(a.kind);
+    w.put(a.mode);
+    w.put(a.flags);
+    w.put(a.target);
+    for (float v : {a.x, a.y, a.z, a.yaw, a.pitch, a.roll, a.hp, a.bleed_elapsed, a.bleed_limit}) w.put(v);
+    const size_t layers = a.layers.size() < kMaxAnimalLayers ? a.layers.size() : kMaxAnimalLayers;
+    w.put(static_cast<uint8_t>(layers));
+    for (size_t l = 0; l < layers; ++l) {
+        w.put(a.layers[l].state);
+        w.put(a.layers[l].time);
+    }
+    w.put_blob(a.params, kMaxAnimalParams);
+}
+
+inline bool read_wild_rec(Reader& r, AnimalRec& a) {
+    a.id = r.get<uint32_t>();
+    a.epoch = r.get<uint16_t>();
+    a.kind = r.get<uint8_t>();
+    a.mode = r.get<uint8_t>();
+    a.flags = r.get<uint8_t>();
+    a.target = r.get<uint8_t>();
+    float* f[] = {&a.x, &a.y, &a.z, &a.yaw, &a.pitch, &a.roll, &a.hp, &a.bleed_elapsed, &a.bleed_limit};
+    for (float* v : f) {
+        *v = r.get<float>();
+        if (!std::isfinite(*v)) return false;
+    }
+    const uint8_t layers = r.get<uint8_t>();
+    if (layers > kMaxAnimalLayers) return false;
+    a.layers.clear();
+    for (uint8_t l = 0; l < layers; ++l) {
+        AnimalLayer layer;
+        layer.state = r.get<int32_t>();
+        layer.time = r.get<float>();
+        a.layers.push_back(layer);
+    }
+    a.params = r.get_blob(kMaxAnimalParams);
+    return r.ok();
+}
+
+inline void write_wild_frame(Writer& w, const WildFrameMsg& m) {
+    w.put(m.owner);
+    w.put(m.frame);
+    w.put(m.t_ms);
+    w.put(m.part);
+    w.put(m.parts);
+    w.put_str(m.scene, kSceneLen);
+    w.put(static_cast<uint8_t>(m.animals.size()));
+    for (const AnimalRec& a : m.animals) write_wild_rec(w, a);
+}
+
+inline bool read_wild_frame(Reader& r, WildFrameMsg& m) {
+    m.owner = r.get<uint8_t>();
+    m.frame = r.get<uint32_t>();
+    m.t_ms = r.get<double>();
+    m.part = r.get<uint8_t>();
+    m.parts = r.get<uint8_t>();
+    m.scene = r.get_str(kSceneLen);
+    const uint8_t count = r.get<uint8_t>();
+    m.animals.clear();
+    for (uint8_t i = 0; i < count && r.ok(); ++i) {
+        AnimalRec a;
+        if (!read_wild_rec(r, a)) return false;
+        m.animals.push_back(std::move(a));
+    }
+    return r.ok() && m.owner < kMaxPlayers;
+}
+
+// WildCtl: the host arbitrates who runs each animal.
+enum class WildOp : uint8_t { Controllers = 1, Release = 2, Take = 3, Refuse = 4 };
+constexpr uint8_t kTakeDead = 1;     // Take: the animal died on its owner; the host runs its carcass from here
+constexpr uint8_t kTakeKept = 2;     // Take: the old owner keeps it (a fight began meanwhile); `to` is the old owner
+constexpr uint8_t kTakeNoState = 4;  // Take: the old owner hasn't got it any more: the host's registry fills it in
+constexpr size_t kWildTextMax = 32 * 1024;  // BaseAi.Serialize()
+constexpr size_t kWildScenesMax = 16;
+struct WildSceneControl {
+    std::string scene;
+    uint8_t player = kNoPlayer;  // the game that lets TLD spawn there (kNoPlayer: none)
+    uint8_t fresh = 0;           // 1: the registry has no animal there (that game shares its own)
+};
+struct WildCtlMsg {
+    WildOp op = WildOp::Controllers;
+    std::vector<WildSceneControl> scenes;  // Controllers
+    uint32_t id = 0;                       // Release, Take, Refuse
+    uint8_t to = kNoPlayer;                // Release, Take: the new owner
+    uint16_t epoch = 0;                    // Release, Take, Refuse: the handover this belongs to
+    uint8_t flags = 0;                     // Take: kTake*
+    std::string scene;                     // Take
+    AnimalRec state;                       // Take: as the old owner (or the registry) last had it
+    std::string text;                      // Take: BaseAi.Serialize() ("" none)
+};
+
+inline void write_wild_ctl(Writer& w, const WildCtlMsg& m) {
+    w.put(static_cast<uint8_t>(m.op));
+    switch (m.op) {
+        case WildOp::Controllers: {
+            const size_t n = m.scenes.size() < kWildScenesMax ? m.scenes.size() : kWildScenesMax;
+            w.put(static_cast<uint8_t>(n));
+            for (size_t i = 0; i < n; ++i) {
+                w.put_str(m.scenes[i].scene, kSceneLen);
+                w.put(m.scenes[i].player);
+                w.put(m.scenes[i].fresh);
+            }
+            break;
+        }
+        case WildOp::Release:
+            w.put(m.id);
+            w.put(m.to);
+            w.put(m.epoch);
+            break;
+        case WildOp::Take:
+            w.put(m.id);
+            w.put(m.to);
+            w.put(m.epoch);
+            w.put(m.flags);
+            w.put_str(m.scene, kSceneLen);
+            write_wild_rec(w, m.state);
+            w.put_long_blob(m.text.size() <= kWildTextMax ? m.text : std::string());
+            break;
+        case WildOp::Refuse:
+            w.put(m.id);
+            w.put(m.epoch);
+            break;
+    }
+}
+
+inline bool read_wild_ctl(Reader& r, WildCtlMsg& m) {
+    m.op = static_cast<WildOp>(r.get<uint8_t>());
+    switch (m.op) {
+        case WildOp::Controllers: {
+            const uint8_t n = r.get<uint8_t>();
+            if (n > kWildScenesMax) return false;
+            m.scenes.clear();
+            for (uint8_t i = 0; i < n && r.ok(); ++i) {
+                WildSceneControl c;
+                c.scene = r.get_str(kSceneLen);
+                c.player = r.get<uint8_t>();
+                c.fresh = r.get<uint8_t>();
+                m.scenes.push_back(c);
+            }
+            return r.ok();
+        }
+        case WildOp::Release:
+            m.id = r.get<uint32_t>();
+            m.to = r.get<uint8_t>();
+            m.epoch = r.get<uint16_t>();
+            return r.ok();
+        case WildOp::Take:
+            m.id = r.get<uint32_t>();
+            m.to = r.get<uint8_t>();
+            m.epoch = r.get<uint16_t>();
+            m.flags = r.get<uint8_t>();
+            m.scene = r.get_str(kSceneLen);
+            if (!read_wild_rec(r, m.state)) return false;
+            m.text = r.get_long_blob(kWildTextMax);
+            return r.ok();
+        case WildOp::Refuse:
+            m.id = r.get<uint32_t>();
+            m.epoch = r.get<uint16_t>();
+            return r.ok();
+    }
+    return false;
+}
+
+// WildHit: a hit (or a thrown item) on an animal another game runs, passed on by the host to that game.
+enum class WildHitOp : uint8_t { Hit = 1, Thrown = 2 };
+struct WildHitMsg {
+    WildHitOp op = WildHitOp::Hit;
+    uint8_t who = 0;  // the player who shot (threw)
+    HitMsg hit;       // Hit
+    ThrownMsg thrown; // Thrown
+};
+inline void write_wild_hit(Writer& w, const WildHitMsg& m) {
+    w.put(static_cast<uint8_t>(m.op));
+    w.put(m.who);
+    if (m.op == WildHitOp::Hit) write_hit(w, m.hit);
+    else write_thrown(w, m.thrown);
+}
+inline bool read_wild_hit(Reader& r, WildHitMsg& m) {
+    m.op = static_cast<WildHitOp>(r.get<uint8_t>());
+    m.who = r.get<uint8_t>();
+    if (m.op == WildHitOp::Hit) return read_hit(r, m.hit) && r.ok();
+    if (m.op == WildHitOp::Thrown) return read_thrown(r, m.thrown) && r.ok();
+    return false;
 }
 
 }  // namespace net
