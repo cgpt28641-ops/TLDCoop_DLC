@@ -593,3 +593,16 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - 3 drzwi: DoorPair.open – domyślnie zamknięte (bez widoku, widać drzwi gry); klik (LoadScene.Activate → door_click) otwiera/zamyka z dźwiękiem; otwarte: widok + wejście (door_walk) przenosi; po przejściu zostają otwarte, zamykają się same, gdy gracz ≥3 m od obu stron przez 1,5 s. door_walk=0: klik w otwarte = przejście jak dawniej. Bez animacji skrzydła (widok przykrywa drzwi).
 - 4 jasność: pokoje oświetlone jak dwór (oświetlenie wnętrza wyłączone, jak w SI). Nowe [interiors] indoor_light=45: w pokoju kamera gracza (i broni) rysuje z RenderSettings.ambientProbe/ambientLight/reflectionIntensity × 45% (FireOnPreCull/PostRender, przywracane; widoki okien/drzwi bez zmian). Hooki kamery instalowane zawsze (wcześniej tylko z fog_ok).
 - Log „N of the player's camera's buffers shared” tylko przy zmianie liczby (był co 0,3 s – gra odtwarza bufor).
+
+## 2026-11-03 (noc) – poprawki z testu 02.11 wieczór (protokół v47)
+- Crashe 0xC00000FD (przepełnienie stosu, 2× host, 1× Szymon; 2 z 3 tuż po przekazaniu zwierzęcia): przyczyna niepewna. il2::invoke ma teraz licznik zagnieżdżenia (wątek): >48 → wywołanie odrzucone i logx::error z łańcuchem ostatnich 12 metod („calls into the game nested 48 deep”). Fault logger przy stack overflow wypisuje najczęstsze adresy powrotu na stosie (winhttp/GameAssembly/UnityPlayer + offset, „on the stack xN”). Link z /MAP; winhttp.map wrzucany do dll-latest (do odczytu offsetów winhttp.dll). Obejście: [wildlife] ownership=0.
+- Szafki w pokojach SI („no answer from the host”): id szafki pokoju („si:<pokój>|g:<guid>|<nazwa>|<miejsce>”) > 64 bajtów → put_blob wysyłał pusty id (ContainerLock i ContainerPut). kPdidMax 64 → 200 (v47). Host odpowiada też na ponowne Take od właściciela.
+- Meble znikające/pojawiające: zastępcze oko (80 m niżej) cięło też RenderObjectInstance pokoju (wspólny frustum). Instancje pod pokojem: kamera gracza zostaje, m_FrustumType = DotProduct na czas oka (przywracany). PositionIsOnscreen bez przesunięcia dla punktów w pokoju gracza.
+- Śnieg w pokojach bez okien: przesunięcie pudła śniegu także gdy gracz w pokoju bez oka.
+- Jasność/miganie: przyciemnianie przez hook Utils.SetAmbientLightScaled (raz na klatkę, zamiast per kamera, które mogło migać); domyślnie indoor_light=70 („strasznie ciemno”).
+- Okna: scan_openings dzieli szyby pod wspólnym korzeniem na okna (grupy ≤25 cm), śnieg/tło/rama brane z części ≤0,6 m od okna (wcześniej prawie każdy pokój: „0 window(s) found (1 not windows)”).
+- FarmHouseA na zwykłych drzwiach: zapis gry zmienił się po imporcie. [interiors] reimport_changed=1: nasze pliki do replaced/, import od nowa z zapisu gry.
+- Raca z pistoletu: FlareShot (v47) – nasz wystrzał (FlareGunRoundItem.Fire) wysyłany; u innych SpawnAndFire z prefabu rakiety z własnego vp_FPSShooter (Resources.FindObjectsOfTypeAll); InflictDamage takich rakiet nic nie robi.
+- [loot] per_player=50 (host): Container.PopulateWithRandomGear powtarzane z solą ziarna (world_mode::set_seed_salt), dodatkowe nazwy do m_GearToInstantiate; część ułamkowa losowo per przedmiot (deterministycznie od pozycji).
+- Lampa Szymona: w logu hosta przychodzi z 0% paliwa, zgaszona – potrzebny log Szymona.
+- Zwierzęta przy budynku: add_inside_spot z poprzedniej wersji bez zmian.

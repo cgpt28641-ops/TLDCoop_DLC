@@ -927,6 +927,7 @@ struct Session::Impl {
             case Msg::WildCtl:
             case Msg::WildSounds:
             case Msg::WildHit:
+            case Msg::FlareShot:
             case Msg::Sleep:
             case Msg::Give: {
                 if (!linked) return;

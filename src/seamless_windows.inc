@@ -98,7 +98,7 @@ constexpr WinQuality kQualities[] = {
 uint64_t g_win_frame_now = 0;  // frames counted by the reconciler's watch (GameManager.Update)
 bool g_windows = true;      // coop.ini [interiors] windows
 int g_window_quality = 1;   // coop.ini [interiors] window_quality
-int g_indoor_light = 45;    // coop.ini [interiors] indoor_light (%)
+int g_indoor_light = 70;    // coop.ini [interiors] indoor_light (%)
 const WinQuality& quality() { return kQualities[std::clamp(g_window_quality, 0, 2)]; }
 // Door portals (seamless_doors.inc): coop.ini [interiors] door_portals / door_walk, and the building whose door view is
 // wanted this frame (held for it first, also with the window views off)
@@ -128,7 +128,7 @@ struct WinApi {
     const MethodInfo* tf_to_local = nullptr, *keep_on_load = nullptr, *hide_flags = nullptr;
     int32_t fmt_hdr = 2, prim_quad = 5;
     FieldInfo* roi_list = nullptr;
-    ptrdiff_t roi_cam_tf = -1, roi_cam = -1;
+    ptrdiff_t roi_cam_tf = -1, roi_cam = -1, roi_frustum_type = -1;
     ptrdiff_t snow_cam_mat = -1, snow_cam_inv = -1, snow_cam_pos = -1;  // into WeatherParticleManager (m_Common's fields)
 } wapi;
 
@@ -506,88 +506,168 @@ V3 with_axis(V3 v, int a, float f) {
 }
 V3 unit_axis(int a, float s = 1) { return with_axis({}, a, s); }
 
+// Every renderer of a role under root, each with its own room-local box (role 3: the renderer kept too).
+struct RolePart {
+    Box box;
+    Il2CppObject* renderer = nullptr;
+};
+std::vector<RolePart> role_parts(Instance& in, Il2CppObject* root_tf, int role) {
+    std::vector<RolePart> out;
+    each_in(go_of(root_tf), api.t_mesh_filter, [&](Il2CppObject* mf) {
+        Il2CppObject* go = go_of(mf);
+        Il2CppObject* mr = component(go, api.t_mesh_renderer);
+        if (!matches_role(role, name_of(go), mr ? material_name(mr) : std::string())) return;
+        if (role == 0 && !active_self(go)) return;  // glass the game keeps switched off is no window
+        Il2CppObject* mesh = il2::invoke(api.mesh_filter_mesh, mf);
+        if (!alive(mesh)) return;
+        UBounds b;
+        M4 l2w;
+        if (!il2::invoke_value(api.mesh_bounds, mesh, b) || !il2::invoke_value(api.tf_to_world, tf_of(mf), l2w)) return;
+        RolePart part;
+        for (int k = 0; k < 8; ++k) {
+            const V3 c{b.center.x + ((k & 1) ? -b.extents.x : b.extents.x), b.center.y + ((k & 2) ? -b.extents.y : b.extents.y),
+                       b.center.z + ((k & 4) ? -b.extents.z : b.extents.z)};
+            part.box.add(to_local(in, m4_point(l2w, c)));
+        }
+        part.renderer = mr;
+        out.push_back(part);
+    });
+    return out;
+}
+float box_gap(const Box& a, const Box& b) {
+    const float dx = std::max({0.0f, a.min.x - b.max.x, b.min.x - a.max.x});
+    const float dy = std::max({0.0f, a.min.y - b.max.y, b.min.y - a.max.y});
+    const float dz = std::max({0.0f, a.min.z - b.max.z, b.min.z - a.max.z});
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 // SI: ScanInteriorWindowOpenings, its ordinary rule (a pane under a window root, faced by its snow or its backdrop).
+// TLDCoop_DLC: the panes under one root are split into windows by where they are (most rooms keep all their windows'
+// glass under one object: SI's rule saw one huge "window" and skipped it, "0 window(s) found" in nearly every room);
+// each window is faced by the snow or backdrop parts next to it.
 void scan_openings(Instance& in, WinRoom& wr) {
     wr.scanned = true;
     Il2CppObject* m = master_of(in);
     Il2CppObject* mt = live(in.master_tf);
     if (!m || !mt) return;
     std::unordered_set<Il2CppObject*> seen;
-    int skipped = 0, unfaced = 0;
+    int skipped = 0, unfaced = 0, split = 0;
     each_in(m, api.t_mesh_renderer, [&](Il2CppObject* glass_r) {
         Il2CppObject* go = go_of(glass_r);
-        if (!active_self(go)) return;  // glass the game keeps switched off is no window
+        if (!active_self(go)) return;
         if (!starts_with(material_name(glass_r), "STR_WindowGlassMix")) return;
         Il2CppObject* root = window_root(tf_of(glass_r), mt);
         if (!root || !seen.insert(root).second) return;
-        Box glass, snow, frame, back;
-        Il2CppObject* backdrop = nullptr;
-        if (!role_box(in, root, 0, glass, nullptr)) return;
-        const bool has_snow = role_box(in, root, 1, snow, nullptr);
-        const bool has_frame = role_box(in, root, 2, frame, nullptr);
-        const bool has_back = role_box(in, root, 3, back, &backdrop);
-        const V3 gs = glass.max - glass.min;
-        int axis = 0;
-        if (gs.y < gs.x && gs.y < gs.z) axis = 1;
-        else if (gs.z < gs.x && gs.z < gs.y) axis = 2;
-        auto center = [](const Box& b, int a) { return (axis_of(b.min, a) + axis_of(b.max, a)) * 0.5f; };
-        float sign;
-        if (has_snow) sign = center(snow, axis) - center(glass, axis) >= 0 ? 1.0f : -1.0f;
-        else if (has_back) sign = center(back, axis) - center(glass, axis) >= 0 ? 1.0f : -1.0f;
-        else {
-            ++unfaced;
-            return;
+        const std::vector<RolePart> panes = role_parts(in, root, 0);
+        if (panes.empty()) return;
+        const std::vector<RolePart> snows = role_parts(in, root, 1), frames = role_parts(in, root, 2),
+                                    backs = role_parts(in, root, 3);
+        // panes 25 cm apart or less are one window (the sashes of one frame)
+        std::vector<int> group(panes.size(), -1);
+        int groups = 0;
+        for (size_t i = 0; i < panes.size(); ++i) {
+            if (group[i] >= 0) continue;
+            group[i] = groups;
+            for (bool grew = true; grew;) {
+                grew = false;
+                for (size_t j = 0; j < panes.size(); ++j) {
+                    if (group[j] >= 0) continue;
+                    for (size_t k = 0; k < panes.size(); ++k)
+                        if (group[k] == groups && box_gap(panes[j].box, panes[k].box) <= 0.25f) {
+                            group[j] = groups;
+                            grew = true;
+                            break;
+                        }
+                }
+            }
+            ++groups;
         }
-        const float plane = center(glass, axis);
-        const float target = plane + sign * kPortalDefaultOffset;
-        float inner = plane + sign * kPortalClearance;
-        if (has_snow) inner = (sign > 0 ? axis_of(snow.max, axis) : axis_of(snow.min, axis)) + sign * kPortalClearance;
-        bool has_outer = false;
-        float outer = 0;
-        if (has_frame) {
-            outer = (sign > 0 ? axis_of(frame.max, axis) : axis_of(frame.min, axis)) - sign * kPortalClearance;
-            has_outer = true;
-        }
-        if (has_back) {
-            const float cand = (sign > 0 ? axis_of(back.min, axis) : axis_of(back.max, axis)) - sign * kPortalClearance;
-            if (!has_outer || (sign > 0 ? cand < outer : cand > outer)) {
-                outer = cand;
+        if (groups > 1) split += groups - 1;
+        for (int gi = 0; gi < groups; ++gi) {
+            Box glass;
+            for (size_t i = 0; i < panes.size(); ++i)
+                if (group[i] == gi) glass.add(panes[i].box.min), glass.add(panes[i].box.max);
+            auto near_box = [&](const std::vector<RolePart>& parts, Box& out, Il2CppObject** keep) {
+                bool any = false;
+                float best = 1e30f;
+                for (const RolePart& part : parts) {
+                    const float gap = box_gap(part.box, glass);
+                    if (gap > (groups > 1 ? 0.6f : 1e30f)) continue;  // (one window under the root: all of them, as SI)
+                    out.add(part.box.min), out.add(part.box.max);
+                    if (keep && gap < best) best = gap, *keep = part.renderer;
+                    any = true;
+                }
+                return any;
+            };
+            Box snow, frame, back;
+            Il2CppObject* backdrop = nullptr;
+            const bool has_snow = near_box(snows, snow, nullptr);
+            const bool has_frame = near_box(frames, frame, nullptr);
+            const bool has_back = near_box(backs, back, &backdrop);
+            const V3 gs = glass.max - glass.min;
+            int axis = 0;
+            if (gs.y < gs.x && gs.y < gs.z) axis = 1;
+            else if (gs.z < gs.x && gs.z < gs.y) axis = 2;
+            auto center = [](const Box& b, int a) { return (axis_of(b.min, a) + axis_of(b.max, a)) * 0.5f; };
+            float sign;
+            if (has_snow) sign = center(snow, axis) - center(glass, axis) >= 0 ? 1.0f : -1.0f;
+            else if (has_back) sign = center(back, axis) - center(glass, axis) >= 0 ? 1.0f : -1.0f;
+            else {
+                ++unfaced;
+                continue;
+            }
+            const float plane = center(glass, axis);
+            const float target = plane + sign * kPortalDefaultOffset;
+            float inner = plane + sign * kPortalClearance;
+            if (has_snow) inner = (sign > 0 ? axis_of(snow.max, axis) : axis_of(snow.min, axis)) + sign * kPortalClearance;
+            bool has_outer = false;
+            float outer = 0;
+            if (has_frame) {
+                outer = (sign > 0 ? axis_of(frame.max, axis) : axis_of(frame.min, axis)) - sign * kPortalClearance;
                 has_outer = true;
             }
+            if (has_back) {
+                const float cand = (sign > 0 ? axis_of(back.min, axis) : axis_of(back.max, axis)) - sign * kPortalClearance;
+                if (!has_outer || (sign > 0 ? cand < outer : cand > outer)) {
+                    outer = cand;
+                    has_outer = true;
+                }
+            }
+            float chosen = target;
+            bool cin = false, cout = false;
+            if (has_outer && (sign > 0 ? chosen > outer : chosen < outer)) {
+                chosen = outer;
+                cin = true;
+            }
+            if (sign > 0 ? chosen < inner : chosen > inner) {
+                chosen = inner;
+                cout = true;
+            }
+            if (cin && cout) chosen = target;  // limits crossed: the fixed distance
+            // the in-plane axes: up is the room's up (the room stands upright), right = up x outward
+            const int a_up = axis == 1 ? 2 : 1;
+            const int a_right = 3 - axis - a_up;
+            Opening o;
+            const V3 gc = (glass.min + glass.max) * 0.5f;
+            o.glass = gc;
+            o.portal = with_axis(gc, axis, chosen);
+            o.out = unit_axis(axis, sign);
+            o.up = unit_axis(a_up);
+            o.right = w_norm(w_cross(o.up, o.out));
+            o.w = axis_of(gs, a_right);
+            o.h = axis_of(gs, a_up);
+            o.name = name_of(root) + (groups > 1 ? "#" + std::to_string(gi) : std::string());
+            if (std::fabs(o.out.y) > 0.3f || o.w > kWindowLargest || o.h > kWindowLargest || o.w < 0.15f || o.h < 0.15f) {
+                ++skipped;  // SI: "not a window"
+                continue;
+            }
+            if (backdrop) o.backdrop = hold(backdrop);
+            wr.openings.push_back(o);
         }
-        float chosen = target;
-        bool cin = false, cout = false;
-        if (has_outer && (sign > 0 ? chosen > outer : chosen < outer)) {
-            chosen = outer;
-            cin = true;
-        }
-        if (sign > 0 ? chosen < inner : chosen > inner) {
-            chosen = inner;
-            cout = true;
-        }
-        if (cin && cout) chosen = target;  // limits crossed: the fixed distance
-        // the in-plane axes: up is the room's up (the room stands upright), right = up x outward
-        const int a_up = axis == 1 ? 2 : 1;
-        const int a_right = 3 - axis - a_up;
-        Opening o;
-        const V3 gc = (glass.min + glass.max) * 0.5f;
-        o.glass = gc;
-        o.portal = with_axis(gc, axis, chosen);
-        o.out = unit_axis(axis, sign);
-        o.up = unit_axis(a_up);
-        o.right = w_norm(w_cross(o.up, o.out));
-        o.w = axis_of(gs, a_right);
-        o.h = axis_of(gs, a_up);
-        o.name = name_of(root);
-        if (std::fabs(o.out.y) > 0.3f || o.w > kWindowLargest || o.h > kWindowLargest) {  // SI: "not a window"
-            ++skipped;
-            return;
-        }
-        if (backdrop) o.backdrop = hold(backdrop);
-        wr.openings.push_back(o);
     });
-    logx::info("interiors: windows: %s: %zu window(s) found in the room (%d not windows, %d with nothing to face them by)",
-               in.cfg->id, wr.openings.size(), skipped, unfaced);
+    logx::info("interiors: windows: %s: %zu window(s) found in the room (%d not windows, %d with nothing to face them by, "
+               "%d split from panes grouped together)",
+               in.cfg->id, wr.openings.size(), skipped, unfaced, split);
 }
 WinRoom& room_windows(Instance& in) {
     if (!in.win) in.win = std::make_shared<WinRoom>();
@@ -1308,6 +1388,14 @@ struct CullEye {
         uintptr_t roi = 0, tf = 0, cam = 0;
     };
     std::unordered_map<int, Saved> saved;  // by the RenderObjectInstance's instance id
+    // TLDCoop_DLC: the rooms' own (furniture, props): they keep the player's camera, and are culled by its direction
+    // (FrustrmType DotProduct) instead of the frustum shared by all, which is the eye's 80 m below (they popped in and
+    // out with the view); their type put back at the end
+    struct RoomRoi {
+        uintptr_t roi = 0;
+        int32_t type = 1;
+    };
+    std::unordered_map<int, RoomRoi> room;
 } g_eye;
 
 void sync_cull_eye() {
@@ -1347,6 +1435,11 @@ void release_cull_eye(const char* why) {
         drop(s.cam);
     }
     g_eye.saved.clear();
+    for (auto& [id, r] : g_eye.room) {
+        if (Il2CppObject* roi = live(r.roi); roi && wapi.roi_frustum_type >= 0) put<int32_t>(roi, wapi.roi_frustum_type, r.type);
+        drop(r.roi);
+    }
+    g_eye.room.clear();
     if (Il2CppObject* e = live(g_eye.cam)) destroy(go_of(e));
     drop(g_eye.cam);
     logx::info("interiors: windows: stand-in eye removed (%s); %d tree/rock group(s) culled from the player's camera again", why,
@@ -1375,6 +1468,18 @@ void acquire_cull_eye() {
         if (!alive(roi)) return;
         if (get<Il2CppObject*>(roi, wapi.roi_cam) == eye) return;
         const int id = instance_id(roi);
+        if (wapi.roi_frustum_type >= 0 && (g_eye.room.count(id) || under_any_room(roi))) {
+            if (!g_eye.room.count(id)) {
+                CullEye::RoomRoi r;
+                r.roi = hold(roi);
+                r.type = get<int32_t>(roi, wapi.roi_frustum_type);
+                g_eye.room.emplace(id, r);
+                static int told = 0;
+                if (told++ < 5) logx::info("interiors: windows: a room's own instanced objects kept culled from the player's eye");
+            }
+            put<int32_t>(roi, wapi.roi_frustum_type, 0);  // DotProduct: by its own camera's (the player's) direction
+            return;
+        }
         if (!g_eye.saved.count(id)) {
             CullEye::Saved s;
             s.roi = hold(roi);
@@ -1416,7 +1521,9 @@ struct WVec3 {
 using OnscreenFn = bool (*)(WVec3* pos, float adjust, const MethodInfo* m);
 OnscreenFn g_onscreen = nullptr;
 bool onscreen_detour(WVec3* pos, float adjust, const MethodInfo* m) {
-    if (g_eye.in_force && pos) {  // SI: ParkedCullEyePositionOnScreenPatch: asked of the eye at the building
+    if (g_eye.in_force && pos && !(g_inside && in_parked_room(*g_inside, V3{pos->x, pos->y, pos->z}))) {
+        // SI: ParkedCullEyePositionOnScreenPatch: asked of the eye at the building (TLDCoop_DLC: not for a spot in the
+        // room the player is in: that one is on screen as it is)
         WVec3 p = *pos;
         p.x += kParkOffset.x, p.y += kParkOffset.y, p.z += kParkOffset.z;
         return g_onscreen(&p, adjust, m);
@@ -1430,7 +1537,8 @@ float g_snow_push = 0;  // SI: NearestWindowGlassAlongGaze, this frame
 using SnowJobsFn = void (*)(Il2CppObject* self, const MethodInfo* m);
 SnowJobsFn g_falling_jobs = nullptr, g_blowing_jobs = nullptr;
 void shift_snow_box(Il2CppObject* mgr) {
-    if (!g_eye.in_force || !mgr || !wapi.snow_ok) return;
+    // TLDCoop_DLC: also in a room with no live window view (a basement): the snow fell around the player in the room
+    if ((!g_eye.in_force && !(g_inside && engaged())) || !mgr || !wapi.snow_ok) return;
     Il2CppObject* main = main_camera();
     if (!alive(main)) return;
     const V3 mp = position(tf_of(main));
@@ -1467,82 +1575,30 @@ bool g_sheet_fog_wanted = false, g_sheet_fog_off = false, g_sheet_fog_was = fals
 using CamFireFn = void (*)(Il2CppObject* cam, const MethodInfo* m);
 CamFireFn g_fire_pre_cull = nullptr, g_fire_post_render = nullptr;
 
-// TLDCoop_DLC: the indoor look. A room stands in the open and is lit like outdoors (sun, sky ambient: TLD's
-// Utils.SetAmbientLightScaled puts it in RenderSettings.ambientLight and ambientProbe); the game's own interiors are
-// much darker. While the player is in a room, the player's camera draws with the ambient (and the reflections) at
-// [interiors] indoor_light %, put back after it: the window and door views still see the outdoors as it is.
-struct Sh9 {
-    float c[27];
-};
+// TLDCoop_DLC: the indoor look. A room stands in the open and is lit like outdoors; the game's own interiors are much
+// darker. TLD sets the sky's light once a frame (TodAmbientLight -> Utils.SetAmbientLightScaled(colour, probe scale):
+// RenderSettings.ambientLight and the ambient probe): while the player is in a room it goes in at [interiors]
+// indoor_light %. (Per camera before, which flickered when another camera drew in between.)
 struct IlColor {
     float r, g, b, a;
 };
-struct IndoorLookApi {
-    bool tried = false, ok = false;
-    const MethodInfo *get_probe = nullptr, *set_probe = nullptr, *get_light = nullptr, *set_light = nullptr,
-                     *get_refl = nullptr, *set_refl = nullptr;
-} ilapi;
-struct IndoorLookSaved {
-    bool on = false;
-    Sh9 probe{};
-    IlColor light{};
-    float refl = 1;
-} g_indoor_saved;
+using AmbientFn = void (*)(IlColor* colour, float probe, const MethodInfo* m);
+AmbientFn g_set_ambient = nullptr;
 int g_indoor_logged = 0;
-void resolve_indoor_look() {
-    if (ilapi.tried) return;
-    ilapi.tried = true;
-    Il2CppClass* rs = il2::find_class(kCore, "UnityEngine", "RenderSettings");
-    if (!rs) return;
-    ilapi.get_probe = il2::find_method_quiet(rs, "get_ambientProbe", 0);
-    ilapi.set_probe = il2::find_method_quiet(rs, "set_ambientProbe", 1);
-    ilapi.get_light = il2::find_method_quiet(rs, "get_ambientLight", 0);
-    ilapi.set_light = il2::find_method_quiet(rs, "set_ambientLight", 1);
-    ilapi.get_refl = il2::find_method_quiet(rs, "get_reflectionIntensity", 0);
-    ilapi.set_refl = il2::find_method_quiet(rs, "set_reflectionIntensity", 1);
-    ilapi.ok = ilapi.get_probe && ilapi.set_probe && ilapi.get_light && ilapi.set_light && ilapi.get_refl && ilapi.set_refl;
-    logx::info("interiors: indoor look %s", ilapi.ok ? "ready (the sky's light dimmed in rooms)" : "UNAVAILABLE (RenderSettings calls missing)");
-}
-void indoor_look_begin(Il2CppObject* cam) {
-    if (g_indoor_saved.on || !g_inside || g_indoor_light >= 100 || !cam || !api.ok) return;
-    resolve_indoor_look();
-    static const MethodInfo* weapon_cam = il2::find_method_quiet(il2::find_class(kGame, "", "GameManager"), "GetWeaponCamera", 0);
-    if (!ilapi.ok || (cam != il2::invoke(api.gm_main_camera, nullptr) && (!weapon_cam || cam != il2::invoke(weapon_cam, nullptr))))
+void set_ambient_detour(IlColor* colour, float probe, const MethodInfo* m) {
+    if (colour && g_inside && engaged() && g_indoor_light < 100) {
+        const float k = static_cast<float>(g_indoor_light) / 100.0f;
+        IlColor dim{colour->r * k, colour->g * k, colour->b * k, colour->a};
+        if (g_indoor_logged++ == 0)
+            logx::info("interiors: in a room: the sky's light at %d%% (ambient %.2f %.2f %.2f)", g_indoor_light, colour->r,
+                       colour->g, colour->b);
+        g_set_ambient(&dim, probe, m);
         return;
-    IndoorLookSaved s;
-    if (!il2::invoke_value(ilapi.get_probe, nullptr, s.probe) || !il2::invoke_value(ilapi.get_light, nullptr, s.light) ||
-        !il2::invoke_value(ilapi.get_refl, nullptr, s.refl))
-        return;
-    const float k = static_cast<float>(g_indoor_light) / 100.0f;
-    Sh9 probe = s.probe;
-    for (float& v : probe.c) v *= k;
-    IlColor light{s.light.r * k, s.light.g * k, s.light.b * k, s.light.a};
-    float refl = s.refl * k;
-    void* a1[] = {&probe};
-    void* a2[] = {&light};
-    void* a3[] = {&refl};
-    il2::invoke(ilapi.set_probe, nullptr, a1);
-    il2::invoke(ilapi.set_light, nullptr, a2);
-    il2::invoke(ilapi.set_refl, nullptr, a3);
-    s.on = true;
-    g_indoor_saved = s;
-    if (g_indoor_logged++ == 0)
-        logx::info("interiors: in a room: the player's camera draws with the sky's light at %d%% (ambient %.2f %.2f %.2f)",
-                   g_indoor_light, s.light.r, s.light.g, s.light.b);
-}
-void indoor_look_end() {
-    if (!g_indoor_saved.on) return;
-    g_indoor_saved.on = false;
-    void* a1[] = {&g_indoor_saved.probe};
-    void* a2[] = {&g_indoor_saved.light};
-    void* a3[] = {&g_indoor_saved.refl};
-    il2::invoke(ilapi.set_probe, nullptr, a1);
-    il2::invoke(ilapi.set_light, nullptr, a2);
-    il2::invoke(ilapi.set_refl, nullptr, a3);
+    }
+    g_set_ambient(colour, probe, m);
 }
 
 void fire_pre_cull_detour(Il2CppObject* cam, const MethodInfo* m) {
-    indoor_look_begin(cam);
     if (g_sheet_fog_wanted && !g_sheet_fog_off && cam && cam == g_main.raw && wapi.fog_ok) {
         bool was = false;
         if (il2::invoke_value(wapi.fog_get, nullptr, was)) {
@@ -1560,7 +1616,6 @@ void restore_sheet_fog() {
 }
 void fire_post_render_detour(Il2CppObject* cam, const MethodInfo* m) {
     g_fire_post_render(cam, m);
-    indoor_look_end();
     if (g_sheet_fog_off && cam && cam == g_main.raw) restore_sheet_fog();
 }
 
@@ -2735,6 +2790,7 @@ void resolve_windows() {
         wapi.roi_list = il2::il2cpp_class_get_field_from_name(roi, "s_RenderObjectInstanceList");
         wapi.roi_cam_tf = il2::field_offset(roi, "m_Camera");
         wapi.roi_cam = il2::field_offset(roi, "m_CameraComponent");
+        wapi.roi_frustum_type = il2::field_offset_quiet(roi, "m_FrustumType");
     }
     wapi.cull_ok = wapi.roi_list && wapi.roi_cam_tf >= 0 && wapi.roi_cam >= 0;
     // the snow box: WeatherParticleManager.m_Common (CommonVars: m_CameraMat, m_CameraInvMat, m_CamPos)
@@ -2787,11 +2843,13 @@ void resolve_windows() {
         hook("WeatherParticleManager.ScheduleBlowingSnowParticleJobs", il2::find_method(wpm, "ScheduleBlowingSnowParticleJobs", 0),
              &blowing_jobs_detour, &g_blowing_jobs);
     }
-    {  // (also for the indoor look, TLDCoop_DLC)
+    if (wapi.fog_ok) {
         hook("Camera.FireOnPreCull", il2::find_method(camera, "FireOnPreCull", 1), &fire_pre_cull_detour, &g_fire_pre_cull);
         hook("Camera.FireOnPostRender", il2::find_method(camera, "FireOnPostRender", 1), &fire_post_render_detour, &g_fire_post_render);
-        wapi.fog_ok = wapi.fog_ok && g_fire_pre_cull && g_fire_post_render;
+        wapi.fog_ok = g_fire_pre_cull && g_fire_post_render;
     }
+    if (Il2CppClass* utils = il2::find_class(kGame, "", "Utils"))  // TLDCoop_DLC: the indoor look
+        hook("Utils.SetAmbientLightScaled", il2::find_method(utils, "SetAmbientLightScaled", 2), &set_ambient_detour, &g_set_ambient);
     resolve_fog_pass();
     resolve_doors();
     logx::info("interiors: windows: ready (stand-in eye %s, snow box %s, sheet fog %s; %zu building(s) with offline window data, "

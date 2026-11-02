@@ -28,6 +28,64 @@ void write(const char* level, const char* fmt, va_list args) {
     fflush(g_file);  // keep the log useful if the game crashes
 }
 
+// TLDCoop_DLC: on a stack overflow, which code the overflowed stack is full of: the return addresses on it into the
+// game's and our modules, counted (a loop shows as a few addresses repeated hundreds of times). Static storage: the
+// stack is all but gone.
+struct StackHit {
+    uintptr_t addr;
+    uint32_t count;
+};
+StackHit g_hits[512];
+const char* module_of(uintptr_t a, uintptr_t& base) {
+    static const char* const kNames[] = {"winhttp.dll", "GameAssembly.dll", "UnityPlayer.dll"};
+    for (const char* n : kNames) {
+        HMODULE m = GetModuleHandleA(n);
+        if (!m) continue;
+        const auto b = reinterpret_cast<uintptr_t>(m);
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(b);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(b + dos->e_lfanew);
+        if (a > b + 0x1000 && a < b + nt->OptionalHeader.SizeOfImage) {
+            base = b;
+            return n;
+        }
+    }
+    return nullptr;
+}
+bool after_call(uintptr_t a) {
+    const auto* p = reinterpret_cast<const unsigned char*>(a);
+    return p[-5] == 0xE8 || (p[-6] == 0xFF && (p[-5] & 0x38) == 0x10) || (p[-2] == 0xFF && (p[-1] & 0xF8) == 0xD0) ||
+           (p[-3] == 0xFF && (p[-2] & 0x38) == 0x10);
+}
+void log_stack_loop(FILE* f, const CONTEXT* ctx) {
+    const auto* tib = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+    uintptr_t at = ctx->Rsp & ~uintptr_t{7};
+    const uintptr_t top = reinterpret_cast<uintptr_t>(tib->StackBase);
+    size_t used = 0;
+    for (int n = 0; at + 8 <= top && n < 200000; at += 8, ++n) {
+        const uintptr_t v = *reinterpret_cast<const uintptr_t*>(at);
+        uintptr_t base = 0;
+        if (!module_of(v, base) || !after_call(v)) continue;
+        size_t i = 0;
+        while (i < used && g_hits[i].addr != v) ++i;
+        if (i < used) {
+            ++g_hits[i].count;
+        } else if (used < sizeof(g_hits) / sizeof(g_hits[0])) {
+            g_hits[used++] = {v, 1};
+        }
+    }
+    for (int k = 0; k < 16; ++k) {
+        size_t best = used;
+        for (size_t i = 0; i < used; ++i)
+            if (g_hits[i].count && (best == used || g_hits[i].count > g_hits[best].count)) best = i;
+        if (best == used) break;
+        uintptr_t base = 0;
+        const char* name = module_of(g_hits[best].addr, base);
+        fprintf(f, "    on the stack x%u: %s+0x%llx\n", g_hits[best].count, name ? name : "?",
+                static_cast<unsigned long long>(g_hits[best].addr - base));
+        g_hits[best].count = 0;
+    }
+}
+
 // TLDCoop_DLC: a fatal fault (access violation, stack overflow...) goes into the log with the module and offset
 // it happened at, so a crash on someone's PC says where it was. Only logged, never handled: the game's own crash
 // handler still runs. Faults the game handles itself also pass here, hence only the first few are written.
@@ -64,6 +122,10 @@ LONG CALLBACK fault_logger(EXCEPTION_POINTERS* info) {
                 t.wMinute, t.wSecond, t.wMilliseconds, GetCurrentThreadId(), code, name,
                 static_cast<unsigned long long>(offset), static_cast<unsigned long long>(target));
         fflush(g_file);
+        if (code == EXCEPTION_STACK_OVERFLOW) {
+            log_stack_loop(g_file, info->ContextRecord);
+            fflush(g_file);
+        }
     }
     g_mutex.unlock();
     return EXCEPTION_CONTINUE_SEARCH;

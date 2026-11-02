@@ -4028,6 +4028,7 @@ bool skip_game_manager_awake(Il2CppObject* gm) {
 void set_settings(const config::Settings& s) {
     coop_features::set_own(net::kFeatureSeamlessInteriors, s.seamless_interiors);
     g_import_old = s.seamless_import_old;
+    g_reimport_changed = s.seamless_reimport_changed;
     g_keep_rooms = s.seamless_keep_rooms;  // A8
     g_auto_buildings = s.seamless_auto_buildings;  // B4
     g_fire_fx = s.seamless_fire_effects;           // B3

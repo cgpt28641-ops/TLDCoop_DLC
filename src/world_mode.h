@@ -9,6 +9,7 @@
 //           config put back for the moment it takes. Back at the main menu nothing is overridden any more.
 // Main thread only.
 
+#include <cstdint>
 #include <string>
 
 namespace world_mode {
@@ -19,6 +20,10 @@ void on_frame(const std::string& scene, bool in_game);
 // Client: the host's mode is in place in this game (or the host never said: an old host, or 10 s passed). world_join
 // waits for it, so a first join loads the host's scene at the host's mode.
 bool ready();
+
+// TLDCoop_DLC: while not 0, every GameManager.GetRandomSeed comes out mixed with this (another roll of the same thing:
+// the containers' extra loot for more players, world_containers).
+void set_seed_salt(int32_t salt);
 
 // TLDCoop_DLC, client: the host's experience mode type as TLD names it ("Stalker", "Pilgrim"...), "" before the host
 // said (it does on connect, the lobby included). A friend's NEW game picks it on the difficulty screen.

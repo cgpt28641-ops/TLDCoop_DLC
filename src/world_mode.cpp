@@ -122,10 +122,12 @@ Vector3* entry_field() {
 // other loose items, other things in 4 of its 25 containers). In co-op every game (the host's too) rolls as if from
 // (0, 0, 0): a building's crates, corpses and cans are the same for everyone, whoever walked in first and by
 // whichever door. The field is put back at once (TLD puts us there on the way out).
+int32_t g_seed_salt = 0;
+int32_t salted(int32_t v) { return g_seed_salt ? static_cast<int32_t>(static_cast<uint32_t>(v) ^ (static_cast<uint32_t>(g_seed_salt) * 0x9E3779B1u)) : v; }
 int32_t random_seed_detour(int32_t seed, const MethodInfo* method) {
     int32_t* own = g_have_seed ? seed_field() : nullptr;
     Vector3* entry = is_host() || is_client() ? entry_field() : nullptr;
-    if (!own && !entry) return g_random_seed(seed, method);
+    if (!own && !entry) return salted(g_random_seed(seed, method));
     const int32_t keep = own ? *own : 0;
     const Vector3 keep_entry = entry ? *entry : Vector3{};
     if (own) *own = g_host_seed;
@@ -133,7 +135,7 @@ int32_t random_seed_detour(int32_t seed, const MethodInfo* method) {
     const int32_t out = g_random_seed(seed, method);
     if (own) *own = keep;
     if (entry) *entry = keep_entry;
-    return out;
+    return salted(out);
 }
 
 // What TLD would save as our mode right now (with the host's in place: our own, see serialize_detour).
@@ -409,5 +411,7 @@ bool ready() {
     if (g_applied) return true;
     return g_linked_at >= 0 && net::now_ms() - g_linked_at > kWaitForHostMs;
 }
+
+void set_seed_salt(int32_t salt) { g_seed_salt = salt; }
 
 }  // namespace world_mode

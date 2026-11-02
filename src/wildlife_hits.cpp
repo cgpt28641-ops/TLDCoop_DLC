@@ -107,6 +107,11 @@ struct Api {
     const MethodInfo* spawn_and_fire = nullptr;     // static FlareGunRoundItem.SpawnAndFire(GameObject, Vector3, Quaternion)
     ptrdiff_t shooter_prefab = -1, shooter_custom = -1;  // vp_FPSShooter.ProjectilePrefab / ProjectileCustomPrefab
     const MethodInfo* set_rotation = nullptr;       // Transform.set_rotation
+    // TLDCoop_DLC (v47): flare rounds others fired, flown here too
+    const MethodInfo* get_rotation = nullptr;       // Transform.get_rotation
+    const MethodInfo* find_all = nullptr;           // static Resources.FindObjectsOfTypeAll(Type)
+    const MethodInfo* go_get = nullptr;             // GameObject.GetComponent(Type)
+    Il2CppObject* round_type = nullptr;
 } api;
 
 bool g_ready = false;
@@ -301,6 +306,8 @@ Il2CppObject* arrow_damage_detour(Il2CppObject* self, Il2CppObject* victim, floa
     return nullptr;
 }
 
+bool replay_round(Il2CppObject* r);  // (v47, below)
+
 // Flare-gun rounds: the same, with FlareGunRoundItem's sums (weapon source FlareGun, no skill).
 using RoundDamageFn = Il2CppObject* (*)(Il2CppObject* self, Il2CppObject* victim, float scalar, bool stick_in,
                                          Il2CppString* collider, const MethodInfo* method);
@@ -308,6 +315,7 @@ RoundDamageFn g_round_damage = nullptr;
 
 Il2CppObject* round_damage_detour(Il2CppObject* self, Il2CppObject* victim, float scalar, bool stick_in,
                                   Il2CppString* collider, const MethodInfo* method) {
+    if (replay_round(self)) return nullptr;  // TLDCoop_DLC (v47): another player's round, shown here: hurts nothing
     uint32_t animal = 0;
     Il2CppObject *tf = nullptr, *ld = nullptr;
     static int calls_logged = 0;
@@ -562,12 +570,102 @@ void arrow_fire_detour(Il2CppObject* self, float bow_multiplier, const MethodInf
     g_arrow_fire(self, bow_multiplier, method);
 }
 
+// TLDCoop_DLC (v47): flare rounds. Ours fired: told to the others (FlareShot: where it leaves and which way); theirs:
+// fired here from the same spot (FlareGunRoundItem.SpawnAndFire, the round of our own flare gun's prefab), flying and
+// burning as it does for them, but hurting nothing (its InflictDamage does nothing here).
+bool g_replaying = false;
+struct ReplayRound {
+    uintptr_t addr;
+    ULONGLONG until;
+};
+std::vector<ReplayRound> g_replay_rounds;
+bool replay_round(Il2CppObject* r) {
+    const ULONGLONG now = GetTickCount64();
+    bool found = false;
+    for (auto it = g_replay_rounds.begin(); it != g_replay_rounds.end();) {
+        if (it->until < now) {
+            it = g_replay_rounds.erase(it);
+            continue;
+        }
+        found |= it->addr == reinterpret_cast<uintptr_t>(r);
+        ++it;
+    }
+    return found;
+}
+
 void round_fire_detour(Il2CppObject* self, const MethodInfo* method) {
     if (g_bullet_target) {  // flare rounds fall faster than g (m_AdditionalGravity)
         const Vector3 extra = il2::read_field<Vector3>(self, api.round_gravity);
         aim_projectile(self, il2::read_field<float>(self, api.round_speed), extra.y < 0 ? -extra.y : 0);
     }
     g_round_fire(self, method);
+    if (g_replaying) {
+        g_replay_rounds.push_back({reinterpret_cast<uintptr_t>(self), GetTickCount64() + 60000});
+        return;
+    }
+    if (!self || !netrt::status().connected || !api.get_rotation) return;
+    Il2CppObject* tf = il2::invoke(api.component_transform, self);
+    Vector3 p{};
+    Quaternion q{};
+    if (!position(tf, p) || !il2::invoke_value(api.get_rotation, tf, q)) return;
+    net::FlareShotMsg m;
+    m.scene = game::active_scene();
+    m.pos[0] = p.x, m.pos[1] = p.y, m.pos[2] = p.z;
+    m.rot[0] = q.x, m.rot[1] = q.y, m.rot[2] = q.z, m.rot[3] = q.w;
+    net::Writer w(net::Msg::FlareShot);
+    net::write_flare_shot(w, m);
+    netrt::send_packet(w, true);
+    static int told = 0;
+    if (told++ < 10) logx::info("wildlife: our flare round fired at (%.1f, %.1f, %.1f): the others see it too", p.x, p.y, p.z);
+}
+
+// The flare round's prefab, from our own flare gun (its shooter is on the player's camera, used or not).
+uintptr_t g_round_prefab = 0;
+Il2CppObject* round_prefab() {
+    if (Il2CppObject* p = g_round_prefab ? il2::il2cpp_gchandle_get_target(g_round_prefab) : nullptr) return p;
+    if (!api.find_all || !api.shooter_type || !api.round_type || !api.go_get) return nullptr;
+    void* args[] = {api.shooter_type};
+    Il2CppObject* all = il2::invoke(api.find_all, nullptr, args);
+    for (size_t i = 0, n = il2::array_length(all); i < n; ++i) {
+        Il2CppObject* shooter = il2::array_object_at(all, i);
+        Il2CppObject* prefab = shooter ? il2::read_field<Il2CppObject*>(shooter, api.shooter_prefab) : nullptr;
+        if (!prefab) continue;
+        void* ga[] = {api.round_type};
+        if (!il2::invoke(api.go_get, prefab, ga)) continue;
+        g_round_prefab = il2::il2cpp_gchandle_new(prefab, false);
+        return prefab;
+    }
+    return nullptr;
+}
+
+void flare_shots() {
+    std::vector<net::Packet> packets;
+    netrt::drain_packets(net::Msg::FlareShot, packets);
+    for (const net::Packet& pk : packets) {
+        net::Reader r = net::packet_body(pk);
+        net::FlareShotMsg m;
+        if (!net::read_flare_shot(r, m)) continue;
+        if (is_host()) {
+            net::Writer w(net::Msg::FlareShot);
+            net::write_flare_shot(w, m);
+            netrt::send_packet_except(pk.from, w, true);
+        }
+        if (m.scene != game::active_scene() || !api.spawn_and_fire) continue;
+        Il2CppObject* prefab = round_prefab();
+        if (!prefab) {
+            static int told = 0;
+            if (told++ < 5) logx::warn("wildlife: another player's flare round can't be shown (no flare-gun round prefab here)");
+            continue;
+        }
+        Vector3 p{m.pos[0], m.pos[1], m.pos[2]};
+        Quaternion q{m.rot[0], m.rot[1], m.rot[2], m.rot[3]};
+        void* fire_args[] = {prefab, &p, &q};
+        g_replaying = true;
+        il2::invoke(api.spawn_and_fire, nullptr, fire_args);
+        g_replaying = false;
+        static int told = 0;
+        if (told++ < 10) logx::info("wildlife: player %u's flare round flies here too (from %.1f, %.1f, %.1f)", pk.from, p.x, p.y, p.z);
+    }
 }
 
 using BulletStartFn = void (*)(Il2CppObject* self, const MethodInfo* method);
@@ -958,6 +1056,11 @@ bool init() {
     api.in_hands = il2::find_method(il2::find_class(kGame, "", "PlayerManager"), "get_m_ItemInHands", 0);
     api.stone_throw = il2::find_method(il2::find_class(kGame, "", "StoneItem"), "Throw", 0);
     api.spawn_and_fire = il2::find_method(round, "SpawnAndFire", 3);
+    api.get_rotation = il2::find_method(transform, "get_rotation", 0);
+    api.go_get = il2::find_method_params(game_object, "GetComponent", {"System.Type"});
+    if (Il2CppClass* res = il2::find_class(kCore, "UnityEngine", "Resources"))
+        api.find_all = il2::find_method_params(res, "FindObjectsOfTypeAll", {"System.Type"});
+    if (round && (api.round_type = il2::type_object(round)) != nullptr) il2::il2cpp_gchandle_new(api.round_type, false);
     api.shooter_prefab = il2::field_offset(il2::find_class(kGame, "", "vp_FPSShooter"), "ProjectilePrefab");
     api.shooter_custom = il2::field_offset(il2::find_class(kGame, "", "vp_FPSShooter"), "ProjectileCustomPrefab");
 
@@ -1005,6 +1108,7 @@ bool init() {
 void on_frame() {
     if (!g_ready) return;
     run_shot();
+    flare_shots();  // TLDCoop_DLC (v47)
     const bool own = wildlife_sync::ownership();  // TLDCoop_DLC (v44)
     if (!is_host()) {
         std::vector<net::Packet> packets;

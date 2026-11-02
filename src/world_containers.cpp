@@ -20,7 +20,9 @@
 #include "net/container_locks.h"
 #include "net/uniques.h"
 #include "net_runtime.h"
+#include "paths.h"
 #include "seamless_interiors.h"
+#include "world_mode.h"
 
 namespace world_containers {
 namespace {
@@ -811,7 +813,11 @@ void lock_receive() {
                     send_lock(m.scene, m.id, net::LockOp::State, owner, p.from);  // taken: the asker hears by whom
                     logx::info("containers: %s asked for %s, but it's %s's", player_name(p.from).c_str(),
                                short_id(m.id).c_str(), player_name(owner).c_str());
-                }  // else theirs already: a refresh
+                } else {
+                    // theirs already (a refresh, or an ask whose answer went astray): told again, so one still
+                    // waiting for it doesn't give up with "no answer from the host"
+                    send_lock(m.scene, m.id, net::LockOp::State, owner, p.from);
+                }
             } else if (m.op == net::LockOp::Release) {
                 if (g_locks.release(key, p.from)) tell_owner(key);
             }
@@ -1115,6 +1121,76 @@ void let_go(const std::string& id) {
     logx::info("containers: done moving %s; free for the others", short_id(id).c_str());
 }
 
+// TLDCoop_DLC: more players, more loot. The host's game rolls each container's random gear once (Container.
+// PopulateWithRandomGear: m_GearToInstantiate, made when it's first searched; the friends get the host's): with more
+// players in the game it rolls again ([loot] per_player % of a roll for each player beyond the first, the host's
+// coop.ini; 50 = half a roll more per player), each roll with the game's seed salted (world_mode), and the extra
+// names are added to the list. A whole roll more for each 100 %, the rest item by item by chance (the same for the
+// container every time: its position).
+using PopulateFn = void (*)(Il2CppObject* self, const MethodInfo* method);
+PopulateFn g_populate = nullptr;
+int g_loot_per_player = 50;
+int g_loot_logged = 0;
+std::vector<Il2CppObject*> string_list(Il2CppObject* list) {
+    std::vector<Il2CppObject*> out;
+    Il2CppObject* items = list ? il2::read_field<Il2CppObject*>(list, 0x10) : nullptr;
+    const int32_t n = list ? il2::read_field<int32_t>(list, 0x18) : 0;
+    for (int32_t i = 0; items && i < n && static_cast<size_t>(i) < il2::array_length(items); ++i)
+        out.push_back(il2::array_object_at(items, static_cast<size_t>(i)));
+    return out;
+}
+void populate_detour(Il2CppObject* self, const MethodInfo* method) {
+    g_populate(self, method);
+    const size_t players = netrt::status().players.size() + 1;
+    if (!self || !hosting() || players < 2 || g_loot_per_player <= 0 || api.to_make < 0) return;
+    Il2CppObject* list = il2::read_field<Il2CppObject*>(self, api.to_make);
+    if (!list) return;
+    static const MethodInfo* add = nullptr;
+    if (!add) add = il2::find_method_quiet(il2::il2cpp_object_get_class(list), "Add", 1);
+    static const MethodInfo* clear = nullptr;
+    if (!clear) clear = il2::find_method_quiet(il2::il2cpp_object_get_class(list), "Clear", 0);
+    if (!add || !clear) return;
+    std::vector<uintptr_t> first;  // (held: the rolls below may clear the list)
+    for (Il2CppObject* o : string_list(list)) first.push_back(il2::il2cpp_gchandle_new(o, false));
+    std::vector<std::string> base_names;
+    for (uintptr_t h : first) base_names.push_back(text(reinterpret_cast<Il2CppString*>(il2::il2cpp_gchandle_get_target(h))));
+    const double total = g_loot_per_player / 100.0 * static_cast<double>(players - 1);
+    const int whole = static_cast<int>(total);
+    const double part = total - whole;
+    const Vector3 at = position_of(self);
+    uint32_t rng = static_cast<uint32_t>(std::lround(at.x * 10)) * 73856093u ^ static_cast<uint32_t>(std::lround(at.z * 10)) * 19349663u ^ 0x5bd1e995u;
+    auto chance = [&]() {
+        rng = rng * 1664525u + 1013904223u;
+        return (rng >> 8) / 16777216.0;
+    };
+    std::vector<std::string> extra;
+    for (int roll = 1; roll <= whole + (part > 0 ? 1 : 0) && roll <= 4; ++roll) {
+        il2::invoke(clear, list);
+        world_mode::set_seed_salt(roll);
+        g_populate(self, method);
+        world_mode::set_seed_salt(0);
+        std::vector<std::string> got;
+        for (Il2CppObject* o : string_list(list)) got.push_back(text(reinterpret_cast<Il2CppString*>(o)));
+        if (got == base_names) break;  // (the seed isn't ours to salt: the same roll again)
+        const bool partial = roll > whole;
+        for (const std::string& n : got)
+            if (!partial || chance() < part) extra.push_back(n);
+    }
+    il2::invoke(clear, list);
+    for (uintptr_t& h : first) {
+        void* a[] = {il2::il2cpp_gchandle_get_target(h)};
+        il2::invoke(add, list, a);
+        il2::il2cpp_gchandle_free(h);
+    }
+    for (const std::string& n : extra) {
+        void* a[] = {il2::il2cpp_string_new(n.c_str())};
+        il2::invoke(add, list, a);
+    }
+    if (!extra.empty() && g_loot_logged++ < 30)
+        logx::info("containers: %zu players: %zu more item(s) rolled in a container (%zu of its own)", players, extra.size(),
+                   base_names.size());
+}
+
 bool init() {
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
     Il2CppClass* transform = il2::find_class(kCore, "UnityEngine", "Transform");
@@ -1192,6 +1268,14 @@ bool init() {
                          hook("Container.RemoveGear", api.remove_gear, &remove_gear_detour, &g_remove_gear) &&
                          hook("Container.AddToExistingStackable", api.add_stack, &add_stack_detour, &g_add_stack);
     const bool refreshes = hook("Panel_Container.Enable", api.panel_enable, &panel_enable_detour, &g_panel_enable);
+    {  // TLDCoop_DLC: more loot with more players
+        const auto ini = paths::instance_dir() / L"coop.ini";
+        g_loot_per_player = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"loot", L"per_player", 50, ini.c_str())), 0, 200);
+        if (const MethodInfo* pop = il2::find_method_quiet(container, "PopulateWithRandomGear", 0); pop && api.to_make >= 0 &&
+            hook("Container.PopulateWithRandomGear", pop, &populate_detour, &g_populate))
+            logx::info("containers: %d%% more loot in containers for each player beyond the first ([loot] per_player, the "
+                       "host's)", g_loot_per_player);
+    }
     const bool opening = hook("Container.BeginContainerOpen", api.begin_open, &begin_open_detour, &g_begin_open) &&
                          hook("Container.ShowContainerContents", api.show, &show_detour, &g_show);
     g_ready = changes;

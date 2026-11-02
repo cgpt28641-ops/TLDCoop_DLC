@@ -52,6 +52,7 @@ struct Settings {
     // [interiors] import_old: a building used before the rooms (its interior is in the save) gets its room built from
     // that record (items, containers, furniture...), once; 0: such a building keeps the game's door.
     bool seamless_import_old = true;
+    bool seamless_reimport_changed = true;  // [interiors] reimport_changed (TLDCoop_DLC)
     // [interiors] keep_rooms (A8): finished, saved rooms of the region just left are kept (at most 6) and put back on
     // the way back instead of being built again; 0: always built again.
     bool seamless_keep_rooms = true;
@@ -69,7 +70,7 @@ struct Settings {
     int seamless_window_quality = 1;
     // [interiors] indoor_light (TLDCoop_DLC): in a room, the outdoor ambient light at this % (rooms stand in the open,
     // lit like outdoors; the game's interiors are darker). 100: as outdoors.
-    int seamless_indoor_light = 45;
+    int seamless_indoor_light = 70;
     // [interiors] door_portals (Stage 2): a building's door shows its room through the doorway (and the room's door the
     // world outside), and using it moves the player through with no fade; 0: the fade as before. door_walk: walking into
     // such a door (open, its view showing) takes the player through too; 0: only by using it.

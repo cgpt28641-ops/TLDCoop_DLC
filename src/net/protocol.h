@@ -138,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 46;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 47;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -197,6 +197,8 @@ constexpr uint16_t kProtocolVersion = 46;  // v4: World. v5: Animals. v6: sounds
                                            // v45 (TLDCoop_DLC): wildlife stages 2/3: AnimalRec's spawn region,
                                            // WildCtl Gone / Kill / Regions, Take's kTakeMoved / kTakeBody and hours
                                            // v46 (TLDCoop_DLC): Controllers' per_player (more animals per player)
+                                           // v47 (TLDCoop_DLC): ids up to 200 bytes (kPdidMax); Shot (a flare round seen
+                                           // by the others); Controllers' loot per_player
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -220,7 +222,7 @@ enum class Msg : uint8_t {
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
     BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
-    Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52
+    Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52, FlareShot = 53
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -854,7 +856,7 @@ inline bool read_harvest(Reader& r, HarvestMsg& h) {
 }
 
 // Loose items lying in the world (milestone 8). TLD's persistent id (ObjectGuid, "PDID") names an item in both games.
-constexpr size_t kPdidMax = 64;
+constexpr size_t kPdidMax = 200;  // v47: 64 before (a Seamless Interiors room's container id, "si:<room>|g:<furniture guid>|<name>|<spot>", is longer)
 constexpr size_t kGearPrefabMax = 64;
 constexpr size_t kGearTextMax = 64 * 1024;  // one serialized GearItem
 constexpr uint8_t kItemAnswer = 1;          // ItemPutMsg.flags: an answer to ItemWant (the host's list), not a change
@@ -1861,6 +1863,26 @@ inline bool read_wild_ctl(Reader& r, WildCtlMsg& m) {
             return r.ok() && std::isfinite(m.hours);
     }
     return false;
+}
+
+// FlareShot (v47, TLDCoop_DLC): a flare-gun round someone fired, for the others to see fly and burn (no damage there).
+struct FlareShotMsg {
+    std::string scene;
+    float pos[3] = {0, 0, 0};
+    float rot[4] = {0, 0, 0, 1};
+};
+inline void write_flare_shot(Writer& w, const FlareShotMsg& m) {
+    w.put_str(m.scene, kSceneLen);
+    for (float v : m.pos) w.put(v);
+    for (float v : m.rot) w.put(v);
+}
+inline bool read_flare_shot(Reader& r, FlareShotMsg& m) {
+    m.scene = r.get_str(kSceneLen);
+    for (float& v : m.pos) v = r.get<float>();
+    for (float& v : m.rot) v = r.get<float>();
+    for (float v : m.pos) if (!std::isfinite(v)) return false;
+    for (float v : m.rot) if (!std::isfinite(v)) return false;
+    return r.ok();
 }
 
 // WildHit: a hit (or a thrown item) on an animal another game runs, passed on by the host to that game.

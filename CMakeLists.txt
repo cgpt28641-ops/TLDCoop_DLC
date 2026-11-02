@@ -88,6 +88,9 @@ add_library(tldcoop SHARED
 # TLDCoop_DLC: TLD's developer console, for testing; to be removed (src/dev_console.h)
 target_compile_definitions(tldcoop PRIVATE TLDCOOP_DEV_CONSOLE)
 set_target_properties(tldcoop PROPERTIES OUTPUT_NAME winhttp)
+# TLDCoop_DLC: a map of the functions (winhttp.map, in the dll-latest release): a crash's "winhttp.dll+0x..." in a
+# player's coop.log can be looked up.
+target_link_options(tldcoop PRIVATE /MAP)
 target_link_libraries(tldcoop PRIVATE minhook tldnet)
 
 # Fake second player for solo testing.

@@ -21,6 +21,7 @@
 
 // (Instance::legacy's kLegacyNone / kLegacyReady / kLegacyHydrating: seamless_interiors.cpp)
 bool g_import_old = true;  // coop.ini [interiors] import_old
+bool g_reimport_changed = true;  // coop.ini [interiors] reimport_changed (TLDCoop_DLC)
 
 struct IApi {
     bool ok = false;
@@ -806,9 +807,33 @@ bool old_save_gate(Instance& in, std::string& why) {
         has_vanilla_data(in, unused);  // the slot's keys
         if (resolve_key(in, now_key, err)) key = now_key;
         if (!key.empty() && slot_text(key, raw, err) && hash_text(raw) != r.rows[0][1]) {
-            why = "the game's own record of its interior ('" + key +
-                  "') changed after it was imported (played without the rooms?); which one is newer can't be told";
-            return false;
+            if (!g_reimport_changed) {
+                why = "the game's own record of its interior ('" + key +
+                      "') changed after it was imported (played without the rooms?); which one is newer can't be told";
+                return false;
+            }
+            // TLDCoop_DLC ([interiors] reimport_changed=1): the game's record is newer (someone went in through the
+            // game's door since): our files of it are put aside (worlds/<save>.interiors/replaced/) and the room is
+            // imported again from the game's record
+            std::error_code ec;
+            const fs::path aside = in.dir / "replaced" / (std::string(in.cfg->id) + "_" + std::to_string(GetTickCount64()));
+            fs::create_directories(aside, ec);
+            int moved = 0;
+            for (const auto& e : fs::directory_iterator(in.dir, ec)) {
+                const std::string n = e.path().filename().string();
+                if (!e.is_regular_file() || n.rfind(std::string(in.cfg->id) + ".", 0) != 0) continue;
+                fs::rename(e.path(), aside / n, ec);
+                if (!ec) ++moved;
+            }
+            in.has_data = false;
+            logx::info("interiors: %s: the game's own record of it ('%s') changed after our import (someone went in through "
+                       "the game's door): %d file(s) of ours put aside in %s; imported again from the game's record",
+                       in.cfg->id, key.c_str(), moved, aside.string().c_str());
+            if (!iapi.ok || !papi.ok || !prepare_import(in, why)) {
+                why = "imported again from the game's record, but that failed: " + why;
+                return false;
+            }
+            return true;
         }
         logx::info("interiors: %s: imported from the old save earlier ('%s'); its room comes from our files", in.cfg->id,
                    key.c_str());

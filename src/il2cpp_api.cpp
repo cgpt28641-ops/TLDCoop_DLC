@@ -1,8 +1,10 @@
 #include "il2cpp_api.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "log.h"
@@ -169,7 +171,7 @@ namespace {
 std::mutex g_exception_mutex;
 std::unordered_map<const MethodInfo*, uint64_t> g_exception_counts;
 
-void report_exception(const MethodInfo* method, Il2CppObject* exception) {
+__declspec(noinline) void report_exception(const MethodInfo* method, Il2CppObject* exception) {
     uint64_t count;
     {
         std::lock_guard lock(g_exception_mutex);
@@ -190,8 +192,40 @@ void report_exception(const MethodInfo* method, Il2CppObject* exception) {
 
 }  // namespace
 
+// TLDCoop_DLC: calls into the game nested this deep on one thread are a loop (a hook of ours calling the game, which
+// calls the hook again...): the stack ran out and the game crashed (0xC00000FD, three times in one evening). Past
+// kMaxInvokeDepth the call is refused (as if it threw), the loop ends, and the log says which calls went round.
+constexpr int kMaxInvokeDepth = 48;
+thread_local int t_invoke_depth = 0;
+thread_local const MethodInfo* t_invoke_chain[kMaxInvokeDepth + 1];
+
+__declspec(noinline) void report_loop() {
+    static std::atomic<int> reported{0};
+    if (++reported > 5) return;
+    std::string chain;
+    for (int i = kMaxInvokeDepth - 12; i < kMaxInvokeDepth; ++i) {
+        const MethodInfo* m = t_invoke_chain[i];
+        if (!m) continue;
+        char cls[256];
+        full_class_name(il2cpp_method_get_class(m), cls, sizeof(cls));
+        if (!chain.empty()) chain += " > ";
+        chain += std::string(cls) + "." + il2cpp_method_get_name(m);
+    }
+    logx::error("calls into the game nested %d deep (a loop; refused before the stack ran out): ... %s", kMaxInvokeDepth,
+                chain.c_str());
+}
+
 Il2CppObject* invoke(const MethodInfo* method, void* instance, void** args) {
     if (!method) return nullptr;
+    if (t_invoke_depth >= kMaxInvokeDepth) {
+        report_loop();
+        return nullptr;
+    }
+    t_invoke_chain[t_invoke_depth] = method;
+    ++t_invoke_depth;
+    struct Leave {
+        ~Leave() { --t_invoke_depth; }
+    } leave;
     Il2CppObject* exception = nullptr;
     Il2CppObject* result = il2cpp_runtime_invoke(method, instance, args, &exception);
     if (exception) {
