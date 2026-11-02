@@ -514,6 +514,8 @@ void report_frame_costs() {
     g_costs.clear();
 }
 
+std::string g_frame_scene;  // TLDCoop_DLC: on_frame's scene, for LateUpdate (no string made there every frame)
+
 void on_frame() {
     static bool first = true;
     static ULONGLONG last_scene_check = 0, last_telemetry = 0;
@@ -537,6 +539,7 @@ void on_frame() {
         if (current != scene) {
             logx::info("scene: '%s' -> '%s'", scene.c_str(), current.c_str());
             scene = std::move(current);
+            g_frame_scene = scene;
         }
     }
     const bool in_game = game::is_gameplay_scene(scene);
@@ -581,7 +584,7 @@ void on_frame() {
     TIMED("coop_notices::on_frame", coop_notices::on_frame(in_game));
     TIMED("coop_hud::on_frame", coop_hud::on_frame(scene, in_game));
     TIMED("coop_chat::on_frame", coop_chat::on_frame(in_game));
-    TIMED("coop_report::on_frame", coop_report::on_frame());
+    TIMED("coop_report::on_frame", coop_report::on_frame(in_game));
     TIMED("coop_save::on_frame", coop_save::on_frame(in_game));
     TIMED("coop_emotes::on_frame", coop_emotes::on_frame(in_game, !game::in_struggle() && !coop_death::dead() && !coop_sleep::in_bed()));
     TIMED("dev_commands::on_frame", dev_commands::on_frame(in_game));
@@ -655,7 +658,7 @@ void game_manager_late_update_detour(Il2CppObject* self, const MethodInfo* metho
     g_game_manager_late_update(self, method);
     {  // TLDCoop_DLC: JustZoom (its OnLateUpdate); a new scene starts it over
         static std::string zoom_scene;
-        const std::string sc = game::active_scene();
+        const std::string& sc = g_frame_scene;
         if (sc != zoom_scene) {
             zoom_scene = sc;
             just_zoom::reset();

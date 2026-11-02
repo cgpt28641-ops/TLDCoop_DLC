@@ -8,6 +8,7 @@
 #include "log.h"
 #include "net/emotes.h"
 #include "net/session.h"
+#include "coop_chat.h"
 #include "net_runtime.h"
 
 namespace coop_emotes {
@@ -62,10 +63,12 @@ void on_frame(bool in_game, bool can_gesture) {
     if (g_emote != net::Emote::None &&
         (net::now_ms() - g_started) / 1000.0 >= net::emote_seconds(g_emote))
         g_emote = net::Emote::None;
-    const bool listen = in_game && can_gesture && netrt::status().connected && game_in_front();
+    // TLDCoop_DLC: not while a chat line is typed (its letters aren't gestures); the session's status (a copy of
+    // everyone's) only asked for once a key went down
+    const bool listen = in_game && can_gesture && !coop_chat::typing() && game_in_front();
     for (int i = 1; i < static_cast<int>(net::Emote::Count); ++i) {
         const bool down = g_keys[i] && (GetAsyncKeyState(g_keys[i]) & 0x8000) != 0;
-        if (listen && down && !g_down[i]) begin(static_cast<net::Emote>(i));
+        if (listen && down && !g_down[i] && netrt::status().connected) begin(static_cast<net::Emote>(i));
         g_down[i] = down;
     }
 }

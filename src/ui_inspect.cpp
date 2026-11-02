@@ -181,6 +181,12 @@ void enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
 }  // namespace
 
 bool init() {
+    // TLDCoop_DLC: only when asked for (coop.ini [debug] ui_dump=1): a screen's dump is a hitch in normal play.
+    const auto ini = paths::instance_dir() / L"coop.ini";
+    if (!GetPrivateProfileIntW(L"debug", L"ui_dump", 0, ini.c_str())) {
+        logx::info("ui: screen dumps off ([debug] ui_dump=1 in coop.ini turns them on)");
+        return false;
+    }
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
     Il2CppClass* game_object = il2::find_class(kCore, "UnityEngine", "GameObject");
     Il2CppClass* object = il2::find_class(kCore, "UnityEngine", "Object");

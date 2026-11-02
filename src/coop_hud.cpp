@@ -141,6 +141,7 @@ struct Api {
     const MethodInfo* fog_set_owner = nullptr;      // FogOfWar.SetOwner(Panel_Map)
     const MethodInfo* fog_process = nullptr;        // FogOfWar.ProcessList(spots, vistas, sceneRadius, mapRadius)
     ptrdiff_t fog_texture = -1;                     // FogOfWar.m_RevealedMapTex: what's charted, drawn
+    const MethodInfo* rt_created = nullptr;         // RenderTexture.IsCreated()
     ptrdiff_t fog_camera = -1;                      // FogOfWar.m_Camera: draws it (found in Start)
     const MethodInfo* texture_width = nullptr;      // Texture.get_width() / get_height()
     const MethodInfo* texture_height = nullptr;
@@ -1060,10 +1061,14 @@ Il2CppObject* fog_texture(Il2CppObject* map, const Region& region) {
     Il2CppObject* spots = region_spots(map);
     if (!alive(texture) || !spots) return nullptr;
     const int count = list_size(spots);
-    // TLDCoop_DLC: drawn again now and then as well: after a climb on a rope the host's radar came up blank (its
-    // texture's drawing gone) and stayed so until another region was entered
+    // TLDCoop_DLC: drawn again when its texture lost what was on it (after a climb on a rope the host's radar came up
+    // blank and stayed so until another region was entered), and, to be sure, once a minute (every 10 s, the whole
+    // map each time, was a hitch)
     const double now = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    const bool stale = g_fog.drawn_ms > 0 && now - g_fog.drawn_ms > 10000;
+    bool created = true;
+    if (api.rt_created) il2::invoke_value(api.rt_created, texture, created);
+    const double since = g_fog.drawn_ms > 0 ? now - g_fog.drawn_ms : 0;
+    const bool stale = (!created && since > 1000) || since > 60000;  // (not lost: at most once a second)
     if (texture != g_fog.drawn_into || count != g_fog.drawn_spots || stale) {
         g_fog.drawn_ms = now;
         Il2CppObject* vistas = dict_get(get<Il2CppObject*>(map, api.map_vistas), region_key());
@@ -1357,6 +1362,14 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
     Il2CppObject* icon_sprite = alive(player_icon) ? il2::invoke(api.get_component, go_of(player_icon), sprite_args) : nullptr;
     const std::string shown = shown_region(map);
     const Region& region = region_now();
+    // TLDCoop_DLC: the region's name as a managed string, made once per region shown (not per friend per frame)
+    static std::string key_for;
+    static uintptr_t key_handle = 0;
+    if (shown != key_for || !key_handle || !il2::il2cpp_gchandle_get_target(key_handle)) {
+        if (key_handle) il2::il2cpp_gchandle_free(key_handle);
+        key_handle = il2::il2cpp_gchandle_new(reinterpret_cast<Il2CppObject*>(il2::il2cpp_string_new(shown.c_str())), false);
+        key_for = shown;
+    }
     // MapElements zooms by its scale: the names keep their size against it (the arrows zoom as TLD's own icons do).
     Vector3 zoom{1, 1, 1};
     il2::invoke_value(api.get_local_scale, elements, zoom);
@@ -1396,7 +1409,7 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
         Il2CppObject* icon = live(m.icon);
         Il2CppObject* label = live(m.label);
         set_color(icon, colour_for(who.player, who.name));
-        Il2CppObject* key = reinterpret_cast<Il2CppObject*>(il2::il2cpp_string_new(shown.c_str()));
+        Il2CppObject* key = il2::il2cpp_gchandle_get_target(key_handle);
         const hud::V2 f = hud::yaw_forward(who.yaw);
         Vector3 at{who.x, who.y, who.z}, ahead{who.x + f.x * 10, who.y, who.z + f.y * 10}, mp{}, mp_ahead{};
         void* at_args[] = {key, &at};
@@ -1546,6 +1559,8 @@ bool init() {
     api.fog_set_owner = il2::find_method(fog, "SetOwner", 1);
     api.fog_process = il2::find_method(fog, "ProcessList", 4);
     api.fog_texture = il2::field_offset(fog, "m_RevealedMapTex");
+    if (Il2CppClass* rt = il2::find_class(kCore, "UnityEngine", "RenderTexture"))
+        api.rt_created = il2::find_method(rt, "IsCreated", 0);
     api.fog_camera = il2::field_offset(fog, "m_Camera");
     Il2CppClass* texture_class = il2::find_class(kCore, "UnityEngine", "Texture");
     api.texture_width = il2::find_method(texture_class, "get_width", 0);

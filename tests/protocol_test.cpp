@@ -265,6 +265,75 @@ int main() {
             printf("ok: a Give with an unknown op is refused\n");
     }
 
+    // TLDCoop_DLC: chat (Polish UTF-8, the longest line the chat box lets through), a bug report, the animals a
+    // friend hands back, spray marks, a repaired object.
+    struct Chat {
+        std::string who, said;
+    };
+    auto write_chat_msg = [](Writer& w, const Chat& c) { write_chat(w, c.who, c.said); };
+    auto read_chat_msg = [](Reader& r, Chat& c) { return read_chat(r, c.who, c.said); };
+    round_trip("Chat", Msg::Chat, Chat{"Karol", "Za\xC5\xBC\xC3\xB3\xC5\x82\xC4\x87 g\xC4\x99\xC5\x9Bl\xC4\x85 ja\xC5\xBA\xC5\x84"},
+               write_chat_msg, read_chat_msg);
+    {
+        std::string longest;
+        for (int i = 0; i < 120; ++i) longest += "\xE2\x82\xAC";  // 120 characters (the line's limit) of 3 bytes each
+        round_trip("Chat (longest line)", Msg::Chat, Chat{text(64, 'n'), longest}, write_chat_msg, read_chat_msg);
+        round_trip("Chat (512 bytes)", Msg::Chat, Chat{"x", text(512, 'c')}, write_chat_msg, read_chat_msg);
+        Writer w(Msg::Chat, kMaxMessage);
+        write_chat(w, "x", text(513, 'c'));  // over its size: sent empty, and an empty line is refused
+        Chat back;
+        Reader r(w.data() + kHeader, w.size() - kHeader);
+        if (read_chat(r, back.who, back.said))
+            fail("Chat", "a line over 512 bytes was read back");
+        else
+            printf("ok: a chat line over 512 bytes is refused\n");
+    }
+
+    struct Report {
+        uint32_t id = 0;
+        std::string who;
+    };
+    round_trip(
+        "Report", Msg::Report, Report{0x8badf00du, "Gracz \xC5\x81\xC3\xB3" "d\xC5\xBA"},
+        [](Writer& w, const Report& m) { write_report(w, m.id, m.who); },
+        [](Reader& r, Report& m) { return read_report(r, m.id, m.who); });
+
+    struct Handover {
+        std::string scene;
+        std::vector<HandoverAnimal> list;
+    };
+    Handover handover;
+    handover.scene = "LakeRegion";
+    for (uint8_t i = 0; i < 3; ++i) {
+        HandoverAnimal a;
+        a.kind = static_cast<uint8_t>(i + 1);
+        a.pos[0] = 10.5f * i, a.pos[1] = -2.25f, a.pos[2] = 300.75f;
+        a.yaw = 45.0f * i;
+        a.hp = 100 - 7.5f * i;
+        handover.list.push_back(a);
+    }
+    round_trip(
+        "AnimalHandover", Msg::AnimalHandover, handover,
+        [](Writer& w, const Handover& m) { write_animal_handover(w, m.scene, m.list); },
+        [](Reader& r, Handover& m) { return read_animal_handover(r, m.scene, m.list); });
+
+    SprayMarkMsg spray;
+    spray.scene = "LakeRegion", spray.id = "spray-guid", spray.name = "Decal_Spray_Arrow";
+    spray.pos[0] = 1, spray.pos[1] = 2, spray.pos[2] = 3;
+    spray.normal[1] = 1;
+    spray.scale[0] = spray.scale[1] = spray.scale[2] = 0.5f;
+    spray.yaw = 33;
+    spray.colour[0] = 0.9f, spray.colour[3] = 0.8f;
+    spray.projectile = 2;
+    spray.indoors = true;
+    round_trip("SprayMark", Msg::SprayMark, spray, write_spray_mark, read_spray_mark);
+    SprayMarkMsg spray_gone;
+    spray_gone.scene = "LakeRegion", spray_gone.id = "spray-guid", spray_gone.gone = true;
+    round_trip("SprayMark (gone)", Msg::SprayMark, spray_gone, write_spray_mark, read_spray_mark);
+
+    object.object = {ObjectKind::Repair, 1, 0, "safehouse-bed-guid"};
+    round_trip("ObjectPut (repair)", Msg::ObjectPut, object, write_object_put, read_object_put);
+
     // A string longer than its fixed size arrives cut (and NUL-ended), without spilling into the next field.
     {
         StateMsg longer = state;

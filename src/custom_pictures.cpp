@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <algorithm>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -24,8 +25,11 @@ struct Picture {
 
 constexpr const char* kCore = "UnityEngine.CoreModule.dll";
 constexpr ptrdiff_t kCachedPtr = 0x10;
-constexpr double kScanAt[] = {1000, 6000};  // after a scene comes in
-constexpr double kRescanMs = 60000;          // and now and then after (frames hung up later)
+// TLDCoop_DLC: looked at after a scene comes in (late materials, frames hung up later), only materials not seen yet in
+// this scene, a few hundred a frame: the whole list at once, every minute, was a 35-77 ms frame.
+constexpr double kScanAt[] = {1000, 6000, 20000, 60000};
+constexpr int kScans = static_cast<int>(sizeof(kScanAt) / sizeof(kScanAt[0]));
+constexpr size_t kPerFrame = 300;
 constexpr int kRGBA32 = 4;                   // TextureFormat.RGBA32
 constexpr int kDontUnloadUnusedAsset = 32;   // HideFlags
 
@@ -36,6 +40,7 @@ struct Api {
     Il2CppObject* material_type = nullptr;
     Il2CppClass* texture2d = nullptr;
     const MethodInfo* find_all = nullptr, *object_name = nullptr, *set_name = nullptr, *hide_flags = nullptr;
+    const MethodInfo* destroy = nullptr;  // static Object.Destroy(Object)
     const MethodInfo* get_main = nullptr, *set_main = nullptr;
     const MethodInfo* rt_get = nullptr, *rt_release = nullptr, *rt_active = nullptr, *rt_set_active = nullptr;
     const MethodInfo* blit = nullptr;
@@ -46,8 +51,14 @@ struct Api {
 std::unordered_map<std::string, uintptr_t> g_ours;  // atlas name -> our texture
 std::unordered_set<std::string> g_failed;
 std::string g_scene;
-double g_scene_since = 0, g_last_scan = 0;
+double g_scene_since = 0;
 int g_scans_done = 0;
+// The scan under way, spread over frames: Resources.FindObjectsOfTypeAll's array (held), and where we are in it.
+uintptr_t g_sweep = 0;
+size_t g_sweep_at = 0;
+int g_changed = 0;
+std::unordered_set<void*> g_seen;            // materials (native) looked at in this scene
+std::unordered_map<void*, int> g_tex_kind;   // texture (native) -> 1 one of the atlases, 0 not
 
 double now_ms() {
     static const double per_ms = [] {
@@ -102,6 +113,8 @@ Il2CppObject* build(Il2CppObject* tld, const std::string& atlas) {
     Il2CppObject* pixels = il2::invoke(api.get_pixels, tex, la);  // Color32[], rows bottom-up
     if (il2::array_length(pixels) != static_cast<size_t>(size) * size) {
         logx::error("pictures: could not read %s back (%zu pixels)", atlas.c_str(), il2::array_length(pixels));
+        void* da[] = {tex};
+        il2::invoke(api.destroy, nullptr, da);  // TLDCoop_DLC: not left behind (a texture the size of the atlas)
         return nullptr;
     }
     uint8_t* px = reinterpret_cast<uint8_t*>(pixels) + 0x20;
@@ -139,20 +152,43 @@ Il2CppObject* build(Il2CppObject* tld, const std::string& atlas) {
     return tex;
 }
 
-void scan() {
+void end_sweep() {
+    if (g_sweep) il2::il2cpp_gchandle_free(g_sweep);
+    g_sweep = 0;
+    g_sweep_at = 0;
+    if (g_changed) logx::info("pictures: %d material(s) show our pictures", g_changed);
+    g_changed = 0;
+}
+
+void start_sweep() {
+    end_sweep();
     void* a[] = {api.material_type};
     Il2CppObject* all = il2::invoke(api.find_all, nullptr, a);
-    int changed = 0;
-    for (size_t i = 0, n = il2::array_length(all); i < n; ++i) {
-        Il2CppObject* m = il2::array_object_at(all, i);
-        if (!alive(m)) continue;
+    if (all) g_sweep = il2::il2cpp_gchandle_new(all, false);
+}
+
+bool is_atlas(const std::string& name) {
+    for (const Picture& p : kPictures)
+        if (name == p.atlas) return true;
+    return false;
+}
+
+// One frame's share of the scan: a material is asked for its texture once a scene, a texture for its name once.
+void sweep_step() {
+    Il2CppObject* all = target(g_sweep);
+    const size_t n = il2::array_length(all);
+    const size_t stop = std::min(n, g_sweep_at + kPerFrame);
+    for (; g_sweep_at < stop; ++g_sweep_at) {
+        Il2CppObject* m = il2::array_object_at(all, g_sweep_at);
+        if (!alive(m) || !g_seen.insert(il2::read_field<void*>(m, kCachedPtr)).second) continue;
         Il2CppObject* tex = il2::invoke(api.get_main, m);
-        if (!tex) continue;
+        if (!alive(tex)) continue;
+        void* native = il2::read_field<void*>(tex, kCachedPtr);
+        auto kind = g_tex_kind.find(native);
+        if (kind == g_tex_kind.end()) kind = g_tex_kind.emplace(native, is_atlas(name_of(tex)) ? 1 : 0).first;
+        if (!kind->second) continue;
         const std::string name = name_of(tex);
-        bool ours = false;
-        for (const Picture& p : kPictures)
-            if (name == p.atlas) ours = true;
-        if (!ours || g_failed.count(name)) continue;
+        if (g_failed.count(name)) continue;
         Il2CppObject* mine = target(g_ours[name]);
         if (!alive(mine)) {
             mine = build(tex, name);
@@ -166,9 +202,9 @@ void scan() {
         }
         void* sa[] = {mine};
         il2::invoke(api.set_main, m, sa);
-        ++changed;
+        ++g_changed;
     }
-    if (changed) logx::info("pictures: %d material(s) show our pictures", changed);
+    if (g_sweep_at >= n) end_sweep();
 }
 
 bool resolve() {
@@ -183,6 +219,7 @@ bool resolve() {
     api.find_all = il2::find_method_params(resources, "FindObjectsOfTypeAll", {"System.Type"});
     api.object_name = il2::find_method(object, "get_name", 0);
     api.set_name = il2::find_method(object, "set_name", 1);
+    api.destroy = il2::find_method_params(object, "Destroy", {"UnityEngine.Object"});
     api.hide_flags = il2::find_method(object, "set_hideFlags", 1);
     api.get_main = il2::find_method(material, "get_mainTexture", 0);
     api.set_main = il2::find_method(material, "set_mainTexture", 1);
@@ -197,7 +234,7 @@ bool resolve() {
     api.get_pixels = il2::find_method_params(api.texture2d, "GetPixels32", {"System.Int32"});
     api.set_pixels = il2::find_method_params(api.texture2d, "SetPixels32", {"UnityEngine.Color32[]", "System.Int32"});
     api.apply = il2::find_method_params(api.texture2d, "Apply", {"System.Boolean", "System.Boolean"});
-    return api.find_all && api.object_name && api.set_name && api.hide_flags && api.get_main && api.set_main &&
+    return api.find_all && api.object_name && api.set_name && api.hide_flags && api.destroy && api.get_main && api.set_main &&
            api.rt_get && api.rt_release && api.rt_active && api.rt_set_active && api.blit && api.t2d_ctor &&
            api.read_pixels && api.get_pixels && api.set_pixels && api.apply;
 }
@@ -216,17 +253,23 @@ void on_frame(const std::string& scene, bool in_game) {
         g_scene = scene;
         g_scene_since = now;
         g_scans_done = 0;
+        end_sweep();
+        g_seen.clear();      // native pointers of the scene left behind can come back as others
+        g_tex_kind.clear();
     }
     if (!in_game) return;
+    if (g_sweep) {
+        sweep_step();
+        return;
+    }
     bool due = false;
-    while (g_scans_done < 2 && now - g_scene_since >= kScanAt[g_scans_done]) {
+    while (g_scans_done < kScans && now - g_scene_since >= kScanAt[g_scans_done]) {
         ++g_scans_done;
         due = true;
     }
-    if (g_scans_done >= 2 && now - g_last_scan >= kRescanMs) due = true;
     if (!due) return;
-    g_last_scan = now;
-    scan();
+    start_sweep();
+    sweep_step();
 }
 
 }  // namespace custom_pictures

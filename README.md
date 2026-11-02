@@ -18,7 +18,7 @@ zasługa za sam mod należy do niego (zobacz [Autorzy](#autorzy)). Ta wersja dod
 > [Instalacja](#instalacja)).
 
 Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest w
-[README.original.md](README.original.md).
+[README.original.md](README.original.md) (stan oryginału: nie opisuje zmian tej wersji).
 
 ---
 
@@ -55,7 +55,8 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
 - Gra toczy się na poziomie trudności hosta, w jego świecie, z jego porą dnia i pogodą.
 
 **Widzicie się nawzajem**
-- Znajomi wyglądają jak jedna z **23 postaci z fabuły** (Mackenzie, Astrid, Molly, Jane…).
+- Znajomi wyglądają jak jedna z **3 postaci z fabuły**: Mackenzie, Astrid albo Molly (tylko na nich dobrze leżą
+  ubrania).
 - Widać, co trzymają w rękach. Latarnia, pochodnia czy raca naprawdę oświetlają otoczenie.
 - Postacie jedzą, śpią w łóżku, kucają i podają przedmioty.
 - **Krew:** ślady krwi krwawiącego gracza (krople, plamy po walce ze zwierzęciem) widzą wszyscy.
@@ -81,6 +82,13 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   oddala (1,1x–20x), a kamera obraca się wtedy wolniej i płynniej. To mod JustZoom (WillWunderhorn), wbudowany za
   zgodą autora, **bez MelonLoadera i ModSettings**. Każdy ustawia u siebie w `coop.ini` `[zoom]` (`enabled`, `key`,
   `wheel_step`, `speed`, `smooth`).
+- **Seamless Interiors (wbudowane, w budowie, domyślnie wyłączone):** drzwi budynku wpuszczają do środka bez ekranu
+  ładowania. To mod Seamless Interiors (karsontr13), przeniesiony do C++ i wbudowany za zgodą autora, **bez
+  MelonLoadera**. Włącza go **host** (MODS → SEAMLESS INTERIORS) i obowiązuje to wszystkich; w solo `coop.ini`
+  `[interiors] enabled=1`. Budynki, w których już byłeś bez niego, dostają pokój zbudowany raz z Twojego zapisu
+  (`import_old=1`; zapis gry jest tylko czytany). **Przed włączeniem zrób kopię zapisów.**
+- **ZAPISZ GRĘ:** w menu pod **ESC** jest przycisk **ZAPISZ GRĘ**: gra zapisuje się od razu, jak po śnie. W co-opie
+  zapis hosta to zapis świata, a zapis znajomego to jego postać.
 - **Konsola deweloperska (na testy, do usunięcia):** F1 otwiera konsolę TLD (`help` pokazuje komendy). To
   Developer Console (DigitalzombieTLD), wbudowany za zgodą autora; `coop.ini` `[devconsole] enabled=0` wyłącza,
   `key=F2` zmienia klawisz.
@@ -140,7 +148,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v40**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v41**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
@@ -206,17 +214,18 @@ Znajomi widzą Twoją **nazwę ze Steama**. Kod hosta się nie zmienia, więc gr
 
 Ekran ustawień co-opa obejmuje to, czego zwykle potrzeba: hostowanie lub dołączanie, postać, kod oraz przełączniki
 NAMES, RADAR i AUTO MAP. Kilka dodatkowych opcji jest w `TLDCoop\coop.ini` w folderze gry. Ten plik tworzy się przy
-pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zrestartować grę.
+pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zrestartować grę. Komentarze nowych opcji
+pojawiają się tylko w nowym `coop.ini` (stary można usunąć, zrobi się nowy, albo dopisać opcje ręcznie).
 
 | Ustawienie | Co robi |
 |---|---|
 | `dlc_check=1` | **Nowe.** Gracz musi mieć wszystkie DLC hosta. `0` wpuszcza każdego (na własne ryzyko). |
 | `ask_to_join=1` | Każdy znajomy prosi o wejście, a host go wpuszcza. `0` wpuszcza od razu każdego z kodem. |
 | `body=` | Twoja postać (ustawia ją ekran co-opa): mackenzie_indoor, astrid albo molly — tylko te, na których dobrze leżą ubrania. |
-| `voice=male` / `female` | Głos Twojej postaci. |
+| `voice=male` / `female` | Głos Twojej postaci (opcja zaawansowana, sekcja `[net]`). |
 | `[colors] Nick=kolor` | **Nowe.** Kolor znajomego na radarze, mapie i nad głową: `red`, `orange`, `yellow`, `green`, `teal`, `blue`, `purple`, `pink`, `white`, `grey` albo `#RRGGBB`. |
 | `[emotes] wave=F5 ...` | **Nowe.** Klawisze gestów: `wave`, `point`, `come`, `stop`, `yes`, `no` (F1..F12, A..Z, 0..9, NUM0..NUM9, `off`). |
-| `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host: ekran co-opa → MODS). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze). |
+| `[ambient] enabled=1` | **Nowe.** Ambient Lights w solo (w co-opie decyduje host: ekran co-opa → MODS). `intensity`, `range` — jasność i zasięg światła z okien; `night` — 0 ciemne noce jak w grze, 1 jak w modzie, 2 jaśniejsze, 3 „wieczny dzień”; `ambience`, `fill`, `fill_color` — własne oświetlenie wnętrz gry (`1` jak w grze); `aurora_intensity`, `aurora_saturation` — jasność i nasycenie światła zorzy polarnej w budynkach. |
 | `[trees] enabled=1` | **Nowe.** Dynamic Trees w solo (w co-opie decyduje host: MODS). Ilość śniegu na drzewach jest zapisywana osobno dla każdego zapisu gry w `TLDCoop\dynamic_trees.ini`. |
 | `[interiors] enabled=0` | **Nowe, w budowie (domyślnie wyłączone).** Seamless Interiors (karsontr13, za zgodą autora): drzwi budynku wpuszczają do środka bez ekranu ładowania. W co-opie decyduje host (MODS). Pokoje zapisują się z grą. |
 | `[interiors] import_old=1` | Budynek, w którym już byłeś bez Seamless Interiors (jego wnętrze jest w zapisie gry), dostaje pokój zbudowany raz z tego zapisu: przedmioty, szafki, meble, skrzynki do suszenia. Zapis gry jest tylko czytany. Gdy czegoś nie da się przenieść w całości, budynek zostaje przy zwykłych drzwiach. `0` = takie budynki zawsze mają zwykłe drzwi. |
@@ -226,13 +235,15 @@ pierwszym uruchomieniu i ma komentarz przy każdej linii. Po zmianie trzeba zres
 | `[zoom] enabled=1`, `key=Z` | **Nowe.** JustZoom: klawisz przybliżenia; `wheel_step` (5–50) krok kółka, `speed` (1–30) szybkość przybliżania, `smooth` (1–40) płynność obrotu kamery. |
 | `[devconsole] enabled=1`, `key=F1` | **Nowe, na testy.** Konsola deweloperska i jej klawisz. |
 | `backups=5` | Ile kopii zapasowych zapisów trzymać w `TLDCoop\backups` (`0` żadnej). |
+| `[wildlife] struggle_pose=1` | Zaawansowane (nie ma ich w komentarzach `coop.ini`). Gdy zwierzę rzuci się na znajomego, u innych graczy leży na nim w czasie walki (`0`: czeka tam, gdzie skoczyło); `pose_forward`, `pose_side` (m) i `pose_turn` (stopnie) poprawiają jego położenie. |
 | `[struggle] picker_scale=0.5` | Jak długo widać wybór broni, gdy rzuci się na Ciebie zwierzę (`1` jak w grze). |
 | `transport=local` | Gra w sieci lokalnej po IP zamiast przez kody Steam (z `bind_ip`, `host_ip`, `port`). |
 
 ## Inne mody (MelonLoader)
 
-TLDCoop nie potrzebuje MelonLoadera i nie przeszkadza mu. Nie zmienia plików gry, działa tylko w pamięci, a w
-trybie solo nic nie robi. Gra wczytuje go jako `winhttp.dll`, więc MelonLoader musi mieć **inną nazwę**:
+TLDCoop nie potrzebuje MelonLoadera i nie przeszkadza mu. Nie zmienia plików gry i działa tylko w pamięci. W trybie
+solo co-op nic nie robi, ale wbudowane mody (Ambient Lights, Dynamic Trees, JustZoom, Seamless Interiors, ZAPISZ GRĘ,
+obrazy) działają też w solo. Gra wczytuje go jako `winhttp.dll`, więc MelonLoader musi mieć **inną nazwę**:
 
 | Plik MelonLoadera w folderze gry | Co zrobić |
 |---|---|
@@ -248,6 +259,9 @@ nazwę **MelonLoader.Bootstrap** (ok. 10 MB), a plik TLDCoop nie ma nazwy produk
 nie działa.
 
 **DynamicTrees:** też jest już wbudowany. Usuń go z `Mods` MelonLoadera, żeby oba nie zmieniały tych samych tekstur.
+
+**Seamless Interiors:** też jest wbudowany (domyślnie wyłączony). Nie instaluj go dodatkowo w `Mods`
+MelonLoadera (usuń `SeamlessInteriors.dll`, jeśli tam jest): oba budowałyby te same pokoje.
 
 **JustZoom** i **Developer Console:** też są wbudowane. Usuń je z `Mods` MelonLoadera, żeby nie działały podwójnie.
 **AdaptiveArsenal** nie jest już częścią moda (psuł strzelanie); jego kopię z `Mods` też usuń.
@@ -292,8 +306,9 @@ Twoje zapisy są w `%LOCALAPPDATA%\Hinterland\TheLongDark`. Odinstalowanie moda 
 - **Znajomi wyglądają jak kolorowe kapsuły:** u osoby, która widzi kapsuły, brakuje
   `TLDCoop\tldcoop_bodies.bundle`. Skopiuj go z zipa.
 - **Zgłaszanie błędu jednym klawiszem:** gdy widzisz błąd, wciśnij **F11** od razu, w tej chwili. Mod zaznaczy ten
-  moment w logu, otworzy okienko na krótki opis (ENTER zapisuje, ESC pomija) i spakuje `coop.log`, `coop-prev.log`,
-  `coop-prev2.log`, `coop.ini` i opis (`opis.txt`) do `TLDCoop\reports\<data_godzina>_<nick>.zip`. W co-opie gra **każdego** gracza robi w tej samej chwili własne
+  moment w logu, otworzy okienko na krótki opis (ENTER zapisuje, ESC pomija; poza grą albo przy pisaniu na czacie
+  bez opisu) i spakuje `coop.log`, `coop-prev.log`, `coop-prev2.log`, `coop.ini` (bez kodów `code=` i `join_code=`)
+  i opis (`opis.txt`) do `TLDCoop\reports\<data_godzina>_<nick>.zip`. W co-opie gra **każdego** gracza robi w tej samej chwili własne
   zgłoszenie, więc wyślij zipy od wszystkich. Nic nie jest wysyłane automatycznie. Klawisz: `coop.ini` `[report]`.
 - **Zgłaszanie błędu ręcznie:** dołącz `TLDCoop\coop.log` od **każdego** gracza. Przy starcie gry poprzedni log
   zostaje jako `coop-prev.log` (a jeszcze wcześniejszy jako `coop-prev2.log`), więc po crashu i ponownym
@@ -359,6 +374,8 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
   **Jods** (tekstury); wbudowany za zgodą autorów (`third_party/dynamictrees/NOTICE.txt`).
 - JustZoom: mod [JustZoom](https://github.com/WillWunderhorn/JustZoom) autorstwa **WillWunderhorna**; przeniesiony
   do C++ i wbudowany za zgodą autora (`third_party/justzoom/NOTICE.txt`).
+- Seamless Interiors: mod [TLD-Seamless-Interiors](https://github.com/karsontr13/TLD-Seamless-Interiors) autorstwa
+  **karsontr13**; przeniesiony do C++ i wbudowany za zgodą autora (`third_party/seamless-interiors/NOTICE.txt`).
 - Developer Console: mod [TLD-Developer-Console](https://github.com/DigitalzombieTLD/TLD-Developer-Console) autorstwa
   **DigitalzombieTLD** (MIT); jego rdzeń wbudowany za zgodą autora (`third_party/developer-console/NOTICE.txt`).
 - **The Long Dark** i jego postacie należą do **Hinterland Studio**. To nieoficjalny mod fanowski, niewykonany ani

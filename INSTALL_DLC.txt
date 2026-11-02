@@ -1,9 +1,9 @@
-TLDCoop_DLC - co-op do The Long Dark (przerobka TLDCoop v0.13.1 pod gre 2.58 i DLC)
+TLDCoop_DLC - co-op do The Long Dark (przerobka TLDCoop v0.13.1 pod gre 2.59 i DLC)
 =================================================================================
 
 Wymagania
 - The Long Dark 2.59 189140 S na Steam (Windows), Steam wlaczony.
-- Kazdy gracz instaluje TEN SAM zip (protokol v36; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
+- Kazdy gracz instaluje TEN SAM zip (protokol v41; nie gra z oryginalnym TLDCoop v0.13.1 / v27).
 - Gracz dolaczajacy musi miec zainstalowane wszystkie DLC, ktore ma host
   (np. Tales from the Far Territory, Iron Road). Wiecej DLC niz host - w porzadku.
 
@@ -22,22 +22,44 @@ Kto co wybiera
 - Tryb (Pielgrzym, Przesladowca...) i mape wybiera tylko HOST. U dolaczajacego (JOIN + NEW) te ekrany
   przeklikuja sie same; po wejsciu do gry pojawia sie obok hosta.
 
+Dolaczanie do trwajacej gry
+- Znajomy: Survival > NEW/RESUME/LOAD > CO-OP > JOIN, kod hosta, CONFIRM. Host dostaje komunikat w grze:
+  F9 wpuszcza, F10 odrzuca. Znajomy pojawia sie obok hosta.
+
+Klawisze
+- ENTER: czat (w co-opie). ENTER wysyla, ESC zamyka. Polskie litery dzialaja; postac stoi, gdy piszesz.
+- Z (przytrzymaj): JustZoom, przyblizenie; kolko myszy przybliza/oddala. coop.ini [zoom].
+- F1: konsola deweloperska TLD (na testy; 'help' = lista komend). coop.ini [devconsole] enabled=0 wylacza.
+- F11: zgloszenie bledu. Wcisnij od razu, gdy widzisz blad: krotki opis (ENTER zapisz, ESC pomin), logi trafiaja do
+  TLDCoop\reports\<data>_<nick>.zip (coop.ini bez kodow). W co-opie zgloszenie robi kazdy gracz; wyslij wszystkie zipy.
+- ESC > ZAPISZ GRE: zapis od razu, jak po snie. W co-opie zapis hosta to swiat, zapis znajomego to jego postac.
+
 Gesty i kolory
 - Gesty: F5 machanie, F6 wskazywanie, F7 "chodz tu", F8 "stoj", F3 tak, F4 nie (TLDCoop\coop.ini, [emotes]).
 - Kolory graczy na radarze, mapie i nad glowa: TLDCoop\coop.ini, [colors], np. Shatsca=blue.
-  (Stary coop.ini nie ma tych sekcji: mozna je dopisac na koncu pliku albo usunac coop.ini, zrobi sie nowy.)
 
 Ambient Lights (wbudowane, bez MelonLoadera)
 - Swiatlo z okien w budynkach zmienia sie z pora dnia i pogoda. Wlacza/wylacza HOST na ekranie co-opa: przycisk MODS
   -> AMBIENT LIGHTS, dla wszystkich graczy. W solo: TLDCoop\coop.ini, [ambient] enabled=1 albo 0.
 - Jasnosc itp. kazdy u siebie: [ambient] intensity, range, night, ambience, fill, fill_color.
 - Jesli masz mod AmbientLights w MelonLoaderze (Mods\AmbientLights.dll), usun go: dopoki jest, TLDCoop mu ustepuje.
-- Wszyscy gracze musza miec te sama wersje TLDCoop (protokol v36).
+- Wszyscy gracze musza miec te sama wersje TLDCoop (protokol v41).
 
 Dynamic Trees (wbudowane, bez MelonLoadera)
 - Snieg na drzewach przybywa przy opadach i wietrze, znika przy suchej wietrznej pogodzie. Wlacza/wylacza HOST:
   ekran co-opa -> MODS -> DYNAMIC TREES; drzewa znajomych maja snieg hosta. W solo: coop.ini, [trees] enabled=.
 - Tekstury sa w TLDCoop\tldcoop_trees.bundle (w tym zipie). Mod DynamicTrees z MelonLoadera usun z Mods.
+
+Seamless Interiors (wbudowane, w budowie, domyslnie WYLACZONE)
+- Drzwi budynku wpuszczaja do srodka bez ekranu ladowania. W co-opie decyduje HOST: MODS -> SEAMLESS INTERIORS.
+  W solo: coop.ini, [interiors] enabled=1.
+- [interiors] import_old=1: budynek, w ktorym juz byles bez tego, dostaje pokoj zbudowany raz z Twojego zapisu
+  (zapis jest tylko czytany). 0 = takie budynki maja zwykle drzwi.
+- PRZED WLACZENIEM ZROB KOPIE ZAPISOW. Moda SeamlessInteriors z MelonLoadera nie instaluj (usun go z Mods).
+
+coop.ini
+- Komentarze nowych opcji sa tylko w NOWYM coop.ini. Stary mozna usunac (zrobi sie nowy; wpisz znow name= itd.)
+  albo dopisac sekcje recznie.
 
 Kopia zapasowa zapisow
 - Przed kazda gra w co-op mod kopiuje zapisy do TLDCoop\backups\<data_godzina> (5 ostatnich, coop.ini [net] backups=).

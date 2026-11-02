@@ -6,6 +6,7 @@
 #include <cmath>
 #include <string>
 
+#include "coop_chat.h"
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/emotes.h"
@@ -224,7 +225,8 @@ void late_update(bool in_game) {
         zoom = 1;
         return;
     }
-    const bool hold = game_in_front() && (GetAsyncKeyState(cfg.key) & 0x8000) != 0;
+    // TLDCoop_DLC: not while a chat line is typed (Z is a letter of it)
+    const bool hold = game_in_front() && !coop_chat::typing() && (GetAsyncKeyState(cfg.key) & 0x8000) != 0;
     float dt = 0;
     il2::invoke_value(api.delta_time, nullptr, dt);
     update_zoom(cam, camera, hold, dt);

@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <random>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "coop_features.h"
 #include "game_state.h"
@@ -29,6 +31,7 @@ constexpr const char* kCore = "UnityEngine.CoreModule.dll";
 constexpr ptrdiff_t kCachedPtr = 0x10;
 constexpr double kScanAt[] = {1000, 6000};  // after a scene comes in: look for the trees' materials (late ones too)
 constexpr double kSaveMs = 30000;
+constexpr size_t kPerFrame = 300;  // TLDCoop_DLC: materials looked at a frame (the whole list at once was a 35-77 ms frame)
 
 struct Api {
     bool ok = false;
@@ -41,6 +44,11 @@ struct Api {
     const MethodInfo* load_asset = nullptr;     // AssetBundle.LoadAsset(string, Type)
     const MethodInfo* terrain_data = nullptr;   // Terrain.get_terrainData()
     const MethodInfo* refresh = nullptr;        // TerrainData.RefreshPrototypes()
+    const MethodInfo* tree_protos = nullptr;    // TerrainData.get_treePrototypes()
+    const MethodInfo* proto_prefab = nullptr;   // TreePrototype.get_prefab()
+    const MethodInfo* children = nullptr;       // GameObject.GetComponentsInChildren(Type, bool)
+    const MethodInfo* shared_mats = nullptr;    // Renderer.get_sharedMaterials()
+    Il2CppObject* renderer_type = nullptr;
     const MethodInfo* get_tod = nullptr, *hours_played = nullptr;  // GameManager.GetTimeOfDayComponent, TimeOfDay.GetHoursPlayedNotPaused
     const MethodInfo* get_weather = nullptr, *weather_stage = nullptr, *indoor = nullptr;  // Weather.GetWeatherStage, IsIndoorScene
     const MethodInfo* get_wind = nullptr;
@@ -56,8 +64,17 @@ struct TreeMat {
     bool pine = true;
     float r = 0;      // its random neighbour pick (trees::texture_index)
     int shown = -1;   // the index it shows now
+    bool terrain = false;  // TLDCoop_DLC: one of a terrain's tree prototypes' (the terrain is refreshed for it)
 };
 std::unordered_map<Il2CppObject*, TreeMat> g_mats;
+// TLDCoop_DLC: the scan spread over frames (FindObjectsOfTypeAll's array, held), what it has seen in this scene, and
+// the scene's terrains with tree prototypes.
+uintptr_t g_sweep = 0;
+size_t g_sweep_at = 0;
+int g_found = 0;
+std::unordered_set<void*> g_seen;           // materials (native) looked at in this scene
+std::unordered_map<void*, int> g_tex_kind;  // texture (native) -> 0..8 pine, 9..17 cedar, -1 none
+std::vector<uintptr_t> g_terrains;
 std::mt19937 g_rng{std::random_device{}()};
 
 std::string g_scene;
@@ -70,7 +87,6 @@ double g_last_save = 0;
 float g_last_hours = -1;
 int g_state = -1;
 bool g_applied = false;  // our textures are on
-bool g_own_on = true;    // TLDCoop_DLC: our own setting (the host's may say otherwise in co-op)
 
 double now_ms() {
     static const double per_ms = [] {
@@ -177,39 +193,102 @@ int set_index(const char* tex_name, bool& pine) {
 }
 
 // Every material showing a pine's or a cedar's bark texture (TLD's or one of ours): instanced trees, Unity terrain
-// trees' prefabs and placed trees alike share them.
-void scan() {
+// trees' prefabs and placed trees alike share them. TLDCoop_DLC: a few hundred a frame, each material asked for its
+// texture once a scene, each texture for its name once.
+void end_sweep() {
+    if (g_sweep) il2::il2cpp_gchandle_free(g_sweep);
+    g_sweep = 0;
+    g_sweep_at = 0;
+}
+
+void start_sweep() {
+    end_sweep();
+    g_found = 0;
     void* a[] = {api.material_type};
     Il2CppObject* all = il2::invoke(api.find_all, nullptr, a);
-    int found = 0;
-    for (size_t i = 0, n = il2::array_length(all); i < n; ++i) {
-        Il2CppObject* m = il2::array_object_at(all, i);
-        if (!alive(m) || g_mats.count(m)) continue;
+    if (all) g_sweep = hold(all);
+}
+
+// True once the scan is through.
+bool sweep_step() {
+    Il2CppObject* all = target(g_sweep);
+    const size_t n = il2::array_length(all);
+    const size_t stop = std::min(n, g_sweep_at + kPerFrame);
+    for (; g_sweep_at < stop; ++g_sweep_at) {
+        Il2CppObject* m = il2::array_object_at(all, g_sweep_at);
+        if (!alive(m) || g_mats.count(m) || !g_seen.insert(il2::read_field<void*>(m, kCachedPtr)).second) continue;
         Il2CppObject* tex = il2::invoke(api.get_main, m);
-        if (!tex) continue;
-        bool pine = true;
-        if (set_index(name_of(tex).c_str(), pine) < 0) continue;
+        if (!alive(tex)) continue;
+        void* native = il2::read_field<void*>(tex, kCachedPtr);
+        auto kind = g_tex_kind.find(native);
+        if (kind == g_tex_kind.end()) {
+            bool pine = true;
+            const int i = set_index(name_of(tex).c_str(), pine);
+            kind = g_tex_kind.emplace(native, i < 0 ? -1 : (pine ? i : 9 + i)).first;
+        }
+        if (kind->second < 0) continue;
         TreeMat t;
         t.material = hold(m);
         t.original = hold(tex);
-        t.pine = pine;
+        t.pine = kind->second < 9;
         t.r = std::uniform_real_distribution<float>(0, 1)(g_rng);
         g_mats[m] = t;
-        ++found;
+        ++g_found;
     }
-    if (found) logx::info("trees: %d tree materials found (%zu in all)", found, g_mats.size());
+    if (g_sweep_at < n) return false;
+    end_sweep();
+    if (g_found) logx::info("trees: %d tree materials found (%zu in all)", g_found, g_mats.size());
+    return true;
+}
+
+// TLDCoop_DLC: the scene's terrains whose tree prototypes use one of the tree materials (only those are refreshed, and
+// only when one of their materials changed).
+void survey_terrains() {
+    for (uintptr_t h : g_terrains) il2::il2cpp_gchandle_free(h);
+    g_terrains.clear();
+    if (!api.terrain_type || !api.terrain_data || !api.refresh || !api.tree_protos || !api.proto_prefab ||
+        !api.children || !api.shared_mats || !api.renderer_type)
+        return;
+    void* a[] = {api.terrain_type};
+    Il2CppObject* terrains = il2::invoke(api.find_objects, nullptr, a);
+    for (size_t i = 0, n = il2::array_length(terrains); i < n; ++i) {
+        Il2CppObject* terrain = il2::array_object_at(terrains, i);
+        Il2CppObject* data = alive(terrain) ? il2::invoke(api.terrain_data, terrain) : nullptr;
+        Il2CppObject* protos = data ? il2::invoke(api.tree_protos, data) : nullptr;
+        bool ours = false;
+        for (size_t p = 0, np = il2::array_length(protos); p < np; ++p) {
+            Il2CppObject* proto = il2::array_object_at(protos, p);
+            Il2CppObject* prefab = proto ? il2::invoke(api.proto_prefab, proto) : nullptr;
+            if (!alive(prefab)) continue;
+            bool include_inactive = true;
+            void* ca[] = {api.renderer_type, &include_inactive};
+            Il2CppObject* renderers = il2::invoke(api.children, prefab, ca);
+            for (size_t r = 0, nr = il2::array_length(renderers); r < nr; ++r) {
+                Il2CppObject* rend = il2::array_object_at(renderers, r);
+                Il2CppObject* mats = alive(rend) ? il2::invoke(api.shared_mats, rend) : nullptr;
+                for (size_t k = 0, nk = il2::array_length(mats); k < nk; ++k)
+                    if (auto it = g_mats.find(il2::array_object_at(mats, k)); it != g_mats.end()) {
+                        it->second.terrain = true;
+                        ours = true;
+                    }
+            }
+        }
+        if (ours) g_terrains.push_back(hold(terrain));
+    }
+    if (!g_terrains.empty()) logx::info("trees: %zu terrain(s) with tree prototypes of ours", g_terrains.size());
 }
 
 void refresh_terrains() {
-    void* a[] = {api.terrain_type};
-    Il2CppObject* terrains = api.terrain_type ? il2::invoke(api.find_objects, nullptr, a) : nullptr;
-    for (size_t i = 0, n = il2::array_length(terrains); i < n; ++i)
-        if (Il2CppObject* data = il2::invoke(api.terrain_data, il2::array_object_at(terrains, i)))
+    for (uintptr_t h : g_terrains) {
+        Il2CppObject* terrain = target(h);
+        if (Il2CppObject* data = alive(terrain) ? il2::invoke(api.terrain_data, terrain) : nullptr)
             il2::invoke(api.refresh, data);
+    }
 }
 
 void apply() {
     int changed = 0;
+    bool terrain = false;
     for (auto& [ptr, t] : g_mats) {
         Il2CppObject* m = target(t.material);
         if (!alive(m)) continue;
@@ -220,26 +299,29 @@ void apply() {
         void* a[] = {tex};
         il2::invoke(api.set_main, m, a);
         t.shown = idx;
+        terrain |= t.terrain;
         ++changed;
     }
     if (changed) {
-        refresh_terrains();
+        if (terrain) refresh_terrains();
         logx::info("trees: snow %.1f (state %d): %d materials changed", g_snow, trees::state_of(g_snow), changed);
     }
     g_applied = true;
 }
 
 void restore() {
+    bool terrain = false;
     for (auto& [ptr, t] : g_mats) {
         Il2CppObject* m = target(t.material);
         Il2CppObject* tex = target(t.original);
         if (alive(m) && tex && t.shown >= 0) {
             void* a[] = {tex};
             il2::invoke(api.set_main, m, a);
+            terrain |= t.terrain;
         }
         t.shown = -1;
     }
-    refresh_terrains();
+    if (terrain) refresh_terrains();
     g_applied = false;
     logx::info("trees: TLD's own tree textures back");
 }
@@ -269,6 +351,15 @@ bool resolve() {
     api.load_asset = il2::find_method_params(bundle_c, "LoadAsset", {"System.String", "System.Type"});
     if (terrain) api.terrain_data = il2::find_method(terrain, "get_terrainData", 0);
     if (terrain_data) api.refresh = il2::find_method(terrain_data, "RefreshPrototypes", 0);
+    if (terrain_data) api.tree_protos = il2::find_method(terrain_data, "get_treePrototypes", 0);
+    if (Il2CppClass* proto = il2::find_class("UnityEngine.TerrainModule.dll", "UnityEngine", "TreePrototype"))
+        api.proto_prefab = il2::find_method(proto, "get_prefab", 0);
+    if (Il2CppClass* go = il2::find_class(kCore, "UnityEngine", "GameObject"))
+        api.children = il2::find_method_params(go, "GetComponentsInChildren", {"System.Type", "System.Boolean"});
+    if (Il2CppClass* renderer = il2::find_class(kCore, "UnityEngine", "Renderer")) {
+        api.renderer_type = il2::type_object(renderer);
+        api.shared_mats = il2::find_method(renderer, "get_sharedMaterials", 0);
+    }
     api.get_tod = il2::find_method(gm, "GetTimeOfDayComponent", 0);
     api.hours_played = il2::find_method(tod, "GetHoursPlayedNotPaused", 0);
     api.get_weather = il2::find_method(gm, "GetWeatherComponent", 0);
@@ -289,7 +380,6 @@ void init() {
 }
 
 void set_settings(const config::Settings& s) {
-    g_own_on = s.dynamic_trees;  // TLDCoop_DLC (preloading at the menu)
     coop_features::set_own(net::kFeatureDynamicTrees, s.dynamic_trees);
     logx::info("trees: %s", s.dynamic_trees ? "on" : "off");
 }
@@ -303,6 +393,11 @@ void on_frame(const std::string& scene, bool in_game) {
         g_scene_since = now;
         g_scans_done = 0;
         g_last_hours = -1;
+        end_sweep();
+        g_seen.clear();  // native pointers of the scene left behind can come back as others
+        g_tex_kind.clear();
+        for (uintptr_t h : g_terrains) il2::il2cpp_gchandle_free(h);
+        g_terrains.clear();
         // materials of the scene left behind are gone; TLD's shared ones stay
         for (auto it = g_mats.begin(); it != g_mats.end();)
             if (!alive(target(it->second.material))) {
@@ -314,7 +409,8 @@ void on_frame(const std::string& scene, bool in_game) {
             }
     }
     // TLDCoop_DLC: the trees' textures loaded at the main menu (a few seconds in), not when a game's first scene comes
-    // in: that took 1-2 s in one frame there (the log's slow frames), the game standing still.
+    // in: that took 1-2 s in one frame there (the log's slow frames), the game standing still. Whatever our own setting
+    // says: a host's may turn the trees on for us.
     if (!in_game) {
         static double menu_since = 0;
         static bool preloaded = false;
@@ -323,7 +419,7 @@ void on_frame(const std::string& scene, bool in_game) {
             return;
         }
         if (!menu_since) menu_since = now;
-        if (!preloaded && now - menu_since > 8000 && g_own_on) {
+        if (!preloaded && now - menu_since > 8000) {
             preloaded = true;
             const double t0 = now_ms();
             int n = 0;
@@ -373,7 +469,12 @@ void on_frame(const std::string& scene, bool in_game) {
         ++g_scans_done;
         rescan = true;
     }
-    if (rescan) scan();
+    if (rescan) start_sweep();
+    rescan = false;
+    if (g_sweep && sweep_step()) {
+        survey_terrains();
+        rescan = true;
+    }
     const int state = trees::state_of(g_snow);
     if ((rescan || state != g_state || !g_applied) && !indoors()) {
         g_state = state;

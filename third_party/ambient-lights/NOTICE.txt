@@ -1,0 +1,5 @@
+AmbientLights by Xpazeman (maintained by Thekillergreece) — https://github.com/Thekillergreece/tld-ambient-lights
+(MIT, see LICENSE here). The JSON files in this folder are the mod's light data, copied unchanged; the build does not
+read them: tools/ambient/gen_data.py turns them into src/ambient_data.inc, compiled into winhttp.dll. TLDCoop_DLC
+carries a C++ port of the mod's logic (src/ambient_lights.cpp, src/ambient_math.h). No MelonLoader or files of the mod
+are needed.

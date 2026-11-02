@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <mutex>
@@ -69,6 +70,43 @@ bool copy_shared(const fs::path& from, const fs::path& to) {
     return true;
 }
 
+// TLDCoop_DLC: coop.ini without the Steam codes (code=, join_code=): a report gets passed around.
+bool copy_ini_blanked(const fs::path& from, const fs::path& to) {
+    FILE* in = _wfsopen(from.c_str(), L"rb", _SH_DENYNO);
+    if (!in) return false;
+    std::string text;
+    char buf[16 * 1024];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) text.append(buf, n);
+    fclose(in);
+    if (text.size() >= 2 && text[0] == '\xFF' && text[1] == '\xFE') return false;  // (UTF-16: left out, not copied raw)
+    std::string out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find('\n', at);
+        end = end == std::string::npos ? text.size() : end + 1;
+        std::string line = text.substr(at, end - at);
+        at = end;
+        size_t k = line.find_first_not_of(" \t");
+        const size_t eq = line.find('=');
+        if (k != std::string::npos && eq != std::string::npos && eq > k) {
+            std::string key = line.substr(k, eq - k);
+            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+            for (char& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+            if (key == "code" || key == "join_code") {
+                const bool crlf = line.size() >= 2 && line.compare(line.size() - 2, 2, "\r\n") == 0;
+                line = line.substr(0, eq + 1) + (crlf ? "\r\n" : (line.back() == '\n' ? "\n" : ""));
+            }
+        }
+        out += line;
+    }
+    FILE* o = _wfsopen(to.c_str(), L"wb", _SH_DENYWR);
+    if (!o) return false;
+    fwrite(out.data(), 1, out.size(), o);
+    fclose(o);
+    return true;
+}
+
 // tar.exe (Windows 10 1803 and later) makes a zip with -a and a .zip name.
 bool run_tar(const fs::path& dir, const fs::path& zip) {
     wchar_t system[MAX_PATH];
@@ -96,8 +134,9 @@ void pack(std::string stamp, std::string description) {
     const fs::path dir = reports / fs::path(stamp);
     fs::create_directories(dir, ec);
     int copied = 0;
-    for (const wchar_t* f : {L"coop.log", L"coop-prev.log", L"coop-prev2.log", L"coop.ini"})
+    for (const wchar_t* f : {L"coop.log", L"coop-prev.log", L"coop-prev2.log"})
         if (fs::exists(base / f, ec) && copy_shared(base / f, dir / f)) ++copied;
+    if (fs::exists(base / L"coop.ini", ec) && copy_ini_blanked(base / L"coop.ini", dir / L"coop.ini")) ++copied;
     if (!description.empty()) {  // what the player wrote about it
         if (FILE* out = _wfsopen((dir / L"opis.txt").c_str(), L"wb", _SH_DENYWR)) {
             fwrite("\xEF\xBB\xBF", 1, 3, out);  // (UTF-8 for Notepad)
@@ -119,7 +158,7 @@ void pack(std::string stamp, std::string description) {
     g_done.push_back(made);
 }
 
-void make(uint32_t id, const std::string& who, bool ours) {
+void make(uint32_t id, const std::string& who, bool ours, bool in_game) {
     const double now = now_ms();
     if (id == g_last_id || now - g_last_ms < kRepeatMs) return;
     g_last_id = id;
@@ -133,6 +172,13 @@ void make(uint32_t id, const std::string& who, bool ours) {
                ours ? "we" : who.c_str(), ours ? "" : " (their report, made here too)");
     if (!ours) {
         coop_notices::tell(who + " reported a bug: saving our logs too...");
+        std::thread(pack, std::string(stamp), std::string()).detach();
+        return;
+    }
+    // TLDCoop_DLC: outside a game (no HUD for the box: it ate the keys unseen for 2 minutes), or with a chat line
+    // being typed (kept as it is): the logs at once, no description.
+    if (!in_game || coop_chat::typing()) {
+        coop_notices::tell("Bug report: saving the logs...");
         std::thread(pack, std::string(stamp), std::string()).detach();
         return;
     }
@@ -170,12 +216,12 @@ void init() {
                g_all ? "; in co-op everyone's game makes a report with it" : "");
 }
 
-void on_frame() {
+void on_frame(bool in_game) {
     const bool down = g_key && game_in_front() && (GetAsyncKeyState(g_key) & 0x8000) != 0;
     if (down && !g_down && now_ms() - g_last_ms >= kRepeatMs) {
         std::random_device rd;
         const uint32_t id = rd() | 1;
-        make(id, g_name, true);
+        make(id, g_name, true, in_game);
         if (g_all && netrt::status().connected) send(id, g_name);
     }
     g_down = down;
@@ -191,7 +237,7 @@ void on_frame() {
         std::string who;
         if (!net::read_report(r, id, who)) continue;
         if (host) send(id, who, p.from);  // the others hear it too
-        if (g_all) make(id, who, false);
+        if (g_all) make(id, who, false, in_game);
     }
 
     std::vector<std::string> done;

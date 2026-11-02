@@ -8,6 +8,6 @@
 namespace coop_report {
 
 void init();
-void on_frame();
+void on_frame(bool in_game);  // in_game: the description box can show (TLD's HUD is up)
 
 }  // namespace coop_report

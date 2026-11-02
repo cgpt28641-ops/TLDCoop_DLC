@@ -1286,9 +1286,12 @@ void on_frame(const std::string& scene, bool in_game) {
         if (api.force_save) il2::invoke(api.force_save, nullptr);
         logx::info("death: the new survivor saved");
     }
-    // Who else died: said once each time.
-    const net::Status st = coop() ? netrt::status() : net::Status{};
-    for (const net::StateMsg& s : coop() ? netrt::remote_states() : std::vector<net::StateMsg>{}) {
+    // Who else died: said once each time. TLDCoop_DLC: looked at 4 times a second (the session's copies every frame)
+    static double others_at = -1e18;
+    const bool look = coop() && now_ms() - others_at >= 250;
+    if (look) others_at = now_ms();
+    const net::Status st = look ? netrt::status() : net::Status{};
+    for (const net::StateMsg& s : look ? netrt::remote_states() : std::vector<net::StateMsg>{}) {
         const bool is_dead = (s.flags & net::kStateDead) != 0;
         bool& was = g_others_dead[s.player];
         if (is_dead && !was) {

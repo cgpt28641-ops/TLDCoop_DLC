@@ -84,13 +84,18 @@ LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     else if (c >= 32 && g_text.size() < kMaxChars) g_text += c;
                     return 0;
                 }
+                // TLDCoop_DLC: only key presses are kept from the game (TranslateMessage already made the WM_CHAR);
+                // releases go through (a key held when the line opened, W say, was never let go: the player kept
+                // walking), and so does Alt+F4.
                 case WM_KEYDOWN:
-                case WM_KEYUP:
+                    if (wp == VK_ESCAPE) g_cancel = true;
+                    return 0;
                 case WM_SYSKEYDOWN:
-                case WM_SYSKEYUP:
-                    if (wp == VK_ESCAPE && msg == WM_KEYDOWN) g_cancel = true;
-                    if (wp == VK_RETURN && msg == WM_KEYUP) g_enter_held = false;
-                    return 0;  // (TranslateMessage already made the WM_CHAR)
+                    if (wp == VK_F4) break;
+                    return 0;
+                case WM_KEYUP:
+                    if (wp == VK_RETURN) g_enter_held = false;
+                    break;
                 default:
                     break;
             }
@@ -180,7 +185,7 @@ bool typing() { return g_typing; }
 
 void ask(const std::string& prompt, std::function<void(const std::string&)> done) {
     hook_window();
-    if (!g_old_proc) {  // no window to type in: no description
+    if (!g_old_proc || (g_typing && !g_ask)) {  // no window to type in, or a chat line being typed (kept): no answer
         if (done) done("");
         return;
     }
@@ -193,7 +198,8 @@ void ask(const std::string& prompt, std::function<void(const std::string&)> done
 void on_frame(bool in_game) {
     hook_window();
     const double now = now_ms();
-    const bool connected = netrt::status().connected;
+    // TLDCoop_DLC: asked only when it matters (netrt::status() copies the whole session's status)
+    auto connected = [] { return netrt::status().connected; };
 
     // ENTER opens the chat (in a co-op game, nothing of TLD's open, not already typing)
     const bool enter = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
@@ -204,7 +210,7 @@ void on_frame(bool in_game) {
         // (each reason it doesn't open is logged: "chat doesn't work" with nothing else to go on)
         Il2CppObject* ctx = nullptr;
         if (g_input_context) il2::il2cpp_field_static_get_value(g_input_context, &ctx);
-        const char* why = !in_game ? "not in the game" : !connected ? "not connected (co-op off or the link is down)"
+        const char* why = !in_game ? "not in the game" : !connected() ? "not connected (co-op off or the link is down)"
                         : !game_focused() ? "the game window isn't in front" : !g_old_proc ? "the game window isn't hooked"
                         : nullptr;
         if (why) {
@@ -229,7 +235,7 @@ void on_frame(bool in_game) {
         text = g_text;
     }
     if (g_typing && g_ask && now - g_ask_since > kAskTimeoutMs) cancel = true;
-    if (g_typing && !in_game && !g_ask) cancel = true;
+    if (g_typing && !in_game) cancel = true;  // TLDCoop_DLC: a question too (its box is in TLD's HUD: not shown there)
     if (submit || cancel) {
         const std::string said = submit ? utf8(text) : std::string();
         logx::info("chat: the line %s (%zu chars)%s", submit ? "sent" : "dropped", said.size(), g_ask ? " (an answer)" : "");
@@ -238,7 +244,7 @@ void on_frame(bool in_game) {
             auto done = std::move(g_ask);
             g_ask = nullptr;
             done(said);
-        } else if (!said.empty() && connected) {
+        } else if (!said.empty() && connected()) {
             send_chat(said);
             add_line(g_name + ": " + said);
             logx::info("chat: we said: %s", said.c_str());
@@ -278,7 +284,8 @@ void on_frame(bool in_game) {
     const size_t most = g_typing ? kTypingLines : kShownLines;
     for (auto it = g_lines.rbegin(); it != g_lines.rend() && shown.size() < most; ++it)
         if (g_typing || now - it->at < kLineMs) shown.insert(shown.begin(), it->text);
-    coop_hud::set_chat(in_game ? shown : std::vector<std::string>{}, g_typing && in_game, g_prompt, utf8(text));
+    const bool box = in_game || g_ask;  // TLDCoop_DLC: a question's box whenever one is asked
+    coop_hud::set_chat(box ? shown : std::vector<std::string>{}, g_typing && box, g_prompt, utf8(text));
 }
 
 }  // namespace coop_chat

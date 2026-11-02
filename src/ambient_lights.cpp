@@ -61,7 +61,8 @@ struct Api {
     const MethodInfo* light_get_type = nullptr, *light_get_color = nullptr, *light_set_color = nullptr,
                       *light_get_intensity = nullptr, *light_set_intensity = nullptr, *light_set_range = nullptr,
                       *light_get_cookie = nullptr;
-    const MethodInfo* get_materials = nullptr;  // Renderer.get_materials()
+    const MethodInfo* get_materials = nullptr;  // Renderer.get_materials() (instances them: only a window's)
+    const MethodInfo* get_shared = nullptr;     // Renderer.get_sharedMaterials()
     const MethodInfo* mat_get_color = nullptr, *mat_set_color = nullptr, *mat_has = nullptr, *mat_get_float = nullptr,
                       *mat_set_float = nullptr;  // by property id
     int emissive_id = -1;                        // Shader.PropertyToID("_EmissiveStrength")
@@ -310,6 +311,22 @@ void add_our_lights() {
     }
 }
 
+// TLDCoop_DLC: `word` in a GameObject's name as a word of its own ("Car", "OBJ_CarSedan", "car_01"), not inside
+// another ("Card", "Carpet", "Scarf"): case-insensitive, CamelCase and non-letters split words.
+bool has_word(const std::string& name, const char* word) {
+    const std::string low = lower(name);
+    const size_t len = std::strlen(word);
+    auto letter = [](char c) { return std::isalpha(static_cast<unsigned char>(c)) != 0; };
+    auto upper = [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; };
+    for (size_t at = low.find(word); at != std::string::npos; at = low.find(word, at + 1)) {
+        const bool starts = at == 0 || !letter(name[at - 1]) || (upper(name[at]) && !upper(name[at - 1]));
+        const size_t e = at + len;
+        const bool ends = e >= name.size() || !letter(name[e]) || (upper(name[e]) && !upper(name[e - 1]));
+        if (starts && ends) return true;
+    }
+    return false;
+}
+
 // TLD's lights the mod tones (GameLights.AddGameLights): every point light, and spot lights but the windows' shafts,
 // that isn't one of an InteriorLightingGroup's window lights (TLD drives those itself) or ours.
 void find_game_lights(Il2CppObject* manager) {
@@ -338,24 +355,31 @@ void find_game_lights(Il2CppObject* manager) {
         g_fill.push_back({hold(l), light_colour(l)});
     }
 
-    // Windows: renderers with a glowing material (not a truck's, car's or lamp's).
+    // Windows: renderers with a glowing material (not a truck's, car's or lamp's). TLDCoop_DLC: looked at through
+    // sharedMaterials (Renderer.materials copies every renderer's materials: no batching, copies left behind); only a
+    // window's renderer gets its own copies, as the original mod's, to be toned.
+    std::unordered_set<Il2CppObject*> taken;
     Il2CppObject* renderers = find_all(api.renderer_type);
     for (size_t i = 0, n = il2::array_length(renderers); i < n; ++i) {
         Il2CppObject* r = il2::array_object_at(renderers, i);
         if (!alive(r)) continue;
-        const std::string go_name = lower(name_of(il2::invoke(api.component_go, r)));
-        if (go_name.find("truck") != std::string::npos || go_name.find("car") != std::string::npos ||
-            go_name.find("lamp") != std::string::npos)
+        Il2CppObject* shared = il2::invoke(api.get_shared, r);
+        bool glow = false;
+        for (size_t k = 0, sn = il2::array_length(shared); k < sn && !glow; ++k) {
+            Il2CppObject* m = il2::array_object_at(shared, k);
+            glow = alive(m) && lower(name_of(m)).find("glow") != std::string::npos;
+        }
+        if (!glow) continue;
+        const std::string go_name = name_of(il2::invoke(api.component_go, r));
+        const std::string go_low = lower(go_name);
+        if (go_low.find("truck") != std::string::npos || has_word(go_name, "car") ||
+            go_low.find("lamp") != std::string::npos)
             continue;
         Il2CppObject* mats = il2::invoke(api.get_materials, r);
         const size_t mn = il2::array_length(mats);
-        bool glow = false;
-        for (size_t k = 0; k < mn && !glow; ++k)
-            glow = lower(name_of(il2::array_object_at(mats, k))).find("glow") != std::string::npos;
-        if (!glow) continue;
         for (size_t k = 0; k < mn; ++k) {
             Il2CppObject* m = il2::array_object_at(mats, k);
-            if (!alive(m)) continue;
+            if (!alive(m) || !taken.insert(m).second) continue;
             Window w;
             w.material = hold(m);
             il2::invoke_value(api.mat_get_color, m, w.colour);
@@ -603,6 +627,7 @@ bool resolve() {
     api.light_set_range = il2::find_method(light, "set_range", 1);
     api.light_get_cookie = il2::find_method(light, "get_cookie", 0);
     api.get_materials = il2::find_method(renderer, "get_materials", 0);
+    api.get_shared = il2::find_method(renderer, "get_sharedMaterials", 0);
     api.mat_get_color = il2::find_method(material, "get_color", 0);
     api.mat_set_color = il2::find_method(material, "set_color", 1);
     api.mat_has = il2::find_method_params(material, "HasProperty", {"System.Int32"});
@@ -650,7 +675,7 @@ bool resolve() {
     const bool core_ok = api.find_objects && api.destroy && api.object_name && api.go_ctor && api.add_component &&
                          api.go_transform && api.component_go && api.set_position && api.set_enabled &&
                          api.light_get_type && api.light_get_color && api.light_set_color && api.light_get_intensity &&
-                         api.light_set_intensity && api.light_set_range && api.get_materials && api.mat_get_color &&
+                         api.light_set_intensity && api.light_set_range && api.get_materials && api.get_shared && api.mat_get_color &&
                          api.mat_set_color && api.mat_has && api.mat_get_float && api.mat_set_float &&
                          api.get_unistorm && api.get_weather && api.tod_state && api.blend_state && api.blend_pct &&
                          api.weather_stage && api.sun >= 0 && api.fog >= 0 && api.amb_day >= 0 && api.amb_night >= 0;
@@ -731,7 +756,9 @@ void on_frame(const std::string& scene, bool in_game) {
         }
         return;
     }
-    if (!g_set_up) {
+    if (!g_set_up && !ambient::find_scene(scene.c_str())) {
+        set_up(scene);  // TLDCoop_DLC: no light data here: nothing to wait for (no scene-wide searches every 100 ms)
+    } else if (!g_set_up) {
         // As soon as TLD's own indoor lighting has started (its manager initialized: the scene's lights are all in),
         // so the window light is there when the scene shows; a scene without that manager after kSettleMs.
         if (now - g_last_look < kLookMs) return;

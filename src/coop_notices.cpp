@@ -62,8 +62,7 @@ void answer_first(const net::PlayerInfo& first, bool let_in) {
 }
 
 // Hosting while we play: a friend asks to join. F9 lets the first one asking in, F10 turns them away.
-void answer_asking(const net::Status& st, double now) {
-    const bool let_in = pressed(0, kLetInKey), turn_away = pressed(1, kTurnAwayKey);
+void answer_asking(const net::Status& st, double now, bool let_in, bool turn_away) {
     if (st.asking.empty()) {
         g_asked.clear();
         return;
@@ -103,7 +102,15 @@ void on_frame(bool in_game) {
     const auto role = netrt::role();
     const bool client = role && *role == net::Role::Client;
     const double now = net::now_ms();
-    if (in_game && role && !client) answer_asking(netrt::status(), now);
+    if (in_game && role && !client) {
+        // TLDCoop_DLC: the keys every frame, the session's status (a copy of everyone's) only for them or 4 times a second
+        static double last_asking = -1e18;
+        const bool let_in = pressed(0, kLetInKey), turn_away = pressed(1, kTurnAwayKey);
+        if (let_in || turn_away || now - last_asking >= kCheckMs) {
+            last_asking = now;
+            answer_asking(netrt::status(), now, let_in, turn_away);
+        }
+    }
     if (now - g_last_check < kCheckMs) return;
     g_last_check = now;
     const net::Status st = role ? netrt::status() : net::Status{};

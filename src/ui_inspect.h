@@ -2,6 +2,7 @@
 // UI reconnaissance for the co-op menu (milestone 4c). The first time each TLD screen (Panel_*) opens, its full
 // NGUI hierarchy is written to <game>/TLDCoop/ui/<Panel>.txt: objects, components, label texts, sprite names,
 // widget depths/sizes, positions and the methods its buttons call. Main thread only.
+// TLDCoop_DLC: off unless coop.ini has [debug] ui_dump=1 (each dump is a hitch in normal play).
 
 namespace ui_inspect {
 

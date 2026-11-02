@@ -1,6 +1,8 @@
-# Builds winhttp.dll on Windows with MSVC (as build.cmd does), runs the offline tests, and packs the zip players
-# install: winhttp.dll, the TLDCoop folder (the characters and animations, taken from the original v0.13.1 release,
-# unchanged) and INSTALL.txt. The zip is this run's artifact ("TLDCoop_DLC").
+# Builds winhttp.dll on Windows with MSVC (as build.cmd does) and runs the offline tests. Every push to main puts
+# winhttp.dll (our code only) and THIRD_PARTY_NOTICES.txt in the "dll-latest" release. The whole zip players install
+# (winhttp.dll, the TLDCoop folder with the characters and animations from the original v0.13.1 release, unchanged, the
+# trees' bundle, the licences and INSTALL.txt) is made only on a manual run (Actions -> build -> Run workflow), as that
+# run's artifact "TLDCoop_DLC".
 name: build
 
 on:
@@ -9,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # the dll-only release below, when the artifact can't be stored
+  contents: write  # the dll-latest release below
 
 jobs:
   windows:
@@ -61,7 +63,44 @@ jobs:
           }
           if ($failed.Count) { Write-Error "failed: $($failed -join ', ')"; exit 1 }
 
+      - name: winhttp.dll's SHA-256
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path build\winhttp.dll) {
+            $f = Get-Item build\winhttp.dll
+            Write-Host "::notice title=winhttp.dll::SHA-256 $((Get-FileHash $f.FullName -Algorithm SHA256).Hash) ($($f.Length) bytes)"
+          } else {
+            Write-Host "::warning title=winhttp.dll::not built"
+          }
+
+      # The licences and notices of what TLDCoop_DLC carries, one file (beside winhttp.dll in dll-latest, in the zip).
+      - name: Third-party notices
+        shell: pwsh
+        run: |
+          $out = New-Object System.Text.StringBuilder
+          [void]$out.AppendLine("TLDCoop_DLC carries code, data or assets of the projects below (ported or included with")
+          [void]$out.AppendLine("their authors' permission where no licence is published). Their notices and licences follow.")
+          $parts = @()
+          foreach ($d in Get-ChildItem -Directory third_party | Sort-Object Name) {
+            foreach ($n in 'NOTICE.txt', 'LICENSE', 'LICENSE.txt') {
+              $f = Join-Path $d.FullName $n
+              if (Test-Path $f) { $parts += [pscustomobject]@{ Name = "$($d.Name)/$n"; Path = $f } }
+            }
+          }
+          foreach ($p in $parts) {
+            [void]$out.AppendLine("")
+            [void]$out.AppendLine("=" * 100)
+            [void]$out.AppendLine("third_party/$($p.Name)")
+            [void]$out.AppendLine("=" * 100)
+            [void]$out.AppendLine((Get-Content -Raw -Encoding utf8 $p.Path).TrimEnd())
+          }
+          New-Item -ItemType Directory -Force build | Out-Null
+          [IO.File]::WriteAllText("build\THIRD_PARTY_NOTICES.txt", $out.ToString(), (New-Object System.Text.UTF8Encoding $false))
+          Write-Host "::notice title=notices::$($parts.Count) notice/licence file(s) in THIRD_PARTY_NOTICES.txt"
+
       - name: Pack the zip
+        if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,6 +112,16 @@ jobs:
           Copy-Item build\winhttp.dll pack\
           Copy-Item third_party\dynamictrees\tldcoop_trees.bundle pack\TLDCoop\
           Copy-Item INSTALL_DLC.txt pack\INSTALL.txt
+          # licences: third_party/<folder>/LICENSE and NOTICE.txt as <folder>_LICENSE.txt / <folder>_NOTICE.txt
+          $lic = New-Item -ItemType Directory -Force pack\TLDCoop\licenses
+          foreach ($d in Get-ChildItem -Directory third_party) {
+            foreach ($n in 'LICENSE', 'LICENSE.txt', 'NOTICE.txt') {
+              $f = Join-Path $d.FullName $n
+              if (Test-Path $f) { Copy-Item $f (Join-Path $lic "$($d.Name)_$([IO.Path]::GetFileNameWithoutExtension($n)).txt") }
+            }
+          }
+          if (-not (Test-Path (Join-Path $lic 'minhook_LICENSE.txt'))) { Write-Error "MinHook's licence is missing"; exit 1 }
+          Copy-Item build\THIRD_PARTY_NOTICES.txt $lic
           foreach ($f in Get-ChildItem -Recurse -File pack) {
             $h = (Get-FileHash $f.FullName).Hash
             Write-Host "::notice title=sha256::$($f.Name) $h ($($f.Length) bytes)"
@@ -90,8 +139,16 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
-      # Every push: winhttp.dll alone (our code only, no game assets) to the private repo's "dll-latest" release
-      # (release files don't count against the Actions storage).
+      # A manual run whose zip didn't get stored isn't green (the upload goes on past an error to reach the steps below).
+      - name: The zip was stored
+        if: always() && github.event_name == 'workflow_dispatch' && steps.upload.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error title=zip::the TLDCoop_DLC zip could not be stored as this run's artifact (Actions storage full?)"
+          exit 1
+
+      # Every push to main: winhttp.dll as built (our code only, no game assets; no upstream download needed) and the
+      # notices to the private repo's "dll-latest" release (release files don't count against the Actions storage).
       - name: winhttp.dll to the dll-latest release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
@@ -100,6 +157,6 @@ jobs:
         run: |
           gh release view dll-latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create dll-latest -R "$GITHUB_REPOSITORY" --prerelease --title "winhttp.dll (latest)" --notes "Only winhttp.dll"
-          gh release upload dll-latest pack/winhttp.dll -R "$GITHUB_REPOSITORY" --clobber
+          gh release upload dll-latest build/winhttp.dll build/THIRD_PARTY_NOTICES.txt -R "$GITHUB_REPOSITORY" --clobber
           gh release edit dll-latest -R "$GITHUB_REPOSITORY" --notes "Only winhttp.dll, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
           echo "::notice::winhttp.dll is in the dll-latest release"

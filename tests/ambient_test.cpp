@@ -114,6 +114,20 @@ int main() {
     expect(w.ok() && net::read_features(r, bits, snow) &&
                bits == (net::kFeatureAmbientLights | net::kFeatureDynamicTrees) && snow == 42.5f,
            "Features reads back");
+    {  // TLDCoop_DLC: Seamless Interiors' bit (8) comes through with the others
+        net::Writer w2(net::Msg::Features, 64);
+        const uint32_t all = net::kFeatureAmbientLights | net::kFeatureDynamicTrees | net::kFeatureSeamlessInteriors;
+        net::write_features(w2, all, 0.0f);
+        net::Packet p2;
+        p2.type = net::Msg::Features;
+        p2.data.assign(w2.data(), w2.data() + w2.size());
+        net::Reader r2 = net::packet_body(p2);
+        uint32_t bits2 = 0;
+        float snow2 = -1;
+        expect(net::kFeatureSeamlessInteriors == 8 && w2.ok() && net::read_features(r2, bits2, snow2) &&
+                   bits2 == all && (bits2 & net::kFeatureSeamlessInteriors) && snow2 == 0.0f,
+               "Features: Seamless Interiors' bit 8 reads back");
+    }
 
     printf("%s\n", failures ? "SOME FAILED" : "all passed");
     return failures ? 1 : 0;

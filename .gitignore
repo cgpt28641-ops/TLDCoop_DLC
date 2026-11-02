@@ -8,3 +8,12 @@ external/
 bodypack/project/
 bodypack/*.log
 dist/
+# The clothes pack's working folders and outputs (built from your own install: never committed)
+clothespack/project/
+clothespack/bodycut/
+clothespack/previews/
+clothespack/TLD_Odziez_Pelny_Katalog/
+clothespack/*.bundle
+clothespack/*.log
+staging/
+*.bodycut
