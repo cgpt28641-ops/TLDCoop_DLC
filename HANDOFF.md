@@ -567,3 +567,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 
 ## 2026-11-02 – drzwi bez wyciemnienia (cefc148)
 - src/seamless_doors.inc: portale w drzwiach (widok drugiej strony w kwadzie przy drzwiach, przejście TeleportPlayer z zachowaniem pozycji bocznej, kierunku patrzenia, pitch i prędkości), także przejście „na wejście” (door_walk). coop.ini [interiors] door_portals=1, door_walk=1. Gdy drzwi nie mają pary / widok nie był rysowany → stare wyciemnienie. Protokół bez zmian.
+
+## 2026-11-02 – nowy system zwierząt, etap 1 (0b19692, protokół v44)
+- Każde zwierzę ma właściciela (host = arbiter i rejestr); wybór: odległość, patrzenie, rtt, polowanie/ucieczka, pokój SI; histereza 3 s, min. 5 s między zmianami, nie w walce, nie martwe, max 4 przekazania/s. Przekazanie z pełnym stanem + BaseAi.Serialize (handover_record=1). Przewidywanie ruchu kopii. Właściciel opuszcza scenę → najlepszy gracz w scenie; nikogo → zamrożone w rejestrze (30 min). Jeden „spawnujący” na scenę.
+- Wiadomości: WildFrame, WildCtl, WildSounds, WildHit. coop.ini [wildlife] ownership=1 (host decyduje, bit kFeatureWildOwnership), 0 = stary system bez zmian.
+- Niedokończone: strzały w zwierzęciu nie przechodzą z przekazaniem; zwierzę prowadzone przez znajomego widzi tylko jego; zabicie pod nieobecność hosta – tusza tylko u właściciela; rejestr tylko w pamięci sesji.
