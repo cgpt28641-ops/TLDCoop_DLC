@@ -2004,6 +2004,10 @@ bool init() {
         const auto ini = paths::instance_dir() / L"coop.ini";
         g_own_config = GetPrivateProfileIntW(L"wildlife", L"ownership", 1, ini.c_str()) != 0;
         g_own_record = GetPrivateProfileIntW(L"wildlife", L"handover_record", 1, ini.c_str()) != 0;
+        g_per_player_cfg = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"wildlife", L"per_player", 50, ini.c_str())), 0, 200);
+        g_per_player = g_per_player_cfg;
+        logx::info("wildlife: %d%% more animals for each player beyond the first ([wildlife] per_player; the host's counts)",
+                   g_per_player_cfg);
         coop_features::set_own(net::kFeatureWildOwnership, g_own_config);
         logx::info("wildlife: ownership %s ([wildlife] ownership=%d; the host's counts)%s", g_own_config ? "on" : "off",
                    g_own_config ? 1 : 0,
@@ -2028,6 +2032,9 @@ bool init() {
             region_update && g_region_override >= 0)
             hooks::install_method("SpawnRegion.UpdateFromManager", region_update,
                                   reinterpret_cast<void*>(&region_update_detour), reinterpret_cast<void**>(&g_region_update));
+        if (api.region_target)  // TLDCoop_DLC (v46): more animals with more players
+            hooks::install_method("SpawnRegion.CalculateTargetPopulation", api.region_target,
+                                  reinterpret_cast<void*>(&target_detour), reinterpret_cast<void**>(&g_target_population));
         if (api.region_population && api.region_target)  // TLDCoop_DLC (v45): the spawning game counts animals elsewhere
             hooks::install_method("SpawnRegion.GetCurrentActivePopulation", api.region_population,
                                   reinterpret_cast<void*>(&population_detour), reinterpret_cast<void**>(&g_population));

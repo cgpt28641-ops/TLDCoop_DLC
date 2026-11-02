@@ -138,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 45;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 46;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -196,6 +196,7 @@ constexpr uint16_t kProtocolVersion = 45;  // v4: World. v5: Animals. v6: sounds
                                            // kFeatureWildOwnership
                                            // v45 (TLDCoop_DLC): wildlife stages 2/3: AnimalRec's spawn region,
                                            // WildCtl Gone / Kill / Regions, Take's kTakeMoved / kTakeBody and hours
+                                           // v46 (TLDCoop_DLC): Controllers' per_player (more animals per player)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -1698,6 +1699,7 @@ struct WildSceneControl {
 struct WildCtlMsg {
     WildOp op = WildOp::Controllers;
     std::vector<WildSceneControl> scenes;  // Controllers
+    uint8_t per_player = 0;                // Controllers (v46): % more animals for each player beyond the first
     uint32_t id = 0;                       // Release, Take, Refuse
     uint8_t to = kNoPlayer;                // Release, Take: the new owner
     uint16_t epoch = 0;                    // Release, Take, Refuse: the handover this belongs to
@@ -1725,6 +1727,7 @@ inline void write_wild_ctl(Writer& w, const WildCtlMsg& m) {
                 w.put(m.scenes[i].player);
                 w.put(m.scenes[i].fresh);
             }
+            w.put(m.per_player);
             break;
         }
         case WildOp::Release:
@@ -1797,6 +1800,7 @@ inline bool read_wild_ctl(Reader& r, WildCtlMsg& m) {
                 c.fresh = r.get<uint8_t>();
                 m.scenes.push_back(c);
             }
+            m.per_player = r.get<uint8_t>();
             return r.ok();
         }
         case WildOp::Release:

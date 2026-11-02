@@ -47,6 +47,8 @@ bool g_own_config = true;  // host: coop.ini [wildlife] ownership (default 1)
 bool g_own_record = true;  // [wildlife] handover_record (default 1): TLD's own record of the animal goes with it
                            // (BaseAi.Serialize / Deserialize); 0: only what we read ourselves
 bool g_own_was = false;
+int g_per_player_cfg = 50;  // v46: [wildlife] per_player (the host's): % more animals for each player beyond the first
+int g_per_player = 50;      // ...as the host says (a friend: from Controllers)
 std::string g_own_scene;
 bool g_pool_released = false;  // this visit: our hidden animals were put back to be shared (we spawn here, nothing known)
 uint32_t g_own_counter = 0;
@@ -627,6 +629,7 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
     std::string summary;
     net::WildCtlMsg m;
     m.op = net::WildOp::Controllers;
+    m.per_player = static_cast<uint8_t>(g_per_player_cfg);
     for (const auto& [scene, c] : scenes) {
         summary += scene + "=" + std::to_string(c.player) + (c.fresh ? "*" : "") + " ";
         m.scenes.push_back({scene, c.player, static_cast<uint8_t>(c.fresh ? 1 : 0)});
@@ -1478,6 +1481,9 @@ void own_receive(const std::string& scene, bool in_game, double now) {
                 if (host) break;
                 g_controllers.clear();
                 for (const net::WildSceneControl& c : m.scenes) g_controllers[c.scene] = {c.player, c.fresh != 0};
+                if (g_per_player != m.per_player)
+                    logx::info("wildlife: the host's game has %d%% more animals for each player beyond the first", m.per_player);
+                g_per_player = m.per_player;
                 break;
             case net::WildOp::Release:
                 if (!host) release_local(m.id, m.to, m.epoch, now);
@@ -1719,4 +1725,31 @@ bool own_load_kept(const world_keep::Record& r) {
         return true;
     }
     return false;
+}
+
+// --- v46: more animals with more players -----------------------------------------------------------------------------
+
+// SpawnRegion.CalculateTargetPopulation (its maximum less the trapped and the pending ones), in the game that spawns:
+// the maximum grows by [wildlife] per_player % (the host's) for each player in the game beyond the first. A shared
+// world with four hunters had the animals of one.
+using TargetFn = int32_t (*)(Il2CppObject* self, const MethodInfo* method);
+TargetFn g_target_population = nullptr;
+int g_target_logged = 0;
+int32_t target_detour(Il2CppObject* self, const MethodInfo* method) {
+    const int32_t v = g_target_population(self, method);
+    const auto role = netrt::role();
+    if (v <= 0 || !self || !role) return v;
+    const bool spawner = own_mode() ? i_control(game::active_scene()) : *role == net::Role::Host;
+    const int per = own_mode() && *role != net::Role::Host ? g_per_player : g_per_player_cfg;
+    const size_t players = netrt::status().players.size() + 1;
+    if (!spawner || per <= 0 || players < 2) return v;
+    const int32_t held = (api.region_trapped >= 0 ? il2::read_field<int32_t>(self, api.region_trapped) : 0) +
+                         (api.region_pending >= 0 ? il2::read_field<int32_t>(self, api.region_pending) : 0);
+    const int32_t most = v + std::max(held, 0);
+    const double factor = 1.0 + per / 100.0 * static_cast<double>(players - 1);
+    const int32_t out = std::max(v, static_cast<int32_t>(std::lround(most * factor)) - std::max(held, 0));
+    if (out != v && g_target_logged++ < 10)
+        logx::info("wildlife: %zu players: a spawn region keeps %d animal(s) instead of %d (+%d%% each beyond the first)",
+                   players, out, v, per);
+    return out;
 }
