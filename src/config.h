@@ -67,6 +67,11 @@ struct Settings {
     // their resolution, rooms seen from outside and how far).
     bool seamless_windows = true;
     int seamless_window_quality = 1;
+    // [interiors] door_portals (Stage 2): a building's door shows its room through the doorway (and the room's door the
+    // world outside), and using it moves the player through with no fade; 0: the fade as before. door_walk: walking into
+    // such a door (open, its view showing) takes the player through too; 0: only by using it.
+    bool seamless_door_portals = true;
+    bool seamless_door_walk = true;
     // TLDCoop_DLC: [death] lose_percent: how many of the ordinary items (not story, mission or undroppable ones) a death
     // takes, at random; the rest stay in the body.
     int death_lose_percent = 70;

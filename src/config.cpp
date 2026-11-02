@@ -114,6 +114,10 @@ constexpr const char* kDefaultIni =
     "; 30 m), 1 medium (4 views, 1-2 rooms, 50 m), 2 high (8 views, full resolution, 3 rooms, 100 m).\n"
     "windows=1\n"
     "window_quality=1\n"
+    "; Doors show the other side (the room from outside, the world from inside) and take you through with no fade, in\n"
+    "; the same pose. 0 = the short fade to black as before. door_walk=1: walking into such a door takes you through too.\n"
+    "door_portals=1\n"
+    "door_walk=1\n"
     "\n"
     "[death]\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
@@ -252,6 +256,8 @@ Settings load() {
     s.seamless_windows = GetPrivateProfileIntW(L"interiors", L"windows", 1, ini.c_str()) != 0;
     s.seamless_window_quality = GetPrivateProfileIntW(L"interiors", L"window_quality", 1, ini.c_str());
     if (s.seamless_window_quality < 0 || s.seamless_window_quality > 2) s.seamless_window_quality = 1;
+    s.seamless_door_portals = GetPrivateProfileIntW(L"interiors", L"door_portals", 1, ini.c_str()) != 0;
+    s.seamless_door_walk = GetPrivateProfileIntW(L"interiors", L"door_walk", 1, ini.c_str()) != 0;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");

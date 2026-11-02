@@ -99,6 +99,12 @@ uint64_t g_win_frame_now = 0;  // frames counted by the reconciler's watch (Game
 bool g_windows = true;      // coop.ini [interiors] windows
 int g_window_quality = 1;   // coop.ini [interiors] window_quality
 const WinQuality& quality() { return kQualities[std::clamp(g_window_quality, 0, 2)]; }
+// Door portals (seamless_doors.inc): coop.ini [interiors] door_portals / door_walk, and the building whose door view is
+// wanted this frame (held for it first, also with the window views off)
+bool g_door_portals = true;
+bool g_door_walk = true;
+const Config* g_door_want = nullptr;
+constexpr size_t kDoorFxBase = 32;  // g_slot_fx entries from here are the door cameras' (seamless_doors.inc)
 
 // --- the game ----------------------------------------------------------------------------------------------------------
 
@@ -1553,13 +1559,15 @@ struct SlotFx {
     std::vector<int32_t> shared_events;
     int shared_version = -1;
 };
-std::vector<SlotFx> g_slot_fx;  // by inside-out slot
-void free_slot_fx() {
-    for (SlotFx& f : g_slot_fx) {
+std::vector<SlotFx> g_slot_fx;  // by inside-out slot (from kDoorFxBase: the door cameras')
+// The entries [first, last) let go (their cameras are being destroyed with them): the window views' by default.
+void free_slot_fx(size_t first = 0, size_t last = kDoorFxBase) {
+    for (size_t i = first; i < last && i < g_slot_fx.size(); ++i) {
+        SlotFx& f = g_slot_fx[i];
         drop(f.buffer);
         for (uintptr_t& h : f.shared) drop(h);
+        f = SlotFx{};
     }
-    g_slot_fx.clear();
 }
 // SI: UseWindowViewFogPass (the buffer is built once per camera; only the fog values change)
 void use_fog_pass(int slot, Il2CppObject* cam) {
@@ -2260,34 +2268,43 @@ void choose_held(V3 eye) {
             g_oi.rooms.erase(g_oi.rooms.begin() + static_cast<ptrdiff_t>(i));
         }
     }
-    // one new building a frame (the nearest not set up yet)
+    // one new building a frame (the one whose door view is wanted, else the nearest not set up yet)
     Instance* next = nullptr;
-    float next_d = qy.oi_range + kOutsideInReleaseMargin;
+    float next_d = g_windows ? qy.oi_range + kOutsideInReleaseMargin : 0.0f;
     for (Instance& in : g_instances) {
         if (!in_room(&in) || !in.hydrated || !master_of(in) || !live(in.shell) || g_oi.unsupported.count(in.cfg)) continue;
         bool have = false;
         for (const HeldRoom& h : g_oi.rooms) have = have || h.cfg == in.cfg;
         if (have) continue;
         const float d = shell_distance(in, eye);
+        if (in.cfg == g_door_want) {
+            next = &in, next_d = d;
+            break;
+        }
         if (d < next_d) next_d = d, next = &in;
     }
     if (next) {
         HeldRoom h;
+        h.cfg = next->cfg;
         h.shell_d = next_d;
-        if (setup_held(*next, h)) g_oi.rooms.push_back(std::move(h));
+        const bool views = g_windows && setup_held(*next, h);
+        if (!views) h.aps.clear(), h.was_drawn.clear();  // (held for its doors only)
+        if (views || g_door_portals) g_oi.rooms.push_back(std::move(h));
         else g_oi.unsupported.insert(next->cfg);
     }
     // which are held: nearest first (a held one a little favoured), never one the player may be in, never overlapping
     std::vector<HeldRoom*> order;
     for (HeldRoom& h : g_oi.rooms) {
         h.want = false;
-        h.cameras_on = h.shell_d <= qy.oi_range + (h.cameras_on ? kOutsideInReleaseMargin : 0);
+        h.cameras_on = g_windows && h.shell_d <= qy.oi_range + (h.cameras_on ? kOutsideInReleaseMargin : 0);
         Instance* in = instance_of(h.cfg);
-        if (!in || !h.cameras_on) continue;
+        if (!in || (!h.cameras_on && h.cfg != g_door_want)) continue;
         if (in_parked_room(*in, eye, 2.0f)) continue;  // SI: PlayerMayBeInsideForOutsideIn
         order.push_back(&h);
     }
     std::sort(order.begin(), order.end(), [](const HeldRoom* a, const HeldRoom* b) {
+        const bool da = a->cfg == g_door_want, db = b->cfg == g_door_want;  // the door being looked through first
+        if (da != db) return da;
         return a->shell_d * (a->borrowed ? kHeldRoomAdvantage : 1.0f) < b->shell_d * (b->borrowed ? kHeldRoomAdvantage : 1.0f);
     });
     std::vector<Box> chosen;
@@ -2430,11 +2447,22 @@ void tick_outside_in(V3 eye) {
 uint64_t g_win_frame = 0, g_win_reconciled = 0;
 bool g_win_active = false;  // something of ours stands (views, eye, held rooms)
 
+// Door portals (seamless_doors.inc, included after this file)
+void doors_pick(Instance* inside, V3 eye);
+int doors_render(Instance* inside, V3 eye);
+void teardown_doors(const char* why);
+void forget_doors_region();
+bool doors_standing();
+void resolve_doors();
+
 void forget_windows_region() {  // what was refused in the region left may work in the next one
     g_oi.unsupported.clear();
+    forget_doors_region();
 }
 void release_windows(const char* why) {
-    if (!g_win_active && !g_eye.in_force && !g_io.cfg && g_oi.rooms.empty() && !g_oi.mask_edited) return;
+    g_door_want = nullptr;
+    if (!g_win_active && !g_eye.in_force && !g_io.cfg && g_oi.rooms.empty() && !g_oi.mask_edited && !doors_standing()) return;
+    teardown_doors(why);
     teardown_inside_out(why);
     teardown_outside_in(why);
     release_cull_eye(why);
@@ -2450,7 +2478,8 @@ void windows_before_open(Instance& in) {
     teardown_outside_in("a door opened a room");
 }
 // The room the player stands in keeps its building's shell on while its windows show views (SI: KeepParkedShellOn).
-bool shell_stays_on() { return g_windows && wapi.ok && !g_unlit_failed; }
+// (also for the door views: the porch shows through the room's door)
+bool shell_stays_on() { return (g_windows || g_door_portals) && wapi.ok && !g_unlit_failed; }
 // A held room (for the views into it) isn't closed by the watchdog.
 bool windows_hold(const Instance& in) {
     for (const HeldRoom& h : g_oi.rooms)
@@ -2467,30 +2496,40 @@ int held_layer(const std::string& place) {
 void tick_windows() {
     g_win_reconciled = g_win_frame;
     restore_sheet_fog();  // (a post-render missed: never left off)
-    const bool on = api.ok && wapi.ok && g_windows && engaged() && !g_unlit_failed && !g_region.empty();
+    const bool on = api.ok && wapi.ok && (g_windows || g_door_portals) && engaged() && !g_unlit_failed && !g_region.empty();
     Instance* inside = (on && g_inside && in_room(g_inside) && live(g_inside->shell)) ? g_inside : nullptr;
     if (!on || !capture_main()) {
         release_windows(!on ? "the views are off" : "no camera");
         return;
     }
+    doors_pick(inside, g_main.pos);  // first: the building whose door is looked through is held before the others
     // inside-out
-    if (!inside || (g_io.cfg && g_io.cfg != inside->cfg)) teardown_inside_out(inside ? "another room" : "the player is outside");
+    if (!inside || !g_windows || (g_io.cfg && g_io.cfg != inside->cfg))
+        teardown_inside_out(!inside ? "the player is outside" : g_windows ? "another room" : "the window views are off");
     if (inside) {
         teardown_outside_in("the player went in");
-        if (!g_io.cfg && !setup_inside_out(*inside)) g_io.cfg = inside->cfg;  // (a room with no windows: not scanned again)
+        if (g_windows && !g_io.cfg && !setup_inside_out(*inside)) g_io.cfg = inside->cfg;  // (no windows: not scanned again)
         if (Il2CppObject* s = live(inside->shell); s && !active_self(s)) set_active(s, true);  // SI: KeepParkedShellOn
-        if (!g_io.views.empty()) {
+        const bool window_views = g_windows && !g_io.views.empty();
+        if (window_views) {
             acquire_cull_eye();
             g_snow_push = nearest_glass_along_gaze();
-            g_sheet_fog_wanted = true;
             render_inside_out();
         }
+        const int door_views = doors_render(inside, g_main.pos);
+        if (door_views > 0 && !window_views) acquire_cull_eye();  // (the door view needs the trees too)
+        g_sheet_fog_wanted = window_views || door_views > 0;
     } else {
         if (g_eye.in_force || g_eye.cam) release_cull_eye(g_inside ? "a room with no building of its own" : "the player is outside");
         g_sheet_fog_wanted = false;
         g_snow_push = 0;
-        if (g_inside) teardown_outside_in("the player is in a room");  // (a sub-interior: no views either way)
-        else if (!g_fade.busy) tick_outside_in(g_main.pos);
+        if (g_inside) {
+            teardown_outside_in("the player is in a room");  // (a sub-interior: no views either way)
+            doors_render(nullptr, g_main.pos);               // (only puts its own away)
+        } else if (!g_fade.busy) {
+            tick_outside_in(g_main.pos);
+            doors_render(nullptr, g_main.pos);
+        }
     }
     g_win_active = true;
 }
@@ -2673,6 +2712,7 @@ void resolve_windows() {
         wapi.fog_ok = g_fire_pre_cull && g_fire_post_render;
     }
     resolve_fog_pass();
+    resolve_doors();
     logx::info("interiors: windows: ready (stand-in eye %s, snow box %s, sheet fog %s; %zu building(s) with offline window data, "
                "%zu hand row(s))",
                wapi.cull_ok && g_frustum_planes1 ? "yes" : "NO", wapi.snow_ok && g_falling_jobs ? "yes" : "NO",

@@ -874,6 +874,8 @@ void watch_windows();
 void resolve_windows();
 extern bool g_windows;
 extern int g_window_quality;
+extern bool g_door_portals, g_door_walk;  // door portals (seamless_doors.inc)
+void tick_door_walk();
 
 // Milestone 1b, in seamless_persist.inc (included further down).
 int adopt_strays(Instance& in, const char* why);
@@ -2772,6 +2774,9 @@ struct DoorChoice {
     Instance* other = nullptr;   // a sub-link's other room
 };
 
+// Stage 2 door portals (seamless_doors.inc): the door used through its view, with no fade (false: the fade as before)
+bool portal_door(Il2CppObject* door, const DoorChoice& c, bool walked);
+
 Il2CppObject* door_tf(Il2CppObject* door) { return tf_of(door); }
 std::string door_scene(Il2CppObject* door) { return text(get<Il2CppObject*>(door, api.door_scene)); }
 
@@ -2991,6 +2996,16 @@ V3 exit_point(Instance& in, Il2CppObject* door) {
     return p;
 }
 
+// Through a door portal (seamless_doors.inc): where the player's pose lands on the far side (before it is set on the
+// ground), the far doorway's middle, the turn taken. landing() checks it once the far side's colliders are up.
+struct Through {
+    V3 pos, door_mid;
+    Quat rot;
+    float turn = 0;
+};
+bool landing(const Through& t, Instance* room, V3& out);
+void after_through(const Through& t);
+
 void teleport(V3 pos, Quat rot) {
     Il2CppObject* pm = player_manager();
     if (!pm) return;
@@ -3008,7 +3023,7 @@ void open_room(Instance& in) {
     if (Il2CppObject* s = live(in.shell); s && !shell_stays_on()) set_active(s, false);
 }
 
-void enter(Instance& in, Il2CppObject* door) {
+void enter(Instance& in, Il2CppObject* door, const Through* through = nullptr) {
     open_room(in);
     if (!live(in.shell))  // a sub-interior entered from outside: its parent's shell and room go too
         for (Instance& parent : g_instances)
@@ -3020,26 +3035,41 @@ void enter(Instance& in, Il2CppObject* door) {
     set_audio_occlusion(true);
     mark_inside(&in, "through its door");
     Il2CppObject* ptf = player_tf();
-    const V3 spawn = snap_to_ground(entry_point(in, door));
-    teleport(spawn, facing_into_room(in, spawn, rotation(ptf)));
+    V3 spawn;
+    bool same_pose = false;
+    if (through && landing(*through, &in, spawn)) {  // door portal: the same pose on the far side (the room is up now)
+        same_pose = true;
+        teleport(spawn, through->rot);
+        after_through(*through);
+    } else {
+        spawn = snap_to_ground(entry_point(in, door));
+        teleport(spawn, through ? through->rot : facing_into_room(in, spawn, rotation(ptf)));
+    }
     if (api.door_mark_explored) il2::invoke(api.door_mark_explored, door);  // the game does this on its own transition
     tick_fog();
     tick_snow_emitters();
     tick_snow_planes();
-    logx::info("interiors: entered %s through '%s' -> (%.1f, %.1f, %.1f)", in.cfg->id, name_of(go_of(door)).c_str(), spawn.x,
-               spawn.y, spawn.z);
+    logx::info("interiors: entered %s through '%s' -> (%.1f, %.1f, %.1f)%s", in.cfg->id, name_of(go_of(door)).c_str(), spawn.x,
+               spawn.y, spawn.z, !through ? "" : same_pose ? " (door portal, same pose)" : " (door portal, the game's spot)");
 }
 
-void leave(Instance& in, Il2CppObject* door) {
+void leave(Instance& in, Il2CppObject* door, const Through* through = nullptr) {
     V3 spawn = exit_point(in, door);
     exit_room(in, "through its door", true);  // first: nothing may meet the room's colliders after the move
-    spawn = snap_to_ground(spawn);
-    teleport(spawn, rotation(player_tf()));
+    bool same_pose = false;
+    if (through && landing(*through, nullptr, spawn)) {  // door portal: the same pose outside
+        same_pose = true;
+        teleport(spawn, through->rot);
+        after_through(*through);
+    } else {
+        spawn = snap_to_ground(spawn);
+        teleport(spawn, through ? through->rot : rotation(player_tf()));
+    }
     tick_fog();
     tick_snow_emitters();
     tick_snow_planes();
-    logx::info("interiors: left %s through '%s' -> (%.1f, %.1f, %.1f)", in.cfg->id, name_of(go_of(door)).c_str(), spawn.x,
-               spawn.y, spawn.z);
+    logx::info("interiors: left %s through '%s' -> (%.1f, %.1f, %.1f)%s", in.cfg->id, name_of(go_of(door)).c_str(), spawn.x,
+               spawn.y, spawn.z, !through ? "" : same_pose ? " (door portal, same pose)" : " (door portal, the game's spot)");
 }
 
 void go_down(DoorChoice& c) {  // parent -> child
@@ -3233,6 +3263,7 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
     // In the game a scene load ends a hold-to-use door's wait; with none, Update would use the door again every frame.
     put<bool>(self, api.door_touch_ground, false);
     if (Il2CppObject* pm = player_manager()) il2::invoke(api.reset_interaction, pm);
+    if (portal_door(self, c, false)) return;  // Stage 2: through the door's view, no fade (else the fade, as before)
     g_fade.busy = true;
     g_fade.step = 1;
     g_fade.door = hold(self);
@@ -3611,6 +3642,7 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
 #include "seamless_auto.inc"
 #include "seamless_fx.inc"
 #include "seamless_windows.inc"
+#include "seamless_doors.inc"
 
 // --- hooks: inside (SI: WeatherPatches.cs, WindInstanceFix.cs, EvolvePatches.cs, SafehouseFixes.cs) -------------------
 
@@ -3985,11 +4017,13 @@ void set_settings(const config::Settings& s) {
     g_fire_fx = s.seamless_fire_effects;           // B3
     g_windows = s.seamless_windows;                // Stage 2
     g_window_quality = std::clamp(s.seamless_window_quality, 0, 2);
+    g_door_portals = s.seamless_door_portals;      // Stage 2 doors
+    g_door_walk = s.seamless_door_walk;
     logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s; buildings beyond SI's configs %s; "
-               "chimney smoke and window glow %s; window views %s, quality %d)",
+               "chimney smoke and window glow %s; window views %s, quality %d; door portals %s%s)",
                s.seamless_interiors ? "on" : "off", g_import_old ? "imported" : "left to the game's doors",
                g_auto_buildings ? "found" : "not looked for", g_fire_fx ? "on" : "off", g_windows ? "on" : "off",
-               g_window_quality);
+               g_window_quality, g_door_portals ? "on" : "off (the fade)", g_door_portals && g_door_walk ? ", walked through too" : "");
 }
 
 void on_frame(const std::string& scene, bool in_game) {
@@ -4034,6 +4068,7 @@ void on_frame(const std::string& scene, bool in_game) {
     tick_hold();
     pick_building();
     tick_fade();
+    tick_door_walk();  // Stage 2 door portals: walked into (before the camera follows the player this frame)
     tick_waited();  // A12
     tick_closed_time();
     tick_carried_guard();
