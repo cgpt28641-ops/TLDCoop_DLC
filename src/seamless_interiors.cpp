@@ -683,6 +683,7 @@ struct Instance {
     // pre-mod saves (seamless_import.inc, SI: LegacyImport.cs)
     int legacy = 0;                      // kLegacy*: none, read and waiting for the room, hydrating from memory
     std::shared_ptr<struct LegacyData> legacy_data;
+    std::string import_marker;  // an import's "<id>.imported" not written yet (a write failed): with the next save of the room
     int hydrate_step = 0;
     double hydrate_started = 0;
     std::vector<std::vector<std::string>> gear_rows;
@@ -694,6 +695,16 @@ struct Instance {
         std::string data, line;
     };
     std::vector<ContainerJob> container_jobs;
+    // region items found standing in the room by begin_gear: dealt with only once the room's contents are all back
+    // (P8: saved or given up on before that, nothing of the region's was moved into the room or deleted)
+    struct RegionItem {
+        uintptr_t gi = 0;
+        V3 at;
+    };
+    std::vector<RegionItem> deferred_twins, deferred_taken;
+    // the region's items near the room when it began hydrating (instance id -> spot): the only ones purge_leaked may
+    // take for leaked copies (P1: what the player drops later is never deleted)
+    std::unordered_map<int, V3> hydration_gear;
     std::unordered_map<std::string, std::string> state_fires;  // the building's own fire records, by fire key
     // SI: FrozenTime.cs caches
     std::vector<uintptr_t> closed_fires, closed_pots, closed_lamps, closed_torches, closed_flares, closed_evolve;
@@ -1055,9 +1066,9 @@ void leave_audio_zones(Instance& in) {
 void hide_room(Instance& in) {
     Il2CppObject* m = master_of(in);
     if (!m) return;
-    if (in.hydrated && active_self(m)) {
-        purge_leaked(in);
+    if (in.hydrated && active_self(m)) {  // (SI's order: adopted first, then the leaked copies purged)
         adopt_strays(in, "the room closed");
+        purge_leaked(in);
     }
     set_outsiders_visible(in, false);
     leave_audio_zones(in);
@@ -2460,6 +2471,10 @@ void fail_build(Instance& in, const char* why) {
     drop(in.master);
     drop(in.master_tf);
     rooms_changed();
+    for (auto* list : {&in.deferred_twins, &in.deferred_taken})  // (the region's items stay as they are)
+        for (Instance::RegionItem& r : *list) drop(r.gi);
+    in.deferred_twins.clear();
+    in.deferred_taken.clear();
     drop_import(in);
     set_stage(in, Stage::Vanilla);
     if (g_building == &in) g_building = nullptr;
@@ -3668,6 +3683,8 @@ void forget_region(const char* why) {
                            &in.closed_evolve})
             for (uintptr_t& h : *list) drop(h);
         for (Instance::ContainerJob& j : in.container_jobs) drop(j.container);
+        for (auto* list : {&in.deferred_twins, &in.deferred_taken})
+            for (Instance::RegionItem& r : *list) drop(r.gi);
         drop(in.master);
         drop(in.master_tf);
         drop(in.shell);

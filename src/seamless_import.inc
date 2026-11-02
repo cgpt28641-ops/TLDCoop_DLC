@@ -632,23 +632,28 @@ void abandon_import(Instance& in, const std::string& why) {
 // without saving throws them away and the import happens again) with the marker.
 void commit_import(Instance& in) {
     if (in.legacy != kLegacyHydrating || !in.legacy_data) return;
+    std::lock_guard lock(g_files);  // (P12: the files and the marker together, no commit in between)
     const std::shared_ptr<LegacyData> d = in.legacy_data;
     drop_import(in);
-    save_placeables(in);
-    save_gear(in);
-    save_containers(in);
-    save_state(in);
+    bool ok = save_placeables(in) & save_gear(in) & save_containers(in) & save_state(in);
     g_rolled_ids.insert(in.cfg->id);
     std::vector<std::string> ids(g_rolled_ids.begin(), g_rolled_ids.end());
     std::sort(ids.begin(), ids.end());
     std::vector<std::string> rolled;
     for (const std::string& id : ids) rolled.push_back(esc(id));
-    write_staged(in.dir / "loot.rolled", file_text("rolled", rolled));
+    ok = write_staged(in.dir / "loot.rolled", file_text("rolled", rolled)) && ok;
+    in.has_data = true;
     const std::string counts = std::to_string(d->items) + "\t" + std::to_string(d->containers.size()) + "\t" +
                                std::to_string(d->container_items) + "\t" + std::to_string(d->states) + "\t" +
                                std::to_string(d->spawned);
-    write_staged(building_file(in.dir, in, "imported"), file_text("imported", {esc(d->key) + "\t" + d->hash + "\t" + counts}));
-    in.has_data = true;
+    const std::string marker = file_text("imported", {esc(d->key) + "\t" + d->hash + "\t" + counts});
+    // (P6) the marker only after every file of the room: else it waits for a save that writes them all (save_rooms)
+    if (!ok || !write_staged(building_file(in.dir, in, "imported"), marker)) {
+        in.import_marker = marker;
+        logx::warn("interiors: %s: its files from the old save couldn't all be written; the import marker waits for the "
+                   "next save that writes them", in.cfg->id);
+        return;
+    }
     logx::info("interiors: %s: IMPORTED from the old save ('%s'): %d item(s) on the floor, %d container(s) with %d item(s) "
                "(%zu container record(s) in all), %d object state(s), %d fire(s), %d furniture moved and %d taken away, %d "
                "placed object(s) of the player's, %d curing box(es) with %d item(s); written with the next save",

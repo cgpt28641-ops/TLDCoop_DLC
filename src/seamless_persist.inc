@@ -7,7 +7,8 @@
 // CheckNewGameLootLock's wipe are not needed). One file per building and kind, positions local to the room (= the
 // interior scene's own coordinates), so a room parked or turned differently still matches:
 //   <id>.placeables  <id>.spawned  <id>.gear  <id>.containers  <id>.state   player.inside   loot.rolled
-// Text, one record per line, tab-separated fields, strings escaped (\\ \t \n \r), first line "TLDCOOP-SI 1 <kind>".
+// Text, one record per line, tab-separated fields, strings escaped (\\ \t \n \r), first line "TLDCOOP-SI 2 <kind>", last
+// line "#end <records>" (a file cut short is told from an empty one; "TLDCOOP-SI 1" files, from before, have none).
 // Staging (SI: JsonWriteCache + SaveCommitPatches): SaveSceneData writes "<file>.pending"; OnSaveCompleted for the
 // current save renames them over the real ones; RestoreGame throws them away; readers prefer ".pending".
 
@@ -45,6 +46,7 @@ struct PApi {
     ptrdiff_t curing_state = -1, curing_guid = -1, curing_items = -1;
     ptrdiff_t pm_save_position = -1, pm_object_to_place = -1;
     FieldInfo* save_name = nullptr;
+    const MethodInfo* save_pending = nullptr, *save_wait = nullptr;  // SaveGameSystem's async save
     std::string spawned_suffix = " (PLACED)", placement_root = "DesignPlaceables";
     struct StateKind {
         const char* tag;
@@ -88,7 +90,9 @@ bool call_bool(const MethodInfo* m, void* self) {
 
 // --- text records ------------------------------------------------------------------------------------------------------
 
-constexpr const char* kFileMagic = "TLDCOOP-SI 1 ";
+constexpr const char* kFileMagic = "TLDCOOP-SI 2 ";      // what we write (with the "#end <n>" footer)
+constexpr const char* kFileMagicOld = "TLDCOOP-SI 1 ";   // read as before (no footer)
+constexpr const char* kFileFooter = "#end ";
 constexpr const char* kStableGuidMarker = "#stable-guids-1";  // SI: StableGuidMarker
 
 std::string esc(const std::string& s) {
@@ -138,11 +142,12 @@ bool pnum(const std::string& s, float& v) {
     const auto r = std::from_chars(s.data(), s.data() + s.size(), v);
     return r.ec == std::errc() && r.ptr == s.data() + s.size();
 }
-std::string f2(float v) {  // SI's {x:F2} for ids and keys
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%.2f", static_cast<double>(v));
-    if (std::strcmp(buf, "-0.00") == 0) return "0.00";
-    return buf;
+std::string f2(float v) {  // SI's {x:F2} for ids and keys (to_chars: never the locale's comma)
+    char buf[64];
+    const auto r = std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::fixed, 2);
+    std::string o = r.ec == std::errc() ? std::string(buf, r.ptr) : std::string("0.00");
+    if (o == "-0.00") return "0.00";
+    return o;
 }
 std::string v3_fields(V3 v) { return fnum(v.x) + "\t" + fnum(v.y) + "\t" + fnum(v.z); }
 std::string q_fields(Quat q) { return fnum(q.x) + "\t" + fnum(q.y) + "\t" + fnum(q.z) + "\t" + fnum(q.w); }
@@ -171,7 +176,9 @@ std::string prefab_name(const std::string& raw) {
 // --- files (SI: SaveFiles, JsonWriteCache, KeepUnreadableFile) ---------------------------------------------------------
 
 namespace fs = std::filesystem;
-std::mutex g_files;  // OnSaveCompleted may come from the game's save thread
+// OnSaveCompleted may come from the game's save thread; held across a whole save_rooms / commit_import (recursive: the
+// writes inside take it too).
+std::recursive_mutex g_files;
 
 std::string file_safe(const std::string& id) {
     std::string name;
@@ -210,7 +217,49 @@ bool exists_preferred(const fs::path& p) {
     std::error_code ec;
     return !p.empty() && (g_overlay.count(p.string()) || fs::exists(pending_of(p), ec) || fs::exists(p, ec));
 }
-// SI: JsonWriteCache.Write: "<file>.pending", skipped when the content is what's already there.
+// The whole file on the disk, flushed, or false (nothing half-written is left under that name: the caller's ".tmp").
+bool write_file_durably(const fs::path& p, const std::string& content) {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool ok = true;
+    size_t at = 0;
+    while (ok && at < content.size()) {
+        const DWORD chunk = static_cast<DWORD>(std::min<size_t>(content.size() - at, size_t{1} << 20));
+        DWORD wrote = 0;
+        ok = WriteFile(h, content.data() + at, chunk, &wrote, nullptr) && wrote == chunk;
+        at += wrote;
+    }
+    ok = FlushFileBuffers(h) && ok;
+    ok = CloseHandle(h) && ok;
+    return ok;
+#else
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    out.write(content.data(), static_cast<std::streamsize>(content.size()));
+    out.flush();
+    out.close();
+    return !out.fail();
+#endif
+}
+// Renames from over to (replacing it), written through to the disk; a few tries (a virus scanner or the search
+// indexer can hold a file for a moment).
+bool move_replace(const fs::path& from, const fs::path& to, std::string& err) {
+    for (int attempt = 0; attempt < 4; ++attempt) {
+#ifdef _WIN32
+        if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+        err = "error " + std::to_string(GetLastError());
+        Sleep(25 * (attempt + 1));
+#else
+        std::error_code ec;
+        fs::rename(from, to, ec);
+        if (!ec) return true;
+        err = ec.message();
+#endif
+    }
+    return false;
+}
+
+// SI: JsonWriteCache.Write: "<file>.pending", skipped when the content is what's already there. False: it isn't.
 bool write_staged(const fs::path& p, const std::string& content) {
     if (p.empty()) return false;
     std::lock_guard lock(g_files);
@@ -220,46 +269,64 @@ bool write_staged(const fs::path& p, const std::string& content) {
     fs::create_directories(p.parent_path(), ec);
     fs::path tmp = pending_of(p);
     tmp += ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        out.write(content.data(), static_cast<std::streamsize>(content.size()));
-        if (!out) {
-            logx::warn("interiors: couldn't write %s", tmp.string().c_str());
-            return false;
-        }
+    if (!write_file_durably(tmp, content)) {
+        logx::warn("interiors: couldn't write %s", tmp.string().c_str());
+        fs::remove(tmp, ec);
+        return false;
     }
-    fs::rename(tmp, pending_of(p), ec);
-    if (ec) {
-        logx::warn("interiors: couldn't stage %s (%s)", p.filename().string().c_str(), ec.message().c_str());
+    std::string err;
+    if (!move_replace(tmp, pending_of(p), err)) {
+        logx::warn("interiors: couldn't stage %s (%s)", p.filename().string().c_str(), err.c_str());
         return false;
     }
     return true;
 }
-// SI: SaveFiles.Commit (every staged file of the folder).
-int commit_dir(const fs::path& dir) {
+// A commit that didn't go through leaves this note: the staged files then belong to a save that is on the disk, so
+// a load mustn't throw them away (discard_dir); the next commit tries again and takes the note away.
+constexpr const char* kCommitFailed = "commit.failed";
+// SI: SaveFiles.Commit (every staged file of the folder). failed: how many couldn't be.
+int commit_dir(const fs::path& dir, int* failed = nullptr) {
     std::lock_guard lock(g_files);
     std::error_code ec;
+    if (failed) *failed = 0;
     if (dir.empty() || !fs::is_directory(dir, ec)) return 0;
-    int n = 0;
-    for (const auto& e : fs::directory_iterator(dir, ec)) {
-        const fs::path p = e.path();
-        if (p.extension() != ".pending") continue;
+    std::vector<fs::path> staged;
+    for (const auto& e : fs::directory_iterator(dir, ec))
+        if (e.path().extension() == ".pending") staged.push_back(e.path());
+    int n = 0, bad = 0;
+    for (const fs::path& p : staged) {
         fs::path final_path = p;
         final_path.replace_extension();
-        std::error_code ec2;
-        fs::rename(p, final_path, ec2);
-        if (ec2) {
-            logx::warn("interiors: couldn't commit %s (%s)", p.filename().string().c_str(), ec2.message().c_str());
+        std::string err;
+        if (!move_replace(p, final_path, err)) {
+            logx::warn("interiors: couldn't commit %s (%s); it stays staged", p.filename().string().c_str(), err.c_str());
+            ++bad;
             continue;
         }
         ++n;
     }
+    const fs::path note = dir / kCommitFailed;
+    if (bad) {
+        write_file_durably(note, std::to_string(bad) + " staged file(s) of a save on the disk couldn't be committed\n");
+        logx::warn("interiors: %d room file(s) couldn't be committed; kept staged (a load won't throw them away)", bad);
+    } else if (fs::exists(note, ec)) {
+        fs::remove(note, ec);
+    }
+    if (failed) *failed = bad;
     return n;
 }
 int discard_dir(const fs::path& dir) {
     std::lock_guard lock(g_files);
     std::error_code ec;
     if (dir.empty() || !fs::is_directory(dir, ec)) return 0;
+    if (fs::exists(dir / kCommitFailed, ec)) {  // they belong to a save that reached the disk: committed instead
+        int bad = 0;
+        const int c = commit_dir(dir, &bad);
+        logx::warn("interiors: %s: an earlier commit had failed; its staged files committed now (%d, %d still not) instead "
+                   "of being thrown away",
+                   dir.filename().string().c_str(), c, bad);
+        if (bad) return 0;
+    }
     int n = 0;
     std::vector<fs::path> gone;
     for (const auto& e : fs::directory_iterator(dir, ec))
@@ -324,7 +391,7 @@ Records read_records(const fs::path& p, const char* kind, size_t min_fields) {
     if (p.empty() || !read_preferred(p, data)) return r;
     r.exists = true;
     size_t at = 0;
-    bool first = true;
+    bool first = true, footed = false, footer_seen = false;
     while (at < data.size()) {
         size_t nl = data.find('\n', at);
         if (nl == std::string::npos) nl = data.size();
@@ -333,13 +400,30 @@ Records read_records(const fs::path& p, const char* kind, size_t min_fields) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (first) {
             first = false;
-            if (line != std::string(kFileMagic) + kind) {
+            if (line == std::string(kFileMagic) + kind) {
+                footed = true;
+            } else if (line != std::string(kFileMagicOld) + kind) {
                 r.ok = false;
                 return r;
             }
             continue;
         }
         if (line.empty()) continue;
+        if (footer_seen) {  // something after the footer
+            r.ok = false;
+            return r;
+        }
+        if (footed && line.rfind(kFileFooter, 0) == 0) {
+            footer_seen = true;
+            const std::string n = line.substr(std::strlen(kFileFooter));
+            size_t rows = 0;
+            const auto pr = std::from_chars(n.data(), n.data() + n.size(), rows);
+            if (pr.ec != std::errc() || pr.ptr != n.data() + n.size() || rows != r.rows.size()) {
+                r.ok = false;
+                return r;
+            }
+            continue;
+        }
         std::vector<std::string> f = split_fields(line);
         if (f.size() < min_fields) {
             r.ok = false;
@@ -348,12 +432,19 @@ Records read_records(const fs::path& p, const char* kind, size_t min_fields) {
         r.rows.push_back(std::move(f));
         r.lines.push_back(line);
     }
-    if (first) r.ok = false;  // no header at all
+    if (first) r.ok = false;               // no header at all
+    if (footed && !footer_seen) r.ok = false;  // cut short: what's missing can't be told
     return r;
 }
 std::string file_text(const char* kind, const std::vector<std::string>& lines) {
     std::string out = std::string(kFileMagic) + kind + "\n";
-    for (const std::string& l : lines) out += l + "\n";
+    size_t rows = 0;
+    for (const std::string& l : lines) {
+        if (l.empty()) continue;  // (the reader skips empty lines: they aren't counted)
+        out += l + "\n";
+        ++rows;
+    }
+    out += kFileFooter + std::to_string(rows) + "\n";
     return out;
 }
 fs::path building_file(const fs::path& dir, const Instance& in, const char* kind) {
@@ -472,7 +563,7 @@ int stabilize_guids(Instance& in) {
         for (int n = 1; !used.insert(guid).second; ++n) guid = md5_guid(key + "#" + std::to_string(n));
         void* a[] = {og, str(guid.c_str())};
         if (!call(papi.pdid_replace, nullptr, a)) return;
-        put<Il2CppString*>(p, papi.placeable_guid, str(guid.c_str()));
+        put_ref(p, papi.placeable_guid, str(guid.c_str()));
         g_stable_guids.insert(guid);
         ++changed;
     });
@@ -481,13 +572,23 @@ int stabilize_guids(Instance& in) {
 }
 
 // SI: GenerateDeterministicPDIDs: every template item gets "<building>_<name>_<x>_<y>_<z>" (room-local, 2 decimals).
+// Two identical items at the same spot (to the cm) get "#1", "#2"... as read_gear's ids do, so neither is taken for a
+// copy of the other.
 int deterministic_ids(Instance& in) {
     int n = 0;
+    std::unordered_set<std::string> used;
+    each_in(master_of(in), api.t_gear, [&](Il2CppObject* gi) {
+        if (const std::string g = mod_guid(go_of(gi)); !g.empty()) used.insert(g);
+    });
     each_in(master_of(in), api.t_gear, [&](Il2CppObject* gi) {
         Il2CppObject* go = go_of(gi);
         if (!mod_guid(go).empty()) return;
         const V3 lp = to_local(in, position(tf_of(gi)));
-        set_mod_guid(go, std::string(in.cfg->id) + "_" + clean_name(name_of(go)) + "_" + f2(lp.x) + "_" + f2(lp.y) + "_" + f2(lp.z));
+        const std::string base =
+            std::string(in.cfg->id) + "_" + clean_name(name_of(go)) + "_" + f2(lp.x) + "_" + f2(lp.y) + "_" + f2(lp.z);
+        std::string id = base;
+        for (int k = 1; !used.insert(id).second; ++k) id = base + "#" + std::to_string(k);
+        set_mod_guid(go, id);
         ++n;
     });
     return n;
@@ -529,6 +630,14 @@ bool belongs_elsewhere(const Instance& in, Il2CppObject* t) {
         if (child_of(t, go_tf(m))) return true;
         if (active_self(m) && in_volume(o, p, 0.5f)) return true;
     }
+    return false;
+}
+
+// Another building of this region uses the same interior scene: the scene's baked ids (placeables, fires) are the
+// same in both rooms, so an id alone doesn't say which room's it is.
+bool scene_shared(const Instance& in) {
+    for (const Instance& o : g_instances)
+        if (&o != &in && std::strcmp(o.cfg->scene, in.cfg->scene) == 0) return true;
     return false;
 }
 
@@ -630,9 +739,18 @@ int adopt_strays(Instance& in, const char* why) {
     };
     std::vector<Cand> cands;
     std::unordered_set<Il2CppObject*> seen;
+    // A kind whose file couldn't be read isn't written (P7): what is taken into the room is cut from the region's save,
+    // so nothing of that kind is adopted (it stays the region's).
+    const bool gear_ok = !in.gear_blocked, placeables_ok = !in.placeable_blocked && !in.spawn_blocked;
     each_loose([&](Il2CppObject* comp) {
         Il2CppObject* t = tf_of(comp);
         if (!t || !seen.insert(t).second) return;
+        const bool is_gear = component(go_of(comp), api.t_gear) != nullptr;
+        if (is_gear ? !gear_ok : !placeables_ok) return;
+        if (is_gear) {  // there, untouched, since the room hydrated: purge_leaked's to judge (a leaked copy, or the region's)
+            const auto snap = in.hydration_gear.find(instance_id(comp));
+            if (snap != in.hydration_gear.end() && dist(snap->second, position(t)) < 0.02f) return;
+        }
         V3 pos = position(t);
         bool carried = false;
         if (has_filter && !filter.contains(pos)) {
@@ -682,6 +800,25 @@ int adopt_strays(Instance& in, const char* why) {
     return adopted;
 }
 
+// The region's items near the room as it begins to hydrate (the leaked copies that came with the region's save are
+// among them; nothing the player drops afterwards is).
+void snapshot_region_gear(Instance& in) {
+    in.hydration_gear.clear();
+    Il2CppObject* m = master_of(in);
+    if (!m) return;
+    Box filter;
+    const bool has_filter = filter_box(in, filter, 1.6f);
+    Il2CppObject* mt = go_tf(m);
+    each_listed(static_object(api.gear_list), [&](Il2CppObject* gi, int) {
+        if (!alive(gi)) return;
+        Il2CppObject* t = tf_of(gi);
+        const V3 pos = position(t);
+        if (has_filter && !filter.contains(pos) && !filter.contains(parked_point(in, pos))) return;
+        if (child_of(t, mt)) return;
+        in.hydration_gear[instance_id(gi)] = pos;
+    });
+}
+
 // SI: GearLeak.cs PurgeLeakedCloneGearDuplicates: a loose region copy of an item the room owns (same mod id, or the
 // same item within 12 cm, judged at the parked spot when it lies at the building) is deleted.
 int purge_leaked(Instance& in) {
@@ -719,6 +856,10 @@ int purge_leaked(Instance& in) {
         Il2CppObject* t = tf_of(gi);
         Il2CppObject* go = go_of(gi);
         V3 pos = position(t);
+        // only what was already there when the room hydrated, where it was then: a copy that came with the region's
+        // save. Something dropped (or moved) since is the player's, however like the room's own it is (P1).
+        const auto snap = in.hydration_gear.find(instance_id(gi));
+        if (snap == in.hydration_gear.end() || dist(snap->second, pos) >= 0.02f) return;
         bool lifted = false;
         if (has_filter && !filter.contains(pos)) {
             const V3 up = parked_point(in, pos);
@@ -879,24 +1020,40 @@ bool each_placement(F&& f) {
     }
     return true;
 }
-std::unordered_set<std::string> g_carried;
+std::unordered_set<std::string> g_carried;           // guids in the backpack (state OnPlayer)
+std::unordered_set<std::string> g_carried_unhandled;  // ... whose entry has no live object
+std::unordered_set<Il2CppObject*> g_carried_handles;  // ... the objects those entries hold
 double g_carried_at = -1e18;
+void read_carried() {
+    const double now = now_ms();
+    if (now - g_carried_at <= 500) return;
+    g_carried_at = now;
+    g_carried.clear();
+    g_carried_unhandled.clear();
+    g_carried_handles.clear();
+    each_placement([&](const std::string& key, Il2CppObject* handle, int32_t state) {
+        if (state != 2) return;
+        g_carried.insert(key);
+        if (alive(handle))
+            g_carried_handles.insert(handle);
+        else
+            g_carried_unhandled.insert(key);
+    });
+}
 bool is_carried(const std::string& guid) {  // SI: IsCarriedDecoration (state OnPlayer)
     if (guid.empty()) return false;
-    const double now = now_ms();
-    if (now - g_carried_at > 500) {
-        g_carried_at = now;
-        g_carried.clear();
-        each_placement([&](const std::string& key, Il2CppObject*, int32_t state) {
-            if (state == 2) g_carried.insert(key);
-        });
-    }
+    read_carried();
     return g_carried.count(guid) > 0;
 }
-bool is_carried(Il2CppObject* p) {
+// This very object (P9: buildings sharing an interior scene share its baked guids; another house's decoration in the
+// backpack isn't this one). By the guid alone only when the entry holds no object and no other room shares the guids.
+bool is_carried(const Instance& in, Il2CppObject* p) {
     Il2CppObject* ptf = player_tf();
     if (ptf && root_of(tf_of(p)) == root_of(ptf)) return true;
-    return is_carried(placeable_guid(p));
+    read_carried();
+    if (g_carried_handles.count(p)) return true;
+    const std::string g = placeable_guid(p);
+    return !g.empty() && g_carried_unhandled.count(g) && !scene_shared(in);
 }
 
 // SI: TickCarriedDecorationGuard: a decoration the game says is in the backpack but which stands active in the world
@@ -1008,7 +1165,7 @@ int apply_curing(Il2CppObject* go, const std::string& serialized) {
     if (!state) return 0;
     if (Il2CppObject* current = papi.curing_state >= 0 ? get<Il2CppObject*>(box, papi.curing_state) : nullptr)  // its own id wins
         if (Il2CppObject* g = get<Il2CppObject*>(current, papi.curing_guid); g && !text(g).empty())
-            put<Il2CppObject*>(state, papi.curing_guid, g);
+            put_ref(state, papi.curing_guid, g);
     const int items = curing_count(state);
     void* a[] = {state};
     if (!call(papi.curing_load, box, a)) return 0;
@@ -1016,8 +1173,8 @@ int apply_curing(Il2CppObject* go, const std::string& serialized) {
 }
 
 // SI: SavePlaceablePositions (+ SaveSpawnedPlaceables)
-void save_placeables(Instance& in) {
-    if (in.placeable_blocked) return;
+bool save_placeables(Instance& in) {
+    if (in.placeable_blocked && in.spawn_blocked) return true;
     std::vector<Il2CppObject*> all;
     each_in(master_of(in), api.t_placeable, [&](Il2CppObject* p) { all.push_back(p); });
     const auto best = best_per_guid(all, in);
@@ -1048,16 +1205,19 @@ void save_placeables(Instance& in) {
         spawned.push_back(esc(g) + "\t" + esc(s) + (cs.empty() ? "" : "\t" + esc(cs)));
     }
     lines.push_back(esc(kStableGuidMarker) + "\t0\t0\t0\t0\t0\t0\t1\t1\t1\t1\t1");  // SI: StableGuidMarker
-    write_staged(building_file(in.dir, in, "placeables"), file_text("placeables", lines));
+    bool ok = true;
+    if (!in.placeable_blocked)  // (P7: an unreadable positions file doesn't keep the player's own furniture from its file)
+        ok = write_staged(building_file(in.dir, in, "placeables"), file_text("placeables", lines)) && ok;
     if (!in.spawn_blocked) {
         for (const std::string& o : in.orphan_spawned) spawned.push_back(o);
-        write_staged(building_file(in.dir, in, "spawned"), file_text("spawned", spawned));
+        ok = write_staged(building_file(in.dir, in, "spawned"), file_text("spawned", spawned)) && ok;
     }
+    return ok;
 }
 
 // SI: ShouldPersistGear + SaveInactiveSceneGearItems (the room's own loose items; strays were adopted first)
-void save_gear(Instance& in) {
-    if (in.gear_blocked) return;
+bool save_gear(Instance& in) {
+    if (in.gear_blocked) return true;
     Il2CppObject* mt = live(in.master_tf);
     std::vector<std::string> lines;
     int skipped = 0;
@@ -1074,12 +1234,12 @@ void save_gear(Instance& in) {
         // fields: 0 name, 1 our id, 2-4 position, 5-8 rotation, 9-11 scale, 12 active, 13 the game's own text
     });
     for (const std::string& o : in.orphan_gear) lines.push_back(o);
-    write_staged(building_file(in.dir, in, "gear"), file_text("gear", lines));
+    return write_staged(building_file(in.dir, in, "gear"), file_text("gear", lines));
 }
 
 // SI: SaveContainerData
-void save_containers(Instance& in) {
-    if (in.container_blocked) return;
+bool save_containers(Instance& in) {
+    if (in.container_blocked) return true;
     std::vector<std::string> lines;
     std::unordered_map<std::string, int> counter;
     each_in(master_of(in), api.t_container, [&](Il2CppObject* c) {
@@ -1091,7 +1251,7 @@ void save_containers(Instance& in) {
                         v3_fields(to_local(in, position(tf_of(c)))) + "\t" + esc(data));
     });
     for (const std::string& o : in.orphan_containers) lines.push_back(o);
-    write_staged(building_file(in.dir, in, "containers"), file_text("containers", lines));
+    return write_staged(building_file(in.dir, in, "containers"), file_text("containers", lines));
 }
 
 // SI: InteractiveState.cs BuildStateKey (by the guid in the serialized text, else by name and room-local spot).
@@ -1131,8 +1291,8 @@ bool record_burning(const std::string& payload) {
 
 // SI: SaveInteractiveState (+ the room's fires: the port keeps them in the building's file as well as in the region's
 // save, because a room is built only when the player comes near: a save made before that would lose them otherwise).
-void save_state(Instance& in) {
-    if (in.state_blocked) return;
+bool save_state(Instance& in) {
+    if (in.state_blocked) return true;
     std::vector<std::string> lines;
     std::unordered_set<std::string> used;
     for (auto& k : papi.kinds) {
@@ -1154,7 +1314,7 @@ void save_state(Instance& in) {
     });
     for (const std::string& o : in.orphan_state)
         if (const auto f = split_fields(o); !f.empty() && !used.count(unesc(f[0]))) lines.push_back(o);
-    write_staged(building_file(in.dir, in, "state"), file_text("state", lines));
+    return write_staged(building_file(in.dir, in, "state"), file_text("state", lines));
 }
 
 // --- restoring one building (SI: Hydration.cs HydrateRoutine and the restores it runs) -------------------------------
@@ -1328,7 +1488,7 @@ void restore_placeables(Instance& in) {
             return;
         }
         done.insert(g);
-        if (is_carried(pl)) {
+        if (is_carried(in, pl)) {
             set_active(go_of(pl), false);
             ++carried;
             return;
@@ -1345,7 +1505,8 @@ void restore_placeables(Instance& in) {
             auto it = entries.find(g);
             if (g.empty() || done.count(g) || it == entries.end()) continue;
             Il2CppObject* t = tf_of(pl);
-            if (player_or_inventory(t) || on_shell(t)) continue;
+            // (P9: not another room's: a building sharing the scene has the same guids)
+            if (player_or_inventory(t) || on_shell(t) || under_any_room(pl) || belongs_elsewhere(in, t)) continue;
             done.insert(g);
             apply(pl, it->second);
         }
@@ -1371,8 +1532,8 @@ bool begin_gear(Instance& in) {
     }
     Il2CppObject* m = master_of(in);
     Il2CppObject* mt = go_tf(m);
-    int deleted = 0, kept = 0;
-    std::vector<Il2CppObject*> doomed;
+    int deleted = 0;
+    std::vector<Il2CppObject*> doomed;  // the room's own loose template items (the file is the truth)
     each_in(m, api.t_gear, [&](Il2CppObject* gi) {
         if (!inside_container(tf_of(gi), mt)) doomed.push_back(go_of(gi));
     });
@@ -1388,7 +1549,6 @@ bool begin_gear(Instance& in) {
         V3 lp;
         if (read_v3(row, 2, lp)) recs.push_back({prefab_name(unesc(row[0])), lp});
     }
-    std::vector<Il2CppObject*> taken_in;
     Box filter;
     const bool has_filter = filter_box(in, filter);
     each_listed(static_object(api.gear_list), [&](Il2CppObject* gi, int) {
@@ -1406,33 +1566,68 @@ bool begin_gear(Instance& in) {
                 twin = true;
                 break;
             }
-        if (twin)
-            doomed.push_back(go_of(gi));
-        else
-            taken_in.push_back(gi);
+        // (P8: the region's items are left as they are until all of the room's contents are back: settle_region_items)
+        (twin ? in.deferred_twins : in.deferred_taken).push_back({hold(gi), pos});
     });
     for (Il2CppObject* go : doomed) {
         destroy_now(go);
         ++deleted;
     }
-    for (Il2CppObject* gi : taken_in) {
-        Il2CppObject* t = tf_of(gi);
-        bool keep_world = true;
-        void* pa[] = {mt, &keep_world};
-        il2::invoke(api.tf_set_parent, t, pa);
-        freeze_physics(gi);
-        if (kept++ < 10)
-            logx::info("interiors: %s: '%s' lay in the room but isn't in its file: kept, the room's from now on", in.cfg->id,
-                       name_of(go_of(gi)).c_str());
-    }
     in.gear_rows = std::move(r.rows);
     in.gear_lines = std::move(r.lines);
     in.gear_restored = in.gear_failed = 0;
     in.gear_next = 0;
-    logx::info("interiors: %s: %zu saved item record(s); %d item(s) in the room cleared first (template or copies of saved "
-               "ones), %d of the player's lying there kept",
-               in.cfg->id, in.gear_rows.size(), deleted, kept);
+    logx::info("interiors: %s: %zu saved item record(s); %d template item(s) in the room cleared first; of the region's "
+               "lying in it, %zu copies of saved ones go and %zu of the player's are taken in once the room is complete",
+               in.cfg->id, in.gear_rows.size(), deleted, in.deferred_twins.size(), in.deferred_taken.size());
     return true;
+}
+// Still the region's, loose where begin_gear saw it (not picked up or moved since).
+Il2CppObject* untouched_region_item(Instance& in, const Instance::RegionItem& r) {
+    Il2CppObject* gi = live(r.gi);
+    if (!gi) return nullptr;
+    Il2CppObject* t = tf_of(gi);
+    Il2CppObject* mt = live(in.master_tf);
+    if (!t || (mt && child_of(t, mt)) || player_or_inventory(t) || dist(position(t), r.at) > 0.05f) return nullptr;
+    return gi;
+}
+// P8: the room came back whole: the region's copies of its saved items deleted, the player's things lying in it taken
+// in. (Given up on, drop_region_items: all of them stay the region's.)
+void settle_region_items(Instance& in) {
+    Il2CppObject* mt = live(in.master_tf);
+    int deleted = 0, kept = 0;
+    for (Instance::RegionItem& r : in.deferred_twins) {
+        if (Il2CppObject* gi = untouched_region_item(in, r)) {
+            destroy_now(go_of(gi));
+            ++deleted;
+        }
+        drop(r.gi);
+    }
+    for (Instance::RegionItem& r : in.deferred_taken) {
+        Il2CppObject* gi = untouched_region_item(in, r);
+        if (gi && mt && !in.gear_blocked) {
+            const std::string nm = name_of(go_of(gi));
+            bool keep_world = true;
+            void* pa[] = {mt, &keep_world};
+            il2::invoke(api.tf_set_parent, tf_of(gi), pa);
+            freeze_physics(gi);
+            if (kept++ < 10)
+                logx::info("interiors: %s: '%s' lay in the room but isn't in its file: kept, the room's from now on", in.cfg->id,
+                           nm.c_str());
+        }
+        drop(r.gi);
+    }
+    in.deferred_twins.clear();
+    in.deferred_taken.clear();
+    if (deleted || kept)
+        logx::info("interiors: %s: %d copy(ies) of saved items deleted from the region, %d of the player's taken in", in.cfg->id,
+                   deleted, kept);
+}
+void drop_region_items(Instance& in) {
+    for (auto* list : {&in.deferred_twins, &in.deferred_taken})
+        for (Instance::RegionItem& r : *list) drop(r.gi);
+    in.deferred_twins.clear();
+    in.deferred_taken.clear();
 }
 // SI: SpawnGearRecord (the stateful path; a record without the game's own text can't be made: kept as an orphan)
 bool spawn_gear(Instance& in, const std::vector<std::string>& row) {
@@ -1696,6 +1891,9 @@ int keep_region_fires(const std::string& blob) { return parse_fire_records(blob,
 // only onto a fire not burning already; the fire's place kept.
 int restore_fires(Instance& in) {
     int restored = 0, from_file = 0;
+    // The region save's records are known by the fire's id only, which buildings sharing the scene share: used only
+    // when this building's file has no fire records and no other building has its scene (P9).
+    const bool region_ok = in.state_fires.empty() && !scene_shared(in);
     each_in(master_of(in), api.t_fire, [&](Il2CppObject* f) {
         const std::string key = fire_key(f);
         if (key.empty() || call_bool(papi.fire_burning, f)) return;
@@ -1704,7 +1902,7 @@ int restore_fires(Instance& in) {
         if (auto it = in.state_fires.find(key); it != in.state_fires.end() && record_burning(it->second)) {
             rec = &it->second;
             ours = true;
-        } else if (auto it2 = g_region_fires.find(key); it2 != g_region_fires.end()) {
+        } else if (auto it2 = region_ok ? g_region_fires.find(key) : g_region_fires.end(); it2 != g_region_fires.end()) {
             rec = &it2->second;
         }
         if (!rec) return;
@@ -1787,6 +1985,7 @@ bool tick_hydrate(Instance& in) {
     }
     if (in.coop_friend) {  // milestone 2: a friend's room is the template; the host's lists bring what is in it
         stabilize_guids(in);
+        snapshot_region_gear(in);
         in.hydrated = true;
         in.closed_dirty = true;
         purge_leaked(in);
@@ -1796,6 +1995,7 @@ bool tick_hydrate(Instance& in) {
     switch (in.hydrate_step) {
         case 0:  // SI: 0/7: late runtime ids
             stabilize_guids(in);
+            snapshot_region_gear(in);
             in.hydrate_started = now_ms();
             in.hydrate_step = 1;
             return false;
@@ -1847,10 +2047,12 @@ bool tick_hydrate(Instance& in) {
             if (in.legacy == kLegacyHydrating) {  // an old save's import: all of it or none of it
                 std::string why;
                 if (!import_complete(in, why)) {
+                    drop_region_items(in);
                     abandon_import(in, why);
                     return true;
                 }
             }
+            settle_region_items(in);
             in.hydrated = true;  // SI: ContentHydrated
             in.closed_dirty = true;
             purge_leaked(in);
@@ -2151,6 +2353,7 @@ void tick_closed_time() {
 // --- the save as a whole (SI: SavePlaceablePositionsPatch = SaveGameSystem.SaveSceneData postfix) ---------------------
 
 void save_rooms(const char* scene_name) {
+    std::lock_guard lock(g_files);  // (P12: no commit between one room's files and the next)
     const std::string sid = game::save_id();
     const fs::path dir = dir_for(sid);
     if (dir.empty()) {
@@ -2167,10 +2370,12 @@ void save_rooms(const char* scene_name) {
             logx::warn("interiors: %s: its data folder changed during the session; not written", in.cfg->id);
             continue;
         }
-        save_placeables(in);
-        save_gear(in);
-        save_containers(in);
-        save_state(in);
+        const bool ok = save_placeables(in) & save_gear(in) & save_containers(in) & save_state(in);
+        if (!ok) logx::warn("interiors: %s: some of its files couldn't be written; the ones on the disk stay as they were", in.cfg->id);
+        if (ok && !in.import_marker.empty() && write_staged(building_file(in.dir, in, "imported"), in.import_marker)) {
+            in.import_marker.clear();
+            logx::info("interiors: %s: its import marker written with this save", in.cfg->id);
+        }
         if (in.rolled) g_rolled_ids.insert(in.cfg->id);
         in.has_data = true;
         ++written;
@@ -2190,9 +2395,9 @@ void save_rooms(const char* scene_name) {
 
 // SI: AdoptStrayInteriorObjects before the game writes the region: what was dropped in a room this visit belongs to the
 // room (and is kept out of the region's save by the gear/placeable surgery).
-void adopt_before_save() {
+void adopt_before_save(const fs::path& dir) {  // (P11: only rooms whose files this save writes)
     for (Instance& in : g_instances)
-        if (can_persist(in)) adopt_strays(in, "before the save");
+        if (can_persist(in) && in.dir == dir) adopt_strays(in, "before the save");
 }
 
 // --- glue -------------------------------------------------------------------------------------------------------------
@@ -2271,12 +2476,17 @@ using SaveSceneFn = void (*)(Il2CppObject* slot, Il2CppString* scene, const Meth
 SaveSceneFn g_save_scene = nullptr;
 void save_scene_detour(Il2CppObject* slot, Il2CppString* scene, const MethodInfo* method) {
     const bool on = engaged() && !g_region.empty();
-    if (on) adopt_before_save();
+    if (on) {
+        const fs::path dir = dir_for(game::save_id());
+        if (!dir.empty()) adopt_before_save(dir);
+    }
     g_save_scene(slot, scene, method);
     if (on) save_rooms(scene ? il2::to_utf8(scene).c_str() : "?");
 }
 
-// SI: CommitSiFilesOnDiskSavePatch: the save reached the disk: what we staged for it becomes the real files.
+// SI: CommitSiFilesOnDiskSavePatch: the save reached the disk: what we staged for it becomes the real files. Only when
+// the game says it did (SaveGameOperationReturnValue: ASYNC 0, BUSY 1, ERROR 2, ERROR_SILENT 3, SUCCESS 4): on 1-3
+// the files stay staged (a load throws them away, as the game's save didn't happen).
 using SaveDoneFn = int32_t (*)(Il2CppString* name, int32_t size, const MethodInfo* method);
 SaveDoneFn g_save_done = nullptr;
 int32_t save_done_detour(Il2CppString* name, int32_t size, const MethodInfo* method) {
@@ -2286,34 +2496,89 @@ int32_t save_done_detour(Il2CppString* name, int32_t size, const MethodInfo* met
     il2::il2cpp_field_static_get_value(papi.save_name, &current);
     const std::string n = name ? il2::to_utf8(name) : std::string();
     if (n.empty() || n != (current ? il2::to_utf8(current) : std::string())) return r;
-    if (const int c = commit_dir(data_dir())) logx::info("interiors: the save '%s' is on the disk: %d room file(s) committed", n.c_str(), c);
+    static int told = 0;
+    if (told++ < 1 || (r != 0 && r != 4)) logx::info("interiors: the game's save '%s' completed: %d", n.c_str(), r);
+    if (r != 0 && r != 4) {
+        logx::warn("interiors: the game's save '%s' didn't reach the disk (%d); the rooms' files stay staged", n.c_str(), r);
+        return r;
+    }
+    int failed = 0;
+    if (const int c = commit_dir(data_dir(), &failed))
+        logx::info("interiors: the save '%s' is on the disk: %d room file(s) committed%s", n.c_str(), c,
+                   failed ? " (some couldn't be: kept staged)" : "");
     return r;
 }
 
-// SI: DiscardSiFilesOnDiskLoadPatch: a save loaded: what was staged since its last disk save never happened.
+// SI: DiscardSiFilesOnDiskLoadPatch: a save loaded: what was staged since its last disk save never happened. A save of
+// that slot still being written finishes first (its OnSaveCompleted commits what belongs to it).
 using RestoreFn = void (*)(Il2CppString* name, const MethodInfo* method);
 RestoreFn g_restore_game = nullptr;
 void restore_game_detour(Il2CppString* name, const MethodInfo* method) {
     if (api.ok && name) {
+        const std::string n = il2::to_utf8(name);
+        bool pending = false;
+        if (papi.save_pending) {
+            void* a[] = {name};
+            Il2CppObject* r = nullptr;
+            if (call(papi.save_pending, nullptr, a, &r) && r) pending = *static_cast<const bool*>(il2::il2cpp_object_unbox(r));
+            if (pending && papi.save_wait) {
+                logx::info("interiors: loading '%s' while its save is still being written: waited for it first", n.c_str());
+                call(papi.save_wait, nullptr, a);
+                r = nullptr;
+                pending = call(papi.save_pending, nullptr, a, &r) && r && *static_cast<const bool*>(il2::il2cpp_object_unbox(r));
+            }
+        }
         g_overlay.clear();  // an import in progress belonged to the play that's being left
-        int n = 0;
-        for (const fs::path& d : dirs_of_slot(il2::to_utf8(name))) n += discard_dir(d);
-        if (n) logx::info("interiors: loading '%s': %d staged room file(s) from unsaved play thrown away", il2::to_utf8(name).c_str(), n);
+        if (pending) {  // (its OnSaveCompleted, later, commits them: they are that save's)
+            logx::warn("interiors: loading '%s' while its save is still being written; the rooms' staged files are kept (not "
+                       "thrown away)", n.c_str());
+        } else {
+            int c = 0;
+            for (const fs::path& d : dirs_of_slot(n)) c += discard_dir(d);
+            if (c) logx::info("interiors: loading '%s': %d staged room file(s) from unsaved play thrown away", n.c_str(), c);
+        }
     }
     g_restore_game(name, method);
 }
 
-// SI: SaveDeletionPatches (DeleteSaveFiles only): a deleted save's room data goes with it.
+// SI: SaveDeletionPatches (DeleteSaveFiles only): a deleted save's room data goes with it - moved aside to
+// worlds/deleted/<folder>_<stamp> (never deleted), and never the save being played (SI: IsSaveCurrentlyBeingPlayed: the
+// game rewriting the slot it plays).
 RestoreFn g_delete_save = nullptr;
 void delete_save_detour(Il2CppString* name, const MethodInfo* method) {
     g_delete_save(name, method);
     if (!api.ok || !name) return;
     const std::string n = il2::to_utf8(name);
+    Il2CppString* current = nullptr;
+    if (papi.save_name) il2::il2cpp_field_static_get_value(papi.save_name, &current);
+    if (current && il2::to_utf8(current) == n && game::is_gameplay_scene(game::active_scene())) {
+        logx::warn("interiors: the game deleted the files of '%s', the save being played; its room data is left alone",
+                   n.c_str());
+        return;
+    }
+    std::lock_guard lock(g_files);
     for (const fs::path& d : dirs_of_slot(n)) {
         std::error_code ec;
-        const auto removed = fs::remove_all(d, ec);
-        logx::info("interiors: the save '%s' was deleted: its room data %s (%s, %d file(s))", n.c_str(),
-                   ec ? "could not be removed" : "removed", d.filename().string().c_str(), static_cast<int>(removed));
+        const fs::path aside_dir = paths::instance_dir() / "worlds" / "deleted";
+        fs::create_directories(aside_dir, ec);
+        char stamp[32];
+        const auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &t);
+#else
+        localtime_r(&t, &tmv);
+#endif
+        std::strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &tmv);
+        const fs::path aside = aside_dir / (d.filename().string() + "_" + stamp);
+        std::error_code mec;
+        fs::rename(d, aside, mec);  // (a folder: MoveFileEx's REPLACE_EXISTING can't take one)
+        const bool moved = !mec;
+        const std::string err = mec.message();
+        logx::info("interiors: the save '%s' was deleted: its room data %s (%s)", n.c_str(),
+                   moved ? ("moved aside to worlds/deleted/" + aside.filename().string()).c_str()
+                         : ("left where it is: " + err).c_str(),
+                   d.filename().string().c_str());
     }
 }
 
@@ -2489,6 +2754,10 @@ void resolve_persist() {
     papi.pm_object_to_place = pmc ? il2::field_offset(pmc, "m_ObjectToPlace") : -1;
     Il2CppClass* saves = il2::find_class(kGame, "", "SaveGameSystem");
     papi.save_name = saves ? il2::il2cpp_class_get_field_from_name(saves, "m_CurrentSaveName") : nullptr;
+    if (saves) {
+        papi.save_pending = il2::find_method_params(saves, "IsAsyncSavePending", {"System.String"});
+        papi.save_wait = il2::find_method_params(saves, "WaitAsyncSaveComplete", {"System.String"});
+    }
 
     struct Need {
         const char* what;
