@@ -158,6 +158,6 @@ jobs:
           gh release view dll-latest -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create dll-latest -R "$GITHUB_REPOSITORY" --prerelease --title "winhttp.dll (latest)" --notes "Only winhttp.dll"
           gh release upload dll-latest build/winhttp.dll build/THIRD_PARTY_NOTICES.txt -R "$GITHUB_REPOSITORY" --clobber
-          map=$(ls build/winhttp.map build/*/winhttp.map 2>/dev/null | head -1); if [ -n "$map" ]; then cp "$map" winhttp.map && gh release upload dll-latest winhttp.map -R "$GITHUB_REPOSITORY" --clobber; fi
+          if [ -f build/winhttp.map ]; then cp build/winhttp.map winhttp.map && gh release upload dll-latest winhttp.map -R "$GITHUB_REPOSITORY" --clobber || echo "::warning::winhttp.map not uploaded"; else echo "::warning::no winhttp.map"; fi
           gh release edit dll-latest -R "$GITHUB_REPOSITORY" --notes "Only winhttp.dll, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
           echo "::notice::winhttp.dll is in the dll-latest release"
