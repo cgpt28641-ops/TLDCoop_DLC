@@ -3125,6 +3125,15 @@ std::vector<Seen> seen() {
             v.y = a->last.y;
             v.z = a->last.z;
             v.yaw = a->last.yaw;
+            // A6: in a room of our scene that we aren't in: marked at its building's door (the avatar stays hidden)
+            float dx = 0, dy = 0, dz = 0;
+            if (v.playing && !v.dead && !v.place.empty() && v.place != seamless_interiors::place() &&
+                a->status.rfind("hidden: inside ", 0) == 0 && seamless_interiors::door_position(v.place, dx, dy, dz)) {
+                v.at_door = true;
+                v.x = dx;
+                v.y = dy;
+                v.z = dz;
+            }
         }
         out.push_back(std::move(v));
     }

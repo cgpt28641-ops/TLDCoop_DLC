@@ -140,6 +140,7 @@ struct Api {
     ptrdiff_t animator = -1;                    // BaseAi.m_Animator
     ptrdiff_t struggle_start = -1;              // BaseAi.m_AnimParameter_StruggleStart (trigger hash)
     ptrdiff_t eye_offset = -1;                  // AiTarget.m_EyeOffset
+    FieldInfo* ai_list = nullptr;               // static BaseAiManager.m_BaseAis (A7: animals after a player gone in)
 } api;
 
 using UpdateFn = void (*)(Il2CppObject* self, const MethodInfo* method);
@@ -226,6 +227,7 @@ struct FrameView {
     uint64_t frame = ~0ull;
     bool host_here = false;      // the host is in the game, outdoors (not in a Seamless Interiors room)
     bool host_inside = false;    // the host is in a Seamless Interiors room
+    Il2CppObject* host_target = nullptr;  // our own player's AiTarget (PlayerManager.m_AiTarget, never a stand-in)
     Vector3 host{};
     std::vector<uint8_t> shown;     // avatars shown here
     std::vector<uint8_t> in_room;   // ...of those, the ones inside a Seamless Interiors room
@@ -242,6 +244,9 @@ const FrameView& view() {
     const game::PlayerState p = game::read_player();
     v.host_inside = seamless_interiors::player_inside();
     v.host_here = p.valid && !v.host_inside;
+    if (api.pm_ai_target >= 0 && api.player_manager)
+        if (Il2CppObject* pm = il2::invoke(api.player_manager, nullptr))
+            v.host_target = il2::read_field<Il2CppObject*>(pm, api.pm_ai_target);
     v.host = Vector3{p.position.x, p.position.y, p.position.z};
     v.shown = avatar::shown();
     for (uint8_t id : v.shown) {
@@ -476,6 +481,65 @@ struct PlayerSwap {
     PlayerSwap(const PlayerSwap&) = delete;
     PlayerSwap& operator=(const PlayerSwap&) = delete;
 };
+
+// A7 (Seamless Interiors): our own player inside a room (80 m above its building) is gone for the animals, the way a
+// scene change takes the player from them in the game: out of sight and out of smell (TLD's detection measures every
+// target through ComputeDistanceForTarget and CanSmellSource), and on_frame makes one already after us lose us. Solo
+// and host alike (a friend's game only mirrors the host's animals; friends in rooms: forget_gone_friend, K7).
+using DistanceFn = float (*)(Il2CppObject* self, const Vector3* eye, Il2CppObject* target, const MethodInfo* method);
+using SmellFn = bool (*)(Il2CppObject* self, const Vector3* source, Il2CppObject* target, const MethodInfo* method);
+DistanceFn g_distance_for = nullptr;
+SmellFn g_can_smell = nullptr;
+bool our_player_away(Il2CppObject* target) {
+    if (!target || !seamless_interiors::player_inside()) return false;
+    if (avatar::player_of(target)) return false;  // a friend's stand-in
+    return target == view().host_target;
+}
+float distance_for_detour(Il2CppObject* self, const Vector3* eye, Il2CppObject* target, const MethodInfo* method) {
+    if (our_player_away(target)) return 1.0e6f;
+    return g_distance_for(self, eye, target, method);
+}
+bool can_smell_detour(Il2CppObject* self, const Vector3* source, Il2CppObject* target, const MethodInfo* method) {
+    if (our_player_away(target)) return false;
+    return g_can_smell(self, source, target, method);
+}
+
+// Animals after our player when they went into a room: they lose them (target cleared; one stalking, charging,
+// holding ground or sniffing them out goes back to wandering), checked twice a second while we're inside.
+void lose_player_inside() {
+    static double next = 0;
+    static int logged = 0;
+    if (!seamless_interiors::player_inside()) {
+        next = 0;
+        return;
+    }
+    const double t = static_cast<double>(GetTickCount64());
+    if (t < next || !api.ai_list || !api.clear_target || !api.set_mode) return;
+    next = t + 500;
+    Il2CppObject* mine = view().host_target;
+    if (!mine || g_stand_in.go) return;
+    Il2CppObject* list = nullptr;
+    il2::il2cpp_field_static_get_value(api.ai_list, &list);
+    if (!list) return;
+    Il2CppObject* items = il2::read_field<Il2CppObject*>(list, 0x10);
+    const int32_t count = il2::read_field<int32_t>(list, 0x18);
+    for (int32_t i = 0; items && i < count && static_cast<size_t>(i) < il2::array_length(items); ++i) {
+        Il2CppObject* ai = il2::array_object_at(items, static_cast<size_t>(i));
+        if (!ai || il2::read_field<Il2CppObject*>(ai, api.current_target) != mine) continue;
+        const int32_t mode = il2::read_field<int32_t>(ai, api.mode);
+        if (mode == kAiModeDead || mode == kAiModeStruggle) continue;
+        il2::invoke(api.clear_target, ai);
+        constexpr int32_t kStalking = 13, kInvestigate = 8, kInvestigateSmell = 10, kPassingAttack = 25;
+        if (mode == kAiModeAttack || mode == kStalking || mode == kAiModeHoldGround || mode == kInvestigate ||
+            mode == kInvestigateSmell || mode == kPassingAttack) {
+            int32_t wander = kAiModeWander;
+            void* args[] = {&wander};
+            il2::invoke(api.set_mode, ai, args);
+        }
+        g_hunts_friend.erase(reinterpret_cast<uintptr_t>(ai));
+        if (logged++ < 40) logx::info("wildlife: a %s lost the player (they went into a Seamless Interiors room; mode was %d)", kind_of(ai), mode);
+    }
+}
 
 template <typename Original>
 void think(Il2CppObject* self, const MethodInfo* method, Original original) {
@@ -810,6 +874,11 @@ bool init() {
     const MethodInfo* holding_spear = il2::find_method(ai_target, "HoldingRaisedSpear", 0);
     const MethodInfo* eye_pos = il2::find_method(ai_target, "GetEyePos", 0);
     api.eye_offset = il2::field_offset(ai_target, "m_EyeOffset");
+    if (Il2CppClass* ai_manager = il2::find_class(kGame, "", "BaseAiManager"))
+        api.ai_list = il2::il2cpp_class_get_field_from_name(ai_manager, "m_BaseAis");
+    const MethodInfo* distance_for =
+        il2::find_method_params(base_ai, "ComputeDistanceForTarget", {"UnityEngine.Vector3", "AiTarget"});
+    const MethodInfo* can_smell = il2::find_method_params(base_ai, "CanSmellSource", {"UnityEngine.Vector3", "AiTarget"});
     const bool ready = api.current_target >= 0 && api.player_target >= 0 && api.kind >= 0 && api.set_mode &&
                        api.component_transform && api.get_position && update && late_update && player_object &&
                        player_transform && begin && api.hp >= 0 && api.set_enabled && target_damage && wounds;
@@ -836,6 +905,11 @@ bool init() {
                        hook("AiTarget.HoldingLitFlare", holding_flare, &holding_lit_flare_detour, &g_holding_flare) &&
                        hook("AiTarget.HoldingRaisedSpear", holding_spear, &holding_raised_spear_detour,
                             &g_holding_spear);
+    // A7: our player inside a Seamless Interiors room is out of the animals' reach (sight and smell).
+    const bool rooms = distance_for && can_smell &&
+                       hook("BaseAi.ComputeDistanceForTarget", distance_for, &distance_for_detour, &g_distance_for) &&
+                       hook("BaseAi.CanSmellSource", can_smell, &can_smell_detour, &g_can_smell);
+    if (!rooms) logx::warn("wildlife targets: animals may still sense a player inside a Seamless Interiors room (TLD API missing)");
     if (!hands) logx::warn("wildlife targets: animals can't see what's in a friend's hands (TLD API missing)");
     logx::info("wildlife targets: %s", ok ? "ready (animals can hunt the other player)" : "PARTLY hooked");
     return ok;
@@ -925,6 +999,7 @@ void finish_fight(uint32_t id, Fight& f, const net::AttackResultMsg* result) {
 
 void on_frame() {
     ++g_frame;  // TLDCoop_DLC: the players' view (view()) is worked out again
+    lose_player_inside();  // A7
     // How their fights ended.
     std::vector<net::AttackResultMsg> results;
     netrt::drain_attack_results(results);

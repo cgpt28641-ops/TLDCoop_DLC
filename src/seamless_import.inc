@@ -30,7 +30,7 @@ struct IApi {
                   *t_container_proxy = nullptr, *t_rso_list = nullptr;
     // SceneSaveGameFormat
     ptrdiff_t s_gear = -1, s_containers = -1, s_fires = -1, s_rso = -1, s_water = -1, s_harvest = -1, s_open = -1,
-              s_breakdown = -1, s_placements = -1, s_curing = -1;
+              s_breakdown = -1, s_placements = -1, s_curing = -1, s_junk = -1;
     ptrdiff_t gl_items = -1, gd_prefab = -1, gd_text = -1, gp_pos = -1, gp_rot = -1;     // GearSaveList, GearItemSaveDataProxy
     ptrdiff_t cl_items = -1, cd_pos = -1, cd_prefab = -1, cd_text = -1, cp_items = -1, cp_decor = -1;  // containers
     ptrdiff_t rl_items = -1, rd_name = -1, rd_pos = -1;                                  // RandomSpawnObjectSaveList
@@ -198,9 +198,9 @@ int buildings_sharing_scene(const Instance& in) {  // SI: CountInstancesSharingS
     return n;
 }
 
-// The building's own record only: its door's instanced key, its door's guid, or (a scene no other building here uses)
-// the scene's name. Anything that merely looks like it (another building's instanced key) is not taken.
-bool resolve_key(Instance& in, std::string& key, std::string& why) {
+// The ids of the building's doors into its scene: on its shell, and (SI) the nearest such door within 60 m that isn't
+// a room's.
+std::vector<std::string> door_guids(Instance& in) {
     const std::string scene = in.cfg->scene;
     std::vector<std::string> guids;
     auto add_door = [&](Il2CppObject* door) {
@@ -225,27 +225,111 @@ bool resolve_key(Instance& in, std::string& key, std::string& why) {
         }
         if (best) add_door(best);
     }
-    auto listed = [&](const std::string& k) { return std::find(g_scene_keys.begin(), g_scene_keys.end(), k) != g_scene_keys.end(); };
+    return guids;
+}
+
+bool slot_listed(const std::string& k) { return std::find(g_scene_keys.begin(), g_scene_keys.end(), k) != g_scene_keys.end(); }
+
+// SI step 1: the record under one of its doors' ids ("<scene>_<guid>", or the bare guid).
+bool guid_key(const Instance& in, const std::vector<std::string>& guids, std::string& key) {
+    const std::string scene = in.cfg->scene;
     for (const std::string& g : guids) {
-        if (listed(scene + "_" + g)) {
+        if (slot_listed(scene + "_" + g)) {
             key = scene + "_" + g;
             return true;
         }
-        if (listed(g)) {
+        if (slot_listed(g)) {
             key = g;
             return true;
         }
     }
+    return false;
+}
+
+// The record a building imported earlier (its "<id>.imported" marker's key), "" for none.
+std::string marker_key(Instance& in) {
+    ensure_dir(in);
+    if (in.dir.empty()) return {};
+    const fs::path marker = building_file(in.dir, in, "imported");
+    if (!exists_preferred(marker)) return {};
+    const Records r = read_records(marker, "imported", 2);
+    return r.ok && !r.rows.empty() ? unesc(r.rows[0][0]) : std::string();
+}
+
+// A record's key in the "<scene>_<guid>" form (a bare guid gets the scene in front) for comparing claims.
+std::string claim_form(const Instance& in, const std::string& k) {
+    const std::string prefix = std::string(in.cfg->scene) + "_";
+    return k == in.cfg->scene || k.rfind(prefix, 0) == 0 ? k : prefix + k;
+}
+
+// The building's own record only: its door's instanced key, its door's guid, (A10, SI: FindLastUnclaimedInstancedKey)
+// the one instanced key of a shared scene left over once every other building sharing it has claimed its own or is
+// known never to have been visited, or (a scene no other building here uses) the scene's name. Never a record another
+// building claims (by its door or its import). `never_visited`: a building sharing its scene whose doors are known,
+// none of whose records exist, while every record of the scene is another's (it was never entered): a fresh room.
+bool resolve_key(Instance& in, std::string& key, std::string& why, bool* never_visited = nullptr) {
+    if (never_visited) *never_visited = false;
+    const std::string scene = in.cfg->scene;
+    const std::vector<std::string> guids = door_guids(in);
     const int sharing = buildings_sharing_scene(in);
-    if (sharing <= 1 && listed(scene)) {
-        key = scene;
+    // The other buildings of this scene: what each claims, and how many can't be told.
+    std::unordered_map<std::string, std::string> claimed;  // claim form -> building
+    int unresolved = 0;
+    std::string unresolved_ids;
+    if (sharing > 1)
+        for (Instance& o : g_instances) {
+            if (&o == &in || std::strcmp(o.cfg->scene, in.cfg->scene) != 0) continue;
+            std::string k = marker_key(o);
+            const std::vector<std::string> og = k.empty() ? door_guids(o) : std::vector<std::string>{};
+            if (k.empty() && !guid_key(o, og, k) && og.empty()) {
+                ++unresolved;
+                unresolved_ids += (unresolved_ids.empty() ? "" : ", ") + std::string(o.cfg->id);
+                continue;
+            }
+            if (!k.empty()) claimed[claim_form(in, k)] = o.cfg->id;
+        }
+    auto taken_by = [&](const std::string& k) -> std::string {
+        const auto it = claimed.find(claim_form(in, k));
+        return it == claimed.end() ? std::string() : it->second;
+    };
+    if (guid_key(in, guids, key)) {
+        if (const std::string other = taken_by(key); !other.empty()) {
+            why = "its door's record '" + key + "' is claimed by " + other + " too; neither takes it";
+            key.clear();
+            return false;
+        }
         return true;
     }
-    std::string alike;  // (not "near": a Windows macro)
+    if (sharing <= 1) {
+        if (slot_listed(scene)) {
+            key = scene;
+            return true;
+        }
+        why = "the save holds a record like its interior but none is surely this building's (" + std::to_string(guids.size()) +
+              " door id(s) of it)";
+        return false;
+    }
+    // A10: a shared scene. Its records that no other building claims:
+    std::vector<std::string> unclaimed;
     for (const std::string& k : g_scene_keys)
-        if (k == scene || k.rfind(scene + "_", 0) == 0) alike += (alike.empty() ? "'" : ", '") + k + "'";
-    why = "the save holds " + (alike.empty() ? std::string("a record like its interior") : alike) + " but none is surely this building's (" +
-          std::to_string(guids.size()) + " door id(s) of it, " + std::to_string(sharing) + " building(s) here use the scene)";
+        if (k.rfind(scene + "_", 0) == 0 && taken_by(k).empty()) unclaimed.push_back(k);
+    const bool plain = slot_listed(scene);  // the scene's own name: whose can't be told with several buildings
+    if (guids.empty() && unresolved == 0 && unclaimed.size() == 1 && !plain) {
+        key = unclaimed.front();
+        logx::info("interiors: %s: its door's id wasn't found; '%s' is the one record of %s left over once the other %d "
+                   "building(s) were paired (SI: last unclaimed key)", in.cfg->id, key.c_str(), in.cfg->scene, sharing - 1);
+        return true;
+    }
+    if (!guids.empty() && unclaimed.empty() && !plain && unresolved == 0) {
+        if (never_visited) *never_visited = true;
+        why = "never entered (its door's records aren't in the save; every record of " + scene + " is another building's)";
+        return false;
+    }
+    std::string left;
+    for (const std::string& k : unclaimed) left += (left.empty() ? "'" : ", '") + k + "'";
+    why = std::to_string(sharing) + " buildings here use " + scene + "; this one's door id(s) (" + std::to_string(guids.size()) +
+          ") match no record; unclaimed: " + (left.empty() ? std::string("none") : left) + (plain ? " (and the plain '" + scene + "')" : "") +
+          (unresolved ? "; can't tell for " + unresolved_ids : "") + "; not guessing (ambiguous: the game's door)";
     return false;
 }
 
@@ -445,6 +529,8 @@ bool prepare_import(Instance& in, std::string& why) {
     // fires still burning in it (SI: TranscodeFires; the building's file is where 1b looks first)
     std::unordered_map<std::string, std::string> fires;
     parse_fire_records(field_text(fmt, iapi.s_fires), fires);
+    if (iapi.s_junk >= 0 && get<bool>(fmt, iapi.s_junk) && used.insert("JK|cleared").second)  // A11: its junk cleared
+        d->state.push_back(esc("JK|cleared") + "\t" + esc("1"));
     for (const auto& [g, payload] : fires)
         if (used.insert("FI|" + g).second) {
             d->state.push_back(esc("FI|" + g) + "\t" + esc(payload));
@@ -730,6 +816,17 @@ bool old_save_gate(Instance& in, std::string& why) {
     }
     std::string key;
     if (!has_vanilla_data(in, key)) return true;
+    if (!g_scene_keys_failed && buildings_sharing_scene(in) > 1) {  // A10: which of the scene's records, if any, is ours
+        std::string own, err;
+        bool never = false;
+        if (resolve_key(in, own, err, &never)) {
+            key = own;
+        } else if (never) {  // (our files, if any, are then the only record of it)
+            logx::info("interiors: %s: shares %s with other buildings and was %s: %s", in.cfg->id, in.cfg->scene, err.c_str(),
+                       in.has_data ? "its room from our files" : "a fresh room");
+            return true;
+        }
+    }
     if (in.has_data && recover_import_marker(in, key, why)) return true;
     if (g_scene_keys_failed) {
         why = "the save slot's records can't be listed";
@@ -773,6 +870,7 @@ void resolve_import() {
     iapi.s_breakdown = off(scene, "m_BreakDownObjectsSerialized");
     iapi.s_placements = off(scene, "m_PlacementListSerialized");
     iapi.s_curing = off(scene, "m_CuringStorageSerialized");
+    iapi.s_junk = off(scene, "m_JunkManagedSerialized");  // JunkManagerSaveData (a struct: its bool first)
     Il2CppClass* gl = il2::find_class(kGame, "", "GearSaveList");
     Il2CppClass* gd = il2::find_class(kGame, "", "GearSaveData");
     Il2CppClass* gp = il2::find_class(kGame, "", "GearItemSaveDataProxy");

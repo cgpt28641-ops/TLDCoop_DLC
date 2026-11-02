@@ -1301,6 +1301,183 @@ bool record_burning(const std::string& payload) {
     return !st.empty() && st != "Off" && st != "Blownout";
 }
 
+// --- A11: the safehouse "clear junk" in rooms (SI: Junk.cs + SafehouseFixes.cs #22/#37/#38) ----------------------------
+// TLD keeps ONE "junk cleared" flag (JunkManager.m_ClearedJunk), saved with the scene, and ClearJunk switches off every
+// JunkTag of every loaded scene. With the rooms in the region scene: while the player customizes inside a room the flag
+// holds that room's state (the region's own value comes back when they stop, and around every scene save); around
+// ClearJunk, junk the call had no business touching is switched back on (only the room being customized is cleared, a
+// region's own clear takes no room's); each room keeps its state in its .state file ("JK|cleared").
+struct JunkApi {
+    const MethodInfo *get_jm = nullptr, *get_sm = nullptr, *is_customizing = nullptr, *restore_busy = nullptr,
+                     *scene_restore_busy = nullptr, *find_all = nullptr;
+    ptrdiff_t cleared = -1;
+    Il2CppObject* t_junk = nullptr;
+    bool ok = false;
+} japi;
+Instance* g_junk_owner = nullptr;  // SI: s_JunkFlagOwner: the room whose state m_ClearedJunk holds now
+bool g_region_junk = false;        // SI: s_RegionJunkCleared
+double g_junk_recheck = 0;
+struct JunkBefore {
+    uintptr_t go = 0;
+    Instance* in = nullptr;
+};
+std::vector<JunkBefore> g_junk_before;
+Instance* instance_of_tf(Il2CppObject* t);
+template <typename Fn>
+bool hook1b(const char* label, const MethodInfo* m, Fn detour, Fn* original);
+
+Il2CppObject* junk_manager() { return japi.ok ? il2::invoke(japi.get_jm, nullptr) : nullptr; }
+bool plain_junk(Il2CppObject* tag) {  // SI: IsPlainJunk
+    Il2CppObject* go = go_of(tag);
+    if (!go || component(go, api.t_placeable)) return false;
+    return in_parent(tag, api.t_gear) == nullptr;
+}
+int clear_junk_in(Instance& in) {  // SI: ClearJunkInInstance
+    int n = 0;
+    if (japi.ok && master_of(in))
+        each_in(master_of(in), japi.t_junk, [&](Il2CppObject* tag) {
+            Il2CppObject* go = go_of(tag);
+            if (!plain_junk(tag) || !active_self(go)) return;
+            set_active(go, false);
+            in.junk_off.push_back(hold(go));
+            ++n;
+        });
+    in.junk_cleared = true;
+    return n;
+}
+int restore_junk_in(Instance& in) {  // SI: RestoreJunkInInstance
+    int n = 0;
+    for (uintptr_t& h : in.junk_off) {
+        if (Il2CppObject* go = live(h); go && !active_self(go)) {
+            set_active(go, true);
+            ++n;
+        }
+        drop(h);
+    }
+    in.junk_off.clear();
+    in.junk_cleared = false;
+    return n;
+}
+void begin_junk_view(Instance& in) {
+    if (g_junk_owner == &in) return;
+    end_junk_view();
+    Il2CppObject* jm = junk_manager();
+    if (!jm) return;
+    g_region_junk = get<bool>(jm, japi.cleared);
+    g_junk_owner = &in;
+    put<bool>(jm, japi.cleared, in.junk_cleared);
+    logx::info("interiors: %s: customizing; the junk flag is the room's (%s; the region's %s)", in.cfg->id,
+               in.junk_cleared ? "cleared" : "not cleared", g_region_junk ? "cleared" : "not cleared");
+}
+void end_junk_view() {
+    if (!g_junk_owner) return;
+    if (Il2CppObject* jm = junk_manager()) put<bool>(jm, japi.cleared, g_region_junk);
+    g_junk_owner = nullptr;
+}
+bool customizing() {
+    if (!japi.ok) return false;
+    Il2CppObject* sm = il2::invoke(japi.get_sm, nullptr);
+    bool on = false;
+    return sm && il2::invoke_value(japi.is_customizing, sm, on) && on;
+}
+Instance* junk_room_now() { return g_inside && in_room(g_inside) && g_inside->hydrated ? g_inside : nullptr; }
+void tick_junk_view() {  // SI: TickJunkFlagView
+    if (!japi.ok) return;
+    if (!g_junk_owner && !g_inside) return;  // (nearly always: nothing to do)
+    if (!customizing()) {
+        end_junk_view();
+        return;
+    }
+    if (now_ms() < g_junk_recheck) return;
+    g_junk_recheck = now_ms() + 500;
+    Instance* inside = junk_room_now();
+    if (inside == g_junk_owner) return;
+    end_junk_view();
+    if (inside) begin_junk_view(*inside);
+}
+VoidFn g_start_customizing = nullptr;
+void start_customizing_detour(Il2CppObject* self, const MethodInfo* method) {  // SI #37: the "R" prompt is decided in it
+    if (engaged())
+        if (Instance* in = junk_room_now()) {
+            begin_junk_view(*in);
+            g_junk_recheck = now_ms() + 500;
+        }
+    g_start_customizing(self, method);
+}
+VoidFn g_clear_junk = nullptr;
+void clear_junk_detour(Il2CppObject* self, const MethodInfo* method) {  // SI #38
+    if (!engaged() || g_instances.empty() || !japi.find_all) return g_clear_junk(self, method);
+    g_junk_before.clear();
+    {
+        bool inactive = true;
+        void* a[] = {japi.t_junk, &inactive};
+        Il2CppObject* all = il2::invoke(japi.find_all, nullptr, a);
+        for (size_t i = 0, n = all ? il2::array_length(all) : 0; i < n; ++i) {
+            Il2CppObject* tag = il2::array_object_at(all, i);
+            Il2CppObject* go = go_of(tag);
+            if (!go || !active_self(go)) continue;
+            g_junk_before.push_back({hold(go), is_clone_object(tag) ? instance_of_tf(tf_of(tag)) : nullptr});
+        }
+    }
+    g_clear_junk(self, method);
+    Instance* target = g_junk_owner;
+    bool restoring = false;
+    if ((japi.restore_busy && il2::invoke_value(japi.restore_busy, nullptr, restoring) && restoring) ||
+        (japi.scene_restore_busy && il2::invoke_value(japi.scene_restore_busy, nullptr, restoring) && restoring))
+        target = nullptr;  // LoadSceneData putting the region's saved flag back: the region's clear
+    int here = 0, back = 0;
+    for (JunkBefore& b : g_junk_before) {
+        Il2CppObject* go = live(b.go);
+        if (go && !active_self(go)) {
+            if (!b.in) {
+                if (target) {
+                    set_active(go, true);  // the region's junk: not a room's clear
+                    ++back;
+                }
+            } else if (b.in == target) {
+                target->junk_off.push_back(b.go);
+                b.go = 0;
+                ++here;
+            } else {
+                set_active(go, true);  // another room's (or any room's, for the region's clear)
+                ++back;
+            }
+        }
+        drop(b.go);
+    }
+    g_junk_before.clear();
+    if (target) {
+        here += clear_junk_in(*target);
+        logx::info("interiors: %s: junk cleared (%d object(s)); %d switched back on elsewhere", target->cfg->id, here, back);
+    } else if (back) {
+        logx::info("interiors: the game's junk clear reached %d object(s) of the rooms; switched back on (each room keeps its own)", back);
+    }
+}
+void resolve_junk() {
+    Il2CppClass* gm = il2::find_class(kGame, "", "GameManager");
+    Il2CppClass* jm = il2::find_class(kGame, "", "JunkManager");
+    Il2CppClass* sm = il2::find_class(kGame, "", "SafehouseManager");
+    Il2CppClass* saves = il2::find_class(kGame, "", "SaveGameSystem");
+    Il2CppClass* object = il2::find_class(kCore, "UnityEngine", "Object");
+    japi.get_jm = gm ? il2::find_method(gm, "GetJunkManager", 0) : nullptr;
+    japi.get_sm = gm ? il2::find_method(gm, "GetSafehouseManager", 0) : nullptr;
+    japi.is_customizing = sm ? il2::find_method(sm, "IsCustomizing", 0) : nullptr;
+    japi.restore_busy = saves ? il2::find_method(saves, "IsRestoreInProgress", 0) : nullptr;
+    japi.scene_restore_busy = saves ? il2::find_method(saves, "IsSceneRestoreInProgress", 0) : nullptr;
+    japi.find_all = object ? il2::find_method_params(object, "FindObjectsOfType", {"System.Type", "System.Boolean"}) : nullptr;
+    japi.cleared = jm ? il2::field_offset(jm, "m_ClearedJunk") : -1;
+    Il2CppClass* junk_tag = il2::find_class(kGame, "", "JunkTag");
+    japi.t_junk = junk_tag ? il2::type_object(junk_tag) : nullptr;
+    japi.ok = japi.get_jm && japi.get_sm && japi.is_customizing && japi.cleared >= 0 && japi.t_junk;
+    if (!japi.ok) {
+        logx::info("interiors: JunkManager/SafehouseManager API missing: rooms' junk isn't cleared on its own");
+        return;
+    }
+    if (sm) hook1b("SafehouseManager.StartCustomizing", il2::find_method(sm, "StartCustomizing", 0), &start_customizing_detour,
+                   &g_start_customizing);
+    if (jm) hook1b("JunkManager.ClearJunk", il2::find_method(jm, "ClearJunk", 0), &clear_junk_detour, &g_clear_junk);
+}
+
 // SI: SaveInteractiveState (+ the room's fires: the port keeps them in the building's file as well as in the region's
 // save, because a room is built only when the player comes near: a save made before that would lose them otherwise).
 bool save_state(Instance& in) {
@@ -1324,6 +1501,8 @@ bool save_state(Instance& in) {
         if (s.empty() || !used.insert("FI|" + key).second) return;
         lines.push_back(esc("FI|" + key) + "\t" + esc(s));
     });
+    if (in.junk_cleared && used.insert("JK|cleared").second) lines.push_back(esc("JK|cleared") + "\t" + esc("1"));  // A11
+    used.insert("JK|cleared");  // (an older "JK|cleared" among the orphans isn't written back)
     for (const std::string& o : in.orphan_state)
         if (const auto f = split_fields(o); !f.empty() && !used.count(unesc(f[0]))) lines.push_back(o);
     return write_staged(building_file(in.dir, in, "state"), file_text("state", lines));
@@ -1810,6 +1989,15 @@ void restore_state(Instance& in) {
         if (key.rfind("FI|", 0) == 0) {
             in.state_fires[key.substr(3)] = d;
             used.insert(key);
+        }
+        if (key == "JK|cleared") {  // A11 (SI: RestoreJunkState)
+            used.insert(key);
+            if (d == "1") {
+                const int n = clear_junk_in(in);
+                logx::info("interiors: %s: its junk was cleared (%d object(s) switched off)", in.cfg->id, n);
+                if (g_junk_owner == &in)
+                    if (Il2CppObject* jm = junk_manager()) put<bool>(jm, japi.cleared, true);
+            }
         }
         if (!used.count(key)) in.orphan_state.push_back(raw[key]);
     }
@@ -2493,7 +2681,18 @@ void save_scene_detour(Il2CppObject* slot, Il2CppString* scene, const MethodInfo
         const fs::path dir = dir_for(game::save_id());
         if (!dir.empty()) adopt_before_save(dir);
     }
-    g_save_scene(slot, scene, method);
+    // A11 (SI #22): the scene's save writes the REGION's junk flag, never a room's
+    Il2CppObject* jm = g_junk_owner ? junk_manager() : nullptr;
+    if (jm) put<bool>(jm, japi.cleared, g_region_junk);
+    {
+        struct Back {  // (put back however the call ends)
+            Il2CppObject* jm;
+            ~Back() {
+                if (jm && g_junk_owner) put<bool>(jm, japi.cleared, g_junk_owner->junk_cleared);
+            }
+        } back{jm};
+        g_save_scene(slot, scene, method);
+    }
     if (on) save_rooms(scene ? il2::to_utf8(scene).c_str() : "?");
 }
 
@@ -2811,6 +3010,7 @@ void resolve_persist() {
         hook1b("SaveGameSystem.DeleteSaveFiles", il2::find_method_params(saves, "DeleteSaveFiles", {"System.String"}),
                &delete_save_detour, &g_delete_save);
     }
+    resolve_junk();  // A11
     if (Il2CppClass* fm = il2::find_class(kGame, "", "FireManager"))
         hook1b("FireManager.Deserialize", il2::find_method_params(fm, "Deserialize", {"System.String"}), &fire_load_detour, &g_fire_load);
     papi.ok = g_save_scene != nullptr;

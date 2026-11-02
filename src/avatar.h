@@ -66,6 +66,7 @@ struct Seen {
     bool dead = false;
     std::string scene;     // the scene they're in (when playing)
     std::string place;     // TLDCoop_DLC: the Seamless Interiors building they're inside ("" outdoors)
+    bool at_door = false;  // A6: inside a room we aren't in (same scene): x, y, z are its building's door (markers only)
     float x = 0, y = 0, z = 0;  // their feet, world space
     float yaw = 0;              // which way they face (Unity's yaw)
     float at_x = 0, at_z = 0;   // where their latest state has them (not where a handover draws them)

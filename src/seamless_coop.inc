@@ -324,6 +324,27 @@ std::string place() {
     return g_inside->cfg->id;
 }
 
+bool door_position(const std::string& id, float& x, float& y, float& z) {
+    const Config* c = nullptr;
+    for (int i = 0; i < kConfigCount && !c; ++i)
+        if (id == kConfigs[i].id) c = &kConfigs[i];
+    for (int hops = 0; c && !*c->shell && hops < 4; ++hops) {  // a sub-interior: the building it's reached from
+        const Config* parent = nullptr;
+        for (int i = 0; i < kConfigCount && !parent; ++i)
+            for (int l = 0; l < kConfigs[i].links_count; ++l)
+                if (std::strcmp(kLinks[kConfigs[i].links_first + l].target, c->id) == 0) parent = &kConfigs[i];
+        if (!parent) break;
+        c = parent;
+    }
+    if (!c) return false;
+    const V3 door = door_of_unbuilt(*c);
+    if (is_zero(door)) return false;
+    x = door.x;
+    y = door.y;
+    z = door.z;
+    return true;
+}
+
 std::string place_scene(const std::string& id) {
     for (int i = 0; i < kConfigCount; ++i)
         if (id == kConfigs[i].id) return kConfigs[i].scene;

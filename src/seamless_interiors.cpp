@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "coop_features.h"
+#include "coop_notices.h"
 #include "game_state.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
@@ -713,6 +714,9 @@ struct Instance {
     int closed_logged = 0;
     // milestone 2 (seamless_coop.inc)
     bool coop_friend = false;  // built in a friend's game: no files of ours (the host's game has the room's contents)
+    // A11 (SI: Junk.cs): the safehouse "clear junk" of this building (kept in its .state file as "JK|cleared")
+    bool junk_cleared = false;
+    std::vector<uintptr_t> junk_off;  // the junk it switched off (switched back on if a load says it wasn't cleared)
 };
 std::vector<Instance> g_instances;
 std::string g_region;               // the region these instances belong to
@@ -801,6 +805,7 @@ std::vector<DeferredGear> g_deferred_gear;
 
 // Milestone 1b, in seamless_persist.inc (included further down).
 int adopt_strays(Instance& in, const char* why);
+void end_junk_view();
 int purge_leaked(Instance& in);
 int stabilize_guids(Instance& in);
 bool decide_loot(Instance& in);
@@ -3010,6 +3015,34 @@ ActivateFn g_activate = nullptr;
 // co-op join, a respawn): TLD takes the scene's items away just before, which world_items mustn't tell as destroyed.
 using LoadScreenFn = void (*)(Il2CppString* scene, const MethodInfo* method);
 LoadScreenFn g_load_screen = nullptr;
+// A12: a door that waits for its room tells the player so on TLD's HUD (at most every 6 s), and once the room it
+// waited for is up, that it is ready. Polish, as the rest of the mod's in-game lines for Karol's group.
+std::string g_waited_for;  // the building a door waited for ("" none)
+double g_waited_since = 0;
+void tell_preparing(const char* building) {
+    static double told_at = -1e18;
+    if (now_ms() - told_at > 6000) {
+        told_at = now_ms();
+        coop_notices::tell("Przygotowuj\xC4\x99 budynek...");
+    }
+    if (building && *building) {
+        g_waited_for = building;
+        g_waited_since = now_ms();
+    }
+}
+void tick_waited() {
+    if (g_waited_for.empty()) return;
+    const Instance* in = find_instance(g_waited_for.c_str());
+    if (!in || now_ms() - g_waited_since > 120000 || in->stage == Stage::Vanilla) {
+        g_waited_for.clear();
+        return;
+    }
+    if (in->stage == Stage::Ready && in->hydrated) {
+        coop_notices::tell("Budynek gotowy");
+        g_waited_for.clear();
+    }
+}
+
 void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
     world_items::door_used();
     // The game loads one of those interiors as its own scene now: a late load of it given up on is no longer told from
@@ -3031,7 +3064,7 @@ void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
 // A vanilla door to an interior whose scene we are loading right now (for a room, or a late load given up on) or whose
 // building's room is being built: the game's own load of that scene would wake its GameManager while ours treats the
 // scene as a template (skip_game_manager_awake would destroy the real one). Blocked until it's over (SI: PORTAL-BLOCK).
-bool door_scene_busy(Il2CppObject* door, std::string& what) {
+bool door_scene_busy(Il2CppObject* door, std::string& what, std::string* building = nullptr) {
     const std::string to = door_scene(door);
     if (to.empty()) return false;
     const std::string base = interior_base(to);
@@ -3046,6 +3079,7 @@ bool door_scene_busy(Il2CppObject* door, std::string& what) {
     if (g_building && base == g_building->cfg->scene && g_building->stage != Stage::Ready &&
         g_building->stage != Stage::Vanilla && g_building->stage != Stage::Idle) {
         what = std::string(g_building->cfg->id) + " (its room is being built)";
+        if (building) *building = g_building->cfg->id;
         return true;
     }
     return false;
@@ -3053,8 +3087,9 @@ bool door_scene_busy(Il2CppObject* door, std::string& what) {
 
 void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* method) {
     if (!self) return g_activate(self, immediately, method);
-    std::string busy;
-    if (api.ok && door_scene_busy(self, busy)) {  // (also with the feature off: a late load may still be coming in)
+    std::string busy, busy_building;
+    if (api.ok && door_scene_busy(self, busy, &busy_building)) {  // (also with the feature off: a late load may still be coming in)
+        tell_preparing(busy_building.c_str());  // A12
         static double told_at = -1e18;
         if (now_ms() - told_at > 2000) logx::info("interiors: [PORTAL-BLOCK] %s isn't ready yet; the door waits", busy.c_str());
         told_at = now_ms();
@@ -3074,6 +3109,7 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
                 logx::info("interiors: %s: the host's game has this room and ours isn't built yet; the door waits for it",
                            wait->cfg->id);
             if (wait->stage == Stage::Idle) g_urgent = wait;
+            tell_preparing(wait->cfg->id);  // A12
             return;
         }
         if (Instance* wait = unready_with_data(self)) {  // milestone 1b: its room holds the player's things
@@ -3081,6 +3117,7 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
             if (told++ < 20)
                 logx::info("interiors: %s: its room isn't built yet and has saved contents; the door waits for it", wait->cfg->id);
             if (wait->stage == Stage::Idle) g_urgent = wait;
+            tell_preparing(wait->cfg->id);  // A12
             return;
         }
         static int logged = 0;
@@ -3679,6 +3716,7 @@ void forget_region(const char* why) {
         g_entered_space_of = nullptr;
         drop(g_entered_space);
     }
+    end_junk_view();  // A11: the region's own "junk cleared" flag back before the next scene's restore
     reset_occlusion_counters(why);
     flush_deferred_gear();
     if (g_fade.busy) fade(false, 0);
@@ -3852,8 +3890,10 @@ void on_frame(const std::string& scene, bool in_game) {
     tick_hold();
     pick_building();
     tick_fade();
+    tick_waited();  // A12
     tick_closed_time();
     tick_carried_guard();
+    tick_junk_view();  // A11
     tick_doorless_exit();
     sync_indoor_space();
     tick_capsule();

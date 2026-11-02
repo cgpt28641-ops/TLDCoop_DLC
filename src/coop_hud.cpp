@@ -1259,7 +1259,7 @@ float show_radar(const std::vector<avatar::Seen>& all, const game::PlayerState& 
         b.state.clear();
     }
     for (const avatar::Seen& who : all) {
-        if (!who.here || who.dead) continue;
+        if (!(who.here || who.at_door) || who.dead) continue;  // A6: one in a room: at its door
         hud::V2 there, their_ahead;
         const hud::V2 tf = hud::yaw_forward(who.yaw);
         if (!plane({who.x, who.y, who.z}, there) ||
@@ -1319,12 +1319,90 @@ std::string shown_region(Il2CppObject* map) {
     return name ? il2::to_utf8(reinterpret_cast<Il2CppString*>(name)) : std::string();
 }
 
+// TLDCoop_DLC (A6+): on TLD's map (M) every player is a dot in their own colour (the radar's), ours too, with a small
+// legend in the map's top-left corner (colour -> name; "TY" for us) instead of names on the map: the names landed away
+// from the players. A player inside a Seamless Interiors room is a dot at its building's door. The dots go under
+// MapElements (they pan and zoom with the map) at Panel_Map.WorldPositionToMapPosition, lined up with TLD's own player
+// icon when it shows (its spot minus ours from the same call: any shift between the two is taken out; logged once per
+// opening of the map).
+constexpr int kMapDotSize = 14, kLegendFont = 14;
+constexpr uint8_t kSelfMark = 255;  // g_marks key of our own dot
+
+struct LegendRow {
+    uintptr_t dot = 0, label = 0;
+    std::string text;
+};
+std::vector<LegendRow> g_legend;
+bool g_map_logged = false;  // this opening of the map was logged
+
+void hide_legend() {
+    for (LegendRow& r : g_legend) {
+        set_active(go_of(live(r.dot)), false);
+        set_active(go_of(live(r.label)), false);
+    }
+}
+
+void show_legend(Il2CppObject* map, const std::vector<std::pair<Color, std::string>>& rows) {
+    Il2CppObject* ui_camera = il2::invoke(api.ui_camera, nullptr);
+    Il2CppObject* parent = transform_of(map);
+    const float height = static_cast<float>(screen_size(api.screen_height));
+    if (!alive(ui_camera) || !parent || height < 1) {
+        hide_legend();
+        return;
+    }
+    float units_a_pixel = 0;
+    void* args[] = {go_of(map)};
+    if (!api.pixel_adjustment || !il2::invoke_value(api.pixel_adjustment, nullptr, units_a_pixel, args) || units_a_pixel <= 0)
+        units_a_pixel = 720.0f / height;
+    const float px = 1.0f / units_a_pixel;
+    const float left = 24 * px, top = height - 24 * px, line = (kLegendFont + 8) * px;
+    while (g_legend.size() < rows.size() + 1) g_legend.emplace_back();
+    for (size_t i = 0; i < g_legend.size(); ++i) {
+        LegendRow& r = g_legend[i];
+        const bool used = i <= rows.size();
+        if (!used) {
+            set_active(go_of(live(r.dot)), false);
+            set_active(go_of(live(r.label)), false);
+            continue;
+        }
+        if (!live(r.label)) {
+            drop(r.label);
+            r.label = hold(make_label(parent, "TLDCoop_Legend" + std::to_string(i), kLegendFont, kPivotLeft));
+            r.text.clear();
+            if (Il2CppObject* l = live(r.label)) set_int(api.widget_set_depth, l, 200);
+        }
+        const bool header = i == 0;
+        if (!header && !live(r.dot)) {
+            drop(r.dot);
+            r.dot = hold(make_sprite(parent, "TLDCoop_LegendDot" + std::to_string(i), "crosshair4", kMapDotSize));
+            if (Il2CppObject* d = live(r.dot)) set_int(api.widget_set_depth, d, 200);
+        }
+        Il2CppObject* label = live(r.label);
+        Il2CppObject* dot = header ? nullptr : live(r.dot);
+        const float y = top - line * static_cast<float>(i);
+        const std::string text = header ? std::string("GRACZE") : rows[i - 1].second;
+        if (label) {
+            set_active(go_of(label), true);
+            if (text != r.text) set_text(label, r.text = text);
+            set_color(label, header ? g_text_color : rows[i - 1].first);
+            place_on_screen(transform_of(label), ui_camera, left + (header ? 0 : 20 * px), y);
+        }
+        if (dot) {
+            set_active(go_of(dot), true);
+            set_color(dot, rows[i - 1].first);
+            place_on_screen(transform_of(dot), ui_camera, left + 6 * px, y);
+        }
+    }
+}
+
 void hide_marks() {
     for (auto& [id, m] : g_marks) {
         set_active(go_of(live(m.icon)), false);
         set_active(go_of(live(m.label)), false);
         m.state = "hidden";
     }
+    hide_legend();
+    g_map_logged = false;
 }
 
 // TLDCoop_DLC: TLD's open map draws what's charted when it opens; what friends (and we) chart while it's open is
@@ -1348,7 +1426,7 @@ void refresh_open_map(Il2CppObject* map, const std::string& shown) {
     g_open_map_spots = count;
 }
 
-void show_map_marks(const std::vector<avatar::Seen>& all) {
+void show_map_marks(const std::vector<avatar::Seen>& all, const game::PlayerState& me) {
     Il2CppObject* map = g_map_ready ? live(g_map) : nullptr;  // loaded already (it is, once the map has opened)
     if (!map_open(map)) {
         hide_marks();
@@ -1358,8 +1436,6 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
     refresh_open_map(map, shown_region(map));
     Il2CppObject* elements = get<Il2CppObject*>(map, api.map_elements);
     Il2CppObject* player_icon = get<Il2CppObject*>(map, api.map_player_icon);
-    void* sprite_args[] = {api.sprite_type};
-    Il2CppObject* icon_sprite = alive(player_icon) ? il2::invoke(api.get_component, go_of(player_icon), sprite_args) : nullptr;
     const std::string shown = shown_region(map);
     const Region& region = region_now();
     // TLDCoop_DLC: the region's name as a managed string, made once per region shown (not per friend per frame)
@@ -1370,70 +1446,118 @@ void show_map_marks(const std::vector<avatar::Seen>& all) {
         key_handle = il2::il2cpp_gchandle_new(reinterpret_cast<Il2CppObject*>(il2::il2cpp_string_new(shown.c_str())), false);
         key_for = shown;
     }
-    // MapElements zooms by its scale: the names keep their size against it (the arrows zoom as TLD's own icons do).
-    Vector3 zoom{1, 1, 1};
-    il2::invoke_value(api.get_local_scale, elements, zoom);
-    const Vector3 unzoom{zoom.x > 0.01f ? 1 / zoom.x : 1, zoom.y > 0.01f ? 1 / zoom.y : 1, 1};
-    for (auto& [id, m] : g_marks) m.state = "not on this map";
-    for (const avatar::Seen& who : all) {
-        MapMark& m = g_marks[who.player];
-        // Their position is in the shown region's world: they're outdoors with us there, or in its own scene.
-        const bool there = who.playing && !who.dead && !shown.empty() &&
-                           ((who.here && region.mappable && region.name == shown) || who.scene == shown);
-        if (!there || !alive(elements)) {
-            set_active(go_of(live(m.icon)), false);
-            set_active(go_of(live(m.label)), false);
-            m.state = "not on this map";
-            continue;
+    Il2CppObject* key = il2::il2cpp_gchandle_get_target(key_handle);
+    auto to_map_pos = [&](float x, float y, float z, Vector3& out) {
+        Vector3 at{x, y, z};
+        void* args[] = {key, &at};
+        return il2::invoke_value(api.map_to_map, map, out, args);
+    };
+    const bool our_region = !shown.empty() && region.mappable && region.name == shown;
+    const std::string our_place = seamless_interiors::place();
+
+    // The shift between WorldPositionToMapPosition and where TLD really draws its own player icon (MapElements' space).
+    static Vector3 shift{0, 0, 0};
+    static std::string shift_for;
+    if (shift_for != shown) {
+        shift = {0, 0, 0};
+        shift_for = shown;
+    }
+    Vector3 icon_at{}, mine{};
+    bool icon_seen = false;
+    if (our_region && me.valid && our_place.empty() && alive(player_icon) && alive(elements) &&
+        active(go_of(player_icon)) && api.get_world_position && api.inverse_point) {
+        Vector3 world{};
+        if (il2::invoke_value(api.get_world_position, player_icon, world)) {
+            void* args[] = {&world};
+            if (il2::invoke_value(api.inverse_point, elements, icon_at, args) &&
+                to_map_pos(me.position.x, me.position.y, me.position.z, mine)) {
+                icon_seen = true;
+                const Vector3 d{icon_at.x - mine.x, icon_at.y - mine.y, 0};
+                if (std::fabs(d.x) < 4000 && std::fabs(d.y) < 4000) shift = d;
+            }
         }
+    }
+
+    struct Dot {
+        uint8_t key;
+        Color colour;
+        std::string name;
+        float x, y, z;
+        const char* where;
+    };
+    std::vector<Dot> dots;
+    const uint8_t self_id = netrt::status().self_id;
+    if (our_region && me.valid) {
+        Dot d{kSelfMark, colour_for(self_id, ""), "TY", me.position.x, me.position.y, me.position.z, "here"};
+        float x = 0, y = 0, z = 0;
+        if (!our_place.empty() && seamless_interiors::door_position(our_place, x, y, z)) {
+            d.x = x, d.y = y, d.z = z;
+            d.where = "at the door of our room's building";
+        }
+        dots.push_back(d);
+    }
+    for (const avatar::Seen& who : all) {
+        if (!who.playing || who.dead || shown.empty()) continue;
+        // Their position is in the shown region's world: outdoors with us there, at their room's door, or in its scene.
+        if (!((who.here && our_region) || who.at_door || who.scene == shown)) continue;
+        Dot d{who.player, colour_for(who.player, who.name), upper(who.name), who.x, who.y, who.z, "seen"};
+        float x = 0, y = 0, z = 0;
+        if (!who.place.empty() && seamless_interiors::door_position(who.place, x, y, z)) {
+            d.x = x, d.y = y, d.z = z;
+            d.where = "at the door of their room's building";
+        }
+        dots.push_back(d);
+    }
+
+    for (auto& [id, m] : g_marks) m.state = "not on this map";
+    std::vector<std::pair<Color, std::string>> legend;
+    std::string log_line;
+    for (const Dot& d : dots) {
+        MapMark& m = g_marks[d.key];
+        if (!alive(elements)) break;
+        set_active(go_of(live(m.label)), false);  // (names only in the legend now)
         if (!live(m.icon)) {
             drop(m.icon);
-            Il2CppObject* icon = clone_under(icon_sprite, elements, "TLDCoop_Friend" + std::to_string(who.player));
-            // TLDCoop_DLC: TLD's own arrow is switched off when the game doesn't show the player on the map (the
-            // copy was too: names, no arrows); ours on, and TLD's map arrow sprite from its atlas if there's no copy.
-            if (!icon) icon = make_sprite(elements, "TLDCoop_Friend" + std::to_string(who.player), "ico_map_directional", 24);
-            if (icon && api.behaviour_set_enabled) {
-                bool on = true;
-                void* a[] = {&on};
-                il2::invoke(api.behaviour_set_enabled, icon, a);
-            }
-            set_color(icon, kFriendColor);
+            Il2CppObject* icon = make_sprite(elements, "TLDCoop_MapDot" + std::to_string(d.key), "crosshair4", kMapDotSize);
+            if (icon) set_int(api.widget_set_depth, icon, 100);
             m.icon = hold(icon);
-            logx::info("hud: map arrow for player %u made (%s)", who.player, icon ? "TLD's map arrow" : "none");
-        }
-        if (!live(m.label)) {
-            drop(m.label);
-            m.label = hold(make_label(elements, "TLDCoop_FriendName" + std::to_string(who.player), kMarkFont, kPivotLeft));
-            m.shown_name.clear();
+            logx::info("hud: map dot for %s made (%s)", d.name.c_str(), icon ? "ok" : "none");
         }
         Il2CppObject* icon = live(m.icon);
-        Il2CppObject* label = live(m.label);
-        set_color(icon, colour_for(who.player, who.name));
-        Il2CppObject* key = il2::il2cpp_gchandle_get_target(key_handle);
-        const hud::V2 f = hud::yaw_forward(who.yaw);
-        Vector3 at{who.x, who.y, who.z}, ahead{who.x + f.x * 10, who.y, who.z + f.y * 10}, mp{}, mp_ahead{};
-        void* at_args[] = {key, &at};
-        void* ahead_args[] = {key, &ahead};
-        if (!il2::invoke_value(api.map_to_map, map, mp, at_args) || !il2::invoke_value(api.map_to_map, map, mp_ahead, ahead_args))
-            continue;
+        Vector3 mp{};
+        if (!icon || !to_map_pos(d.x, d.y, d.z, mp)) continue;
+        mp.x += shift.x;
+        mp.y += shift.y;
+        set_color(icon, d.colour);
         set_active(go_of(icon), true);
-        set_active(go_of(label), true);
-        if (api.behaviour_set_enabled && icon) {  // TLDCoop_DLC: (TLD may switch its arrow's copies off with it)
-            bool on = true;
-            void* a[] = {&on};
-            il2::invoke(api.behaviour_set_enabled, icon, a);
-        }
         set_vec(api.set_local_scale, transform_of(icon), {1, 1, 1});
+        set_vec(api.set_local_euler, transform_of(icon), {0, 0, 0});
         set_vec(api.set_local_position, transform_of(icon), {mp.x, mp.y, 0});
-        const float heading = std::atan2(mp_ahead.y - mp.y, mp_ahead.x - mp.x) * 180.0f / hud::kPi;
-        set_vec(api.set_local_euler, transform_of(icon), {0, 0, heading - 90.0f});  // the arrow points up
-        set_vec(api.set_local_position, transform_of(label), {mp.x + 12, mp.y, 0});
-        set_vec(api.set_local_scale, transform_of(label), unzoom);
-        const std::string name = upper(who.name);
-        if (name != m.shown_name) set_text(label, m.shown_name = name);
-        char s[96];
-        std::snprintf(s, sizeof(s), "on the %s map at (%.0f, %.0f)", shown.c_str(), mp.x, mp.y);
+        legend.emplace_back(d.colour, d.name);
+        char s[160];
+        std::snprintf(s, sizeof(s), "on the %s map at (%.0f, %.0f), %s", shown.c_str(), mp.x, mp.y, d.where);
         m.state = s;
+        if (!g_map_logged) {
+            Vector3 world{}, screen{};
+            Il2CppObject* ui_camera = il2::invoke(api.ui_camera, nullptr);
+            if (api.get_world_position && il2::invoke_value(api.get_world_position, transform_of(icon), world) && alive(ui_camera)) {
+                void* args[] = {&world};
+                il2::invoke_value(api.world_to_screen, ui_camera, screen, args);
+            }
+            char t[256];
+            std::snprintf(t, sizeof(t), "%s%s world (%.0f, %.0f) -> map (%.1f, %.1f) -> screen (%.0f, %.0f) [%s]",
+                          log_line.empty() ? "" : "; ", d.name.c_str(), d.x, d.z, mp.x, mp.y, screen.x, screen.y, d.where);
+            log_line += t;
+        }
+    }
+    for (auto& [id, m] : g_marks)
+        if (m.state == "not on this map") set_active(go_of(live(m.icon)), false), set_active(go_of(live(m.label)), false);
+    show_legend(map, legend);
+    if (!g_map_logged && !dots.empty()) {
+        g_map_logged = true;
+        logx::info("hud: map %s opened: TLD's player icon %s (%.1f, %.1f) vs ours (%.1f, %.1f): shift (%.1f, %.1f); %s",
+                   shown.c_str(), icon_seen ? "at" : "not seen,", icon_at.x, icon_at.y, mine.x, mine.y, shift.x, shift.y,
+                   log_line.c_str());
     }
 }
 
@@ -1664,7 +1788,7 @@ void late_update() {
     if (coop && g_chart && me.valid && !indoors_now())  // TLDCoop_DLC: where friends walk in our region too
         for (const avatar::Seen& f : all)
             if (f.playing && f.here && !f.dead) chart_friend(f);
-    if (coop) show_map_marks(all);  // TLD's map is open over the game: its HUD is hidden then
+    if (coop) show_map_marks(all, me);  // TLD's map is open over the game: its HUD is hidden then
     else hide_marks();
 
     // TLDCoop_DLC: (the chat box too, whatever the names and radar)
@@ -1723,6 +1847,12 @@ void late_update() {
     for (const avatar::Seen& who : all) {
         if (g_names && who.here && !who.dead && me.valid)
             show_tag(who.player, who, me, game_camera, ui_camera, width, height, dt);
+        else if (g_names && who.at_door && !who.dead && me.valid) {  // A6: their name and the building, at its door
+            avatar::Seen at = who;
+            const std::string inside = seamless_interiors::place_scene(who.place);
+            at.name = who.name + " (" + place_name(inside.empty() ? who.scene : inside) + ")";
+            show_tag(who.player, at, me, game_camera, ui_camera, width, height, dt);
+        }
         else if (auto it = g_tags.find(who.player); it != g_tags.end())
             hide_tag(it->second);
     }

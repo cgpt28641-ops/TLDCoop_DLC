@@ -58,6 +58,10 @@ bool player_inside();
 // The building the local player is inside ("" outdoors, or the feature off): State's place.
 std::string place();
 
+// A6: where a building's door is in its region (where a player inside its room is marked on the map, radar and
+// HUD). A sub-interior: its parent building's. False for an unknown id.
+bool door_position(const std::string& place, float& x, float& y, float& z);
+
 // The interior scene of a building ("CampOffice"), for TLD's name of it; "" for an unknown id.
 std::string place_scene(const std::string& id);
 
