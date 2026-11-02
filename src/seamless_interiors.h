@@ -90,6 +90,12 @@ bool unbuilt_room_at(float x, float y, float z);
 // to it waits for the room (it'd be missing here until then).
 bool unbuilt_room_has_item(const std::string& pdid);
 
+// A room of this region scene isn't built in our game yet (not built, or building; a building left at the game's door
+// doesn't count; a region we haven't entered: all of its rooms): a change of another game's to something not here may
+// be to one of its objects (they get their co-op ids, made from the building and their spot in the room, once it's
+// up). False with the feature off.
+bool rooms_pending_build(const std::string& scene);
+
 // Friend: a room object of ours whose room the host hasn't said is up in its game: the host's lists don't have it yet
 // (it isn't removed for missing from them).
 bool host_lacks_room_of(Il2CppObject* component_or_game_object);

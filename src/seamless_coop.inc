@@ -404,6 +404,20 @@ bool unbuilt_room_has_item(const std::string& pdid) {
     return false;
 }
 
+bool rooms_pending_build(const std::string& scene) {
+    if (!api.ok || scene.empty()) return false;
+    if (scene != g_region) {  // not entered here yet (the scene loading, or another region): none of its rooms is built
+        if (!g_feature_on) return false;
+        for (int i = 0; i < kConfigCount; ++i)
+            if (scene == kConfigs[i].region) return true;
+        return false;
+    }
+    if (!g_engaged) return false;
+    for (const Instance& in : g_instances)
+        if (in.stage != Stage::Ready && in.stage != Stage::Vanilla) return true;
+    return false;
+}
+
 bool host_lacks_room_of(Il2CppObject* obj) {
     if (!api.ok || !g_engaged || coop() != Coop::Friend || no_room_objects()) return false;
     const Instance* in = instance_of_tf(tf_of_any(obj));

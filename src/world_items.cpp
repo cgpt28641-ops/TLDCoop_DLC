@@ -441,6 +441,7 @@ struct Change {
     bool put = false;
     net::ItemPutMsg put_msg;
     net::ItemGoneMsg gone_msg;
+    bool waited_room = false;  // TLDCoop_DLC: it waited for a Seamless Interiors room of ours (host)
 };
 std::unordered_map<std::string, std::unordered_map<std::string, Change>> g_pending;
 netrt::Together g_together;          // host: friends in our scene (our list went to each as they came)
@@ -1122,6 +1123,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
             Change c;
             c.put = true;
             c.put_msg = m;
+            c.waited_room = true;
             g_pending[m.scene][m.pdid] = std::move(c);
             logx::info("items: the other player's %s (%s) is in a Seamless Interiors room not built here yet; kept until "
                        "the room is up", m.prefab.c_str(), short_id(m.pdid).c_str());
@@ -1285,7 +1287,7 @@ bool take_held_at_same_moment(const std::string& ours, double now) {
     return report_our_take(ours, true);
 }
 
-void apply_gone(const net::ItemGoneMsg& m, double now) {
+void apply_gone(const net::ItemGoneMsg& m, double now, bool waited_room = false) {
     const std::string ours = our_id(m.pdid);
     if (const auto k = g_known.find(ours); k != g_known.end() && k->second.unique) {
         logx::info("items: the other player took their %s (%s); one of a kind: ours stays", k->second.prefab.c_str(),
@@ -1297,14 +1299,30 @@ void apply_gone(const net::ItemGoneMsg& m, double now) {
         return;
     // TLDCoop_DLC: one of a Seamless Interiors room's items, the room not built in our game yet: it would come back with
     // the room (a take made twice); the change waits for the room
-    if (hosting() && !object_by_pdid(ours) &&
-        (seamless_interiors::unbuilt_room_has_item(m.pdid) || seamless_interiors::unbuilt_room_has_item(ours))) {
-        Change c;
-        c.gone_msg = m;
-        g_pending[m.scene][m.pdid] = std::move(c);
-        logx::info("items: the other player's take of %s is of a Seamless Interiors room not built here yet; kept until the "
-                   "room is up", short_id(m.pdid).c_str());
-        return;
+    // (A room never saved has no file: its items are the template's, rolled with our seed, the same ids the friend's
+    // game gave them; so anything not here while a room of the region isn't built waits too, until every room of the
+    // region is up here: then it is either here or not a room's.)
+    if (hosting() && !object_by_pdid(ours)) {
+        const bool in_file =
+            seamless_interiors::unbuilt_room_has_item(m.pdid) || seamless_interiors::unbuilt_room_has_item(ours);
+        if (in_file || seamless_interiors::rooms_pending_build(m.scene)) {
+            Change c;
+            c.gone_msg = m;
+            c.waited_room = true;
+            g_pending[m.scene][m.pdid] = std::move(c);
+            logx::info("items: the other player's %s of %s isn't here; %s; kept until %s (applied again as rooms come up)",
+                       m.reason == net::ItemGoneReason::Taken ? "take" : "removal", short_id(m.pdid).c_str(),
+                       in_file ? "it is in the saved file of a Seamless Interiors room not built here yet"
+                               : "a Seamless Interiors room of the region isn't built here yet (it may be one of its items)",
+                       in_file ? "the room is up" : "the region's rooms are all up");
+            return;
+        }
+        if (waited_room) {
+            logx::info("items: the other player's %s of %s waited for the Seamless Interiors rooms; they are all up here and "
+                       "it isn't in any: nothing to remove (dropped)",
+                       m.reason == net::ItemGoneReason::Taken ? "take" : "removal", short_id(m.pdid).c_str());
+            return;
+        }
     }
     remove_ours(ours, m.reason == net::ItemGoneReason::Taken ? "was taken by the other player"
                                                              : "is gone from the other player's world");
@@ -1319,13 +1337,20 @@ void apply_pending() {
     std::sort(changes.begin(), changes.end(), [](const Change& a, const Change& b) {
         return static_cast<int32_t>((a.put ? a.put_msg.seq : a.gone_msg.seq) - (b.put ? b.put_msg.seq : b.gone_msg.seq)) < 0;
     });
-    logx::info("items: %zu change(s) the other player made in %s while we were elsewhere", changes.size(), g_scene.c_str());
+    size_t waited = 0;
+    for (const Change& c : changes) waited += c.waited_room ? 1 : 0;
+    if (waited)  // TLDCoop_DLC (each one either applies, or waits again: applying one twice changes nothing)
+        logx::info("items: %zu change(s) the other player made in %s, %zu of them waiting for Seamless Interiors rooms: "
+                   "applied now (rooms here: generation %u)",
+                   changes.size(), g_scene.c_str(), waited, seamless_interiors::rooms_generation());
+    else
+        logx::info("items: %zu change(s) the other player made in %s while we were elsewhere", changes.size(), g_scene.c_str());
     const double now = now_ms();
     for (const Change& c : changes) {
         if (c.put)
             apply_put(c.put_msg, now);
         else
-            apply_gone(c.gone_msg, now);
+            apply_gone(c.gone_msg, now, c.waited_room);
     }
 }
 
@@ -1414,6 +1439,12 @@ void receive(double now) {
                 pass_on(p.from, c);
             }
             if (scene == g_scene && g_baseline) {
+                // TLDCoop_DLC: a change of it kept for a room (an older one) is overtaken by this one
+                if (auto w = g_pending.find(scene); w != g_pending.end() && w->second.erase(pdid)) {
+                    logx::info("items: an older change to %s that waited for a Seamless Interiors room is replaced by this "
+                               "one", short_id(pdid).c_str());
+                    if (w->second.empty()) g_pending.erase(w);
+                }
                 if (c.put)
                     apply_put(c.put_msg, now);
                 else

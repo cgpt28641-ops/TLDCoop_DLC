@@ -647,6 +647,9 @@ void commit_import(Instance& in) {
                                std::to_string(d->container_items) + "\t" + std::to_string(d->states) + "\t" +
                                std::to_string(d->spawned);
     const std::string marker = file_text("imported", {esc(d->key) + "\t" + d->hash + "\t" + counts});
+    // (the same, as "<id>.imported-from": these files came from the import; should the marker never reach the disk
+    // with them, old_save_gate still knows them for the import's own, item 4 of the follow-up)
+    ok = write_staged(building_file(in.dir, in, "imported-from"), marker) && ok;
     // (P6) the marker only after every file of the room: else it waits for a save that writes them all (save_rooms)
     if (!ok || !write_staged(building_file(in.dir, in, "imported"), marker)) {
         in.import_marker = marker;
@@ -662,6 +665,46 @@ void commit_import(Instance& in) {
 }
 
 // --- the door's decision (pick_building, before the room is built) --------------------------------------------------
+
+// Our files of the building and the game's record of its interior, no marker: a session that ended between the import's
+// files reaching the disk and its marker (the marker is committed last). The files are the import's when its
+// "<id>.imported-from" says so, the game's record is still the one imported (its hash), and every file of the room is
+// there whole (read back with its footer); then they are taken and the marker written. Else false (why: the reason,
+// when the files were an import's).
+bool recover_import_marker(Instance& in, const std::string& key_now, std::string& why) {
+    const fs::path from = building_file(in.dir, in, "imported-from");
+    if (from.empty() || !exists_preferred(from)) return false;
+    const Records r = read_records(from, "imported", 2);
+    auto fail = [&](const std::string& w) {
+        why = "the save holds its interior ('" + key_now + "') and we have files of it from an import, without its marker, "
+              "that can't be taken: " + w;
+        logx::warn("interiors: %s: %s", in.cfg->id, why.c_str());
+        return false;
+    };
+    if (!r.whole || r.rows.empty()) return fail("their import note can't be read");
+    std::string key = unesc(r.rows[0][0]), now_key, raw, err;
+    if (resolve_key(in, now_key, err)) key = now_key;
+    if (key.empty() || !slot_text(key, raw, err)) return fail("the game's record ('" + key + "') can't be read: " + err);
+    if (hash_text(raw) != r.rows[0][1])
+        return fail("the game's record ('" + key + "') changed after the import; which one is newer can't be told");
+    const std::pair<const char*, size_t> kinds[] = {
+        {"placeables", 12}, {"spawned", 2}, {"gear", 14}, {"containers", 6}, {"state", 2}};
+    for (const auto& [kind, fields] : kinds) {
+        const fs::path p = building_file(in.dir, in, kind);
+        if (!exists_preferred(p)) return fail(std::string("its .") + kind + " file is missing");
+        const Records k = read_records(p, kind, fields);
+        if (!k.whole) return fail(std::string("its .") + kind + " file isn't whole");
+    }
+    // the marker as the import wrote it (its text is the note's)
+    std::vector<std::string> row_lines(r.lines.begin(), r.lines.end());
+    const std::string marker = file_text("imported", row_lines);
+    if (!write_staged(building_file(in.dir, in, "imported"), marker)) in.import_marker = marker;  // with the next save
+    logx::info("interiors: %s: our files of it came from an import of the old save ('%s') whose marker never reached the "
+               "disk; they are whole and the game's record is unchanged: the room comes from them, the marker %s",
+               in.cfg->id, key.c_str(), in.import_marker.empty() ? "written now (staged, with the next save)"
+                                                                  : "waits for the next save");
+    return true;
+}
 
 // True: build the room. False: the game's door, why says why (1a/1b's has_vanilla_data rule, now with the import).
 bool old_save_gate(Instance& in, std::string& why) {
@@ -687,6 +730,7 @@ bool old_save_gate(Instance& in, std::string& why) {
     }
     std::string key;
     if (!has_vanilla_data(in, key)) return true;
+    if (in.has_data && recover_import_marker(in, key, why)) return true;
     if (g_scene_keys_failed) {
         why = "the save slot's records can't be listed";
         return false;

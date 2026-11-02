@@ -293,10 +293,20 @@ int commit_dir(const fs::path& dir, int* failed = nullptr) {
     std::vector<fs::path> staged;
     for (const auto& e : fs::directory_iterator(dir, ec))
         if (e.path().extension() == ".pending") staged.push_back(e.path());
+    // an import's marker ("<id>.imported") last: it says the room's files are there (a commit cut short leaves files
+    // without it, which old_save_gate can still recognise by their "<id>.imported-from")
+    auto is_marker = [](const fs::path& p) { return p.stem().extension() == ".imported"; };
+    std::stable_partition(staged.begin(), staged.end(), [&](const fs::path& p) { return !is_marker(p); });
     int n = 0, bad = 0;
     for (const fs::path& p : staged) {
         fs::path final_path = p;
         final_path.replace_extension();
+        if (bad && is_marker(p)) {  // a file of the room didn't make it: the marker waits with it
+            logx::warn("interiors: %s not committed: a room file before it couldn't be; it stays staged",
+                       p.filename().string().c_str());
+            ++bad;
+            continue;
+        }
         std::string err;
         if (!move_replace(p, final_path, err)) {
             logx::warn("interiors: couldn't commit %s (%s); it stays staged", p.filename().string().c_str(), err.c_str());
@@ -382,6 +392,7 @@ void keep_unreadable(const fs::path& p) {
 
 struct Records {
     bool exists = false, ok = true;
+    bool whole = false;  // written with the footer, which matched (known not cut short)
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> lines;  // as written (for orphans)
 };
@@ -434,6 +445,7 @@ Records read_records(const fs::path& p, const char* kind, size_t min_fields) {
     }
     if (first) r.ok = false;               // no header at all
     if (footed && !footer_seen) r.ok = false;  // cut short: what's missing can't be told
+    r.whole = r.ok && footed && footer_seen;
     return r;
 }
 std::string file_text(const char* kind, const std::vector<std::string>& lines) {
@@ -2372,7 +2384,8 @@ void save_rooms(const char* scene_name) {
         }
         const bool ok = save_placeables(in) & save_gear(in) & save_containers(in) & save_state(in);
         if (!ok) logx::warn("interiors: %s: some of its files couldn't be written; the ones on the disk stay as they were", in.cfg->id);
-        if (ok && !in.import_marker.empty() && write_staged(building_file(in.dir, in, "imported"), in.import_marker)) {
+        if (ok && !in.import_marker.empty() && write_staged(building_file(in.dir, in, "imported-from"), in.import_marker) &&
+            write_staged(building_file(in.dir, in, "imported"), in.import_marker)) {
             in.import_marker.clear();
             logx::info("interiors: %s: its import marker written with this save", in.cfg->id);
         }

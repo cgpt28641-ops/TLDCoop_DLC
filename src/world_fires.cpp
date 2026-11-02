@@ -8,6 +8,7 @@
 #include <cstring>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "core.h"
@@ -353,6 +354,8 @@ netrt::Together g_together;                             // host: friends in our 
 // Host: the client's changes in scenes we aren't in (loaded when we get there).
 std::unordered_map<std::string, std::unordered_map<std::string, net::FirePutMsg>> g_store;
 std::optional<net::FireListMsg> g_list;                 // client: the host's fires for a scene we aren't in yet
+// TLDCoop_DLC: host: ids of the friends' changes (in g_store) that wait for a Seamless Interiors room of ours
+std::unordered_set<std::string> g_room_waited;
 
 void reset(const char* why) {
     if (!g_sig.empty()) logx::info("fires: forgetting shared state (%s)", why);
@@ -369,6 +372,7 @@ void reset(const char* why) {
 // What we keep of the world for later (changes for scenes someone isn't in) belongs to this game: a dropped link
 // keeps it, back at the main menu (another save may load next) it goes.
 void forget_world() {
+    g_room_waited.clear();
     if (g_store.empty()) return;
     logx::info("fires: back at the main menu; forgetting fires kept for %zu scene(s)", g_store.size());
     g_store.clear();
@@ -481,6 +485,8 @@ void send_list(uint8_t to) {
                lighting.empty() ? "" : "; one being lit goes once it's lit", to);
 }
 
+void apply_stored(bool room_up = false);
+
 // Compare the fires here with what both games last had; send what changed.
 void check() {
     // TLDCoop_DLC: a Seamless Interiors room came up in our game: its fires are taken in as both games' (the host's
@@ -498,6 +504,7 @@ void check() {
             ++taken;
         }
         if (taken) logx::info("fires: a Seamless Interiors room came up here: its %d fire(s) taken in as both games'", taken);
+        if (hosting()) apply_stored(true);  // TLDCoop_DLC: friends' changes that waited for a room of ours
     }
     std::unordered_map<std::string, Il2CppObject*> here;
     std::vector<std::pair<std::string, Il2CppObject*>> changed;
@@ -549,6 +556,56 @@ void check() {
 
 // --- applying the other player's fires -----------------------------------------------------------------------------
 
+// TLDCoop_DLC: a fire record's "m_Position" ({"x":..,"y":..,"z":..}, its quotes escaped or not). False: none.
+bool record_position(const std::string& rec, Vector3& out) {
+    const size_t at = rec.find("m_Position");
+    if (at == std::string::npos) return false;
+    const size_t stop = std::min(rec.size(), at + 240);
+    float v[3] = {};
+    const char axes[3] = {'x', 'y', 'z'};
+    size_t p = at + 10;
+    for (int i = 0; i < 3; ++i) {
+        bool found = false;
+        for (; p + 2 < stop && !found; ++p) {
+            if (rec[p] != axes[i]) continue;
+            size_t q = p + 1;
+            while (q < stop && (rec[q] == '"' || rec[q] == '\\')) ++q;
+            if (q >= stop || rec[q] != ':' || (rec[p - 1] != '"' && rec[p - 1] != '\\')) continue;
+            char* end = nullptr;
+            const std::string num = rec.substr(q + 1, 40);
+            const double d = std::strtod(num.c_str(), &end);
+            if (end == num.c_str() || !std::isfinite(d)) return false;
+            v[i] = static_cast<float>(d);
+            p = q + 1 + static_cast<size_t>(end - num.c_str());
+            found = true;
+        }
+        if (!found) return false;
+    }
+    out = Vector3{v[0], v[1], v[2]};
+    return true;
+}
+
+// TLDCoop_DLC: `all` (FireManager.Serialize()'s text) without these ids in its "m_DestroyedFires".
+std::string without_destroyed(std::string all, const std::vector<std::string>& ids) {
+    const size_t key = all.find("\"m_DestroyedFires\"");
+    if (key == std::string::npos) return all;
+    const size_t open = all.find('[', key);
+    if (open == std::string::npos) return all;
+    for (const std::string& id : ids) {
+        const size_t close = all.find(']', open);
+        if (close == std::string::npos) return all;
+        const size_t p = all.find("\"" + id + "\"", open);
+        if (p == std::string::npos || p > close) continue;
+        size_t a = p, b = p + id.size() + 2;
+        if (b < close && all[b] == ',')
+            ++b;
+        else if (a > open + 1 && all[a - 1] == ',')
+            --a;
+        all.erase(a, b - a);
+    }
+    return all;
+}
+
 void load(const std::string& save_text) {
     g_applying = true;
     void* args[] = {il2::il2cpp_string_new(save_text.c_str())};
@@ -557,6 +614,31 @@ void load(const std::string& save_text) {
 }
 
 void apply_put(const net::FirePutMsg& m, const char* who) {
+    // TLDCoop_DLC: host: a friend's change to a fire of a Seamless Interiors room not built here yet (or building) would
+    // load nowhere (or come back with the room as it was): it waits in g_store and is applied again as rooms come up.
+    // A dismantle carries no position: any fire not here waits while a room of the region isn't up.
+    if (hosting() && !find(m.id)) {
+        Vector3 pos{};
+        const bool gone = (m.flags & net::kFireGone) != 0;
+        const bool has_pos = !gone && record_position(m.text, pos);
+        const bool wait = gone ? seamless_interiors::rooms_pending_build(m.scene)
+                               : has_pos && seamless_interiors::unbuilt_room_at(pos.x, pos.y, pos.z);
+        if (wait) {
+            const bool again = g_room_waited.count(m.id) != 0;
+            g_room_waited.insert(m.id);
+            g_store[m.scene][m.id] = m;
+            logx::info("fires: %s fire %s %s; %s; kept until %s%s", who, short_id(m.id).c_str(), gone ? "is gone" : "changed",
+                       gone ? "it isn't here and a Seamless Interiors room of the region isn't built here yet"
+                            : "it is in a Seamless Interiors room not built here yet",
+                       gone ? "the region's rooms are all up" : "the room is up", again ? " (still waiting)" : "");
+            return;
+        }
+        if (g_room_waited.erase(m.id))
+            logx::info("fires: %s fire %s waited for the Seamless Interiors rooms; %s", who, short_id(m.id).c_str(),
+                       gone ? "they are all up and it isn't in any: nothing to remove (dropped)" : "its room is up: applied");
+    } else if (hosting()) {
+        g_room_waited.erase(m.id);
+    }
     if (Il2CppObject* ours = find(m.id); ours && !settled(ours) && !campfire_of(ours)) {
         logx::info("fires: %s fire %s, but we're lighting it right now; ours stands", who, short_id(m.id).c_str());
         return;
@@ -581,18 +663,36 @@ void apply_put(const net::FirePutMsg& m, const char* who) {
     logx::info("fires: %s fire %s (%s): %s", who, name_of(f).c_str(), short_id(m.id).c_str(), describe_fire(f).c_str());
 }
 
-void apply_stored() {
+void apply_stored(bool room_up) {
     const auto it = g_store.find(g_scene);
     if (it == g_store.end()) return;
     std::vector<net::FirePutMsg> changes;
     for (auto& [id, m] : it->second) changes.push_back(std::move(m));
     g_store.erase(it);
     std::sort(changes.begin(), changes.end(), [](const auto& a, const auto& b) { return static_cast<int32_t>(a.seq - b.seq) < 0; });
-    for (const net::FirePutMsg& m : changes) apply_put(m, "while we were elsewhere the other player's");
-    logx::info("fires: %zu fire(s) the other player changed in %s while we were elsewhere", changes.size(), g_scene.c_str());
+    // (each one either applies, or waits again: a fire's record loaded twice is the same fire)
+    for (const net::FirePutMsg& m : changes)
+        apply_put(m, room_up ? "(waiting for a room) the other player's" : "while we were elsewhere the other player's");
+    if (room_up)
+        logx::info("fires: a Seamless Interiors room came up: %zu kept fire change(s) of %s applied again (those still "
+                   "waiting for a room are kept)", changes.size(), g_scene.c_str());
+    else
+        logx::info("fires: %zu fire(s) the other player changed in %s while we were elsewhere", changes.size(), g_scene.c_str());
 }
 
-void apply_list(const net::FireListMsg& m) {
+void apply_list(const net::FireListMsg& m_in) {
+    // TLDCoop_DLC: the fires of a Seamless Interiors room of ours the host hasn't said is up in its game: its list
+    // doesn't know them yet (as the items, K1): not removed or reset from it.
+    std::vector<std::string> keep;
+    for (Il2CppObject* f : all_fires())
+        if (seamless_interiors::host_lacks_room_of(f))
+            if (std::string id = id_of(f); !id.empty()) keep.push_back(std::move(id));
+    net::FireListMsg m = m_in;
+    if (!keep.empty()) {
+        m.text = without_destroyed(without_fires(m.text, keep), keep);
+        logx::info("fires: %zu fire(s) of Seamless Interiors rooms the host hasn't said are up kept as they are here (not "
+                   "taken from the host's list)", keep.size());
+    }
     // The host's dismantled fires go the way a dismantle does (our save keeps them gone too) before TLD's load, which
     // would only destroy the objects (the next check would see them leave without TLD counting them destroyed).
     size_t removed = 0;
@@ -614,6 +714,13 @@ void receive() {
             net::FirePutMsg m;
             if (!net::read_fire_put(r, m)) continue;
             if (!g_newest.take(p, m.id, m.seq)) continue;  // a late older one
+            // TLDCoop_DLC: an older change of it kept for a room is overtaken by this one (it waits itself if need be)
+            if (auto w = g_store.find(m.scene); hosting() && w != g_store.end() && g_room_waited.count(m.id) &&
+                                                m.scene == g_scene && g_baseline && w->second.erase(m.id)) {
+                logx::info("fires: an older change to fire %s that waited for a Seamless Interiors room is replaced by this one",
+                           short_id(m.id).c_str());
+                if (w->second.empty()) g_store.erase(w);
+            }
             if (hosting()) pass_on(p.from, m);  // with their hours: each game puts in its own
             m.text = with_hours(m.text, hours_played());
             if (m.scene != g_scene || !g_baseline) {
