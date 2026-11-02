@@ -908,9 +908,9 @@ bool in_volume(const Instance& in, V3 world, float padding = 0) {
 }
 
 // SI: TryGetShellMeshBounds: every mesh under a GameObject, through its transform (works while inactive).
-// (B4: a piece bigger than max_piece, or whose middle is farther than reach across from near, is left out: an interior's
+// (B4: a piece bigger than max_piece, or whose middle is farther than reach across from around, is left out: an interior's
 // painted backdrops and far set dressing)
-Box mesh_box_of(Il2CppObject* root_go, float max_piece = 0, V3 near = {}, float reach = 0) {
+Box mesh_box_of(Il2CppObject* root_go, float max_piece = 0, V3 around = {}, float reach = 0) {
     Box box;
     each_in(root_go, api.t_mesh_filter, [&](Il2CppObject* filter) {
         Il2CppObject* mesh = il2::invoke(api.mesh_filter_mesh, filter);
@@ -935,7 +935,7 @@ Box mesh_box_of(Il2CppObject* root_go, float max_piece = 0, V3 near = {}, float 
             if (sz.x > max_piece || sz.y > max_piece || sz.z > max_piece) return;
             if (name_of(go_of(filter)).find("Shadow_Caster") != std::string::npos) return;
         }
-        if (reach > 0 && dist_xz((piece.min + piece.max) * 0.5f, near) > reach) return;
+        if (reach > 0 && dist_xz((piece.min + piece.max) * 0.5f, around) > reach) return;
         box.add(piece.min);
         box.add(piece.max);
     });
