@@ -320,7 +320,10 @@ void forget_gone_friend(Il2CppObject* ai) {
     if (memo == g_hunts_friend.end() || memo->second == 0) return;
     const uint8_t player = memo->second;
     const std::vector<uint8_t> ids = avatar::shown();
-    if (std::find(ids.begin(), ids.end(), player) != ids.end()) return;
+    // TLDCoop_DLC: in a Seamless Interiors room (80 m above its building) they're gone for an animal outside too
+    const auto st = netrt::remote_state(player);
+    const bool in_room = st && !st->place.empty();
+    if (!in_room && std::find(ids.begin(), ids.end(), player) != ids.end()) return;
     if (il2::read_field<int32_t>(ai, api.mode) == kAiModeStruggle) return;  // a fight: its end (or time-out) sorts it out
     g_hunts_friend.erase(memo);
     Il2CppObject* current = il2::read_field<Il2CppObject*>(ai, api.current_target);

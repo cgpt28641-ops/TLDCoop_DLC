@@ -1118,6 +1118,15 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     const Vector3 pos{m.pos[0], m.pos[1], m.pos[2]};
     const Quaternion rot{m.rot[0], m.rot[1], m.rot[2], m.rot[3]};
     if (seamless_interiors::unbuilt_room_at(pos.x, pos.y, pos.z)) {  // TLDCoop_DLC: it'd fall 80 m from an empty spot
+        if (hosting()) {  // the host's game is the one that keeps it: it waits for the room (applied once it's up)
+            Change c;
+            c.put = true;
+            c.put_msg = m;
+            g_pending[m.scene][m.pdid] = std::move(c);
+            logx::info("items: the other player's %s (%s) is in a Seamless Interiors room not built here yet; kept until "
+                       "the room is up", m.prefab.c_str(), short_id(m.pdid).c_str());
+            return;
+        }
         logx::info("items: the other player's %s (%s) is in a Seamless Interiors room not built here yet; it comes with "
                    "the host's list once the room is up",
                    m.prefab.c_str(), short_id(m.pdid).c_str());
@@ -1158,17 +1167,30 @@ void apply_put(const net::ItemPutMsg& m, double now) {
             void* args[] = {&yes};
             il2::invoke(api.go_set_active, go, args);
             set_pose(gi, pos, rot);
-            Known& k = g_known[ours];
-            k.prefab = m.prefab;
-            k.pos = k.told = pos;
-            k.rot = rot;
-            k.units = units_of(gi);
-            k.snare = snare_state(gi);
-            k.moved_ms = now;
-            k.shared = true;
-            logx::info("items: the other player's %s (%s) was switched off here (our game rolled it away); shown at "
-                       "(%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(), pos.x, pos.y, pos.z);
-            return;
+            seamless_interiors::settle_in_room(gi);  // TLDCoop_DLC: into a room closed here
+            if (!is_loose(gi)) {  // a parent of it is off (not a room's): not what lies in the world; a copy is made
+                bool no = false;
+                void* off[] = {&no};
+                il2::invoke(api.go_set_active, go, off);
+            } else {
+                Known& k = g_known[ours];
+                k.prefab = m.prefab;
+                k.pos = k.told = pos;
+                k.rot = rot;
+                k.units = units_of(gi);
+                k.snare = snare_state(gi);
+                k.moved_ms = now;
+                k.shared = true;
+                load_snare(gi, m.gear, m.pdid, k);
+                load_opened(gi, m.gear, k);
+                load_burn(gi, m.gear, k);
+                load_lamp(gi, m.gear);
+                load_pot(gi, m.gear, m.pdid);
+                logx::info("items: the other player's %s (%s) was switched off here (our game rolled it away); shown at "
+                           "(%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(), pos.x,
+                           pos.y, pos.z);
+                return;
+            }
         }
     }
     // Make it from TLD's save record, under the same id unless something here already goes by it.
@@ -1273,6 +1295,17 @@ void apply_gone(const net::ItemGoneMsg& m, double now) {
     if (!hosting() && m.reason == net::ItemGoneReason::Taken &&
         (take_held_at_same_moment(ours, now) || report_our_take(ours)))
         return;
+    // TLDCoop_DLC: one of a Seamless Interiors room's items, the room not built in our game yet: it would come back with
+    // the room (a take made twice); the change waits for the room
+    if (hosting() && !object_by_pdid(ours) &&
+        (seamless_interiors::unbuilt_room_has_item(m.pdid) || seamless_interiors::unbuilt_room_has_item(ours))) {
+        Change c;
+        c.gone_msg = m;
+        g_pending[m.scene][m.pdid] = std::move(c);
+        logx::info("items: the other player's take of %s is of a Seamless Interiors room not built here yet; kept until the "
+                   "room is up", short_id(m.pdid).c_str());
+        return;
+    }
     remove_ours(ours, m.reason == net::ItemGoneReason::Taken ? "was taken by the other player"
                                                              : "is gone from the other player's world");
 }
@@ -1306,7 +1339,11 @@ void apply_list(const net::ItemHashesMsg& m, double now) {
         if (k.unique) continue;  // ours, whatever the host has
         const uint64_t h = net::pdid_hash(wire_id(pdid));
         ours.insert(h);
-        if (!host.count(h) && k.shared && now - k.changed_ms > kListGraceMs) extra.push_back(pdid);
+        if (!host.count(h) && k.shared && now - k.changed_ms > kListGraceMs) {
+            // TLDCoop_DLC: in a Seamless Interiors room the host hasn't said is up in its game: not in its list yet
+            if (seamless_interiors::host_lacks_room_of(object_by_pdid(pdid))) continue;
+            extra.push_back(pdid);
+        }
     }
     for (const std::string& pdid : extra) remove_ours(pdid, "isn't in the host's world");
     net::ItemHashesMsg want;
@@ -1415,6 +1452,7 @@ void scan(double now) {
     rooms_seen = rooms_now;
     int room_items = 0;
     if (first) apply_pending();  // what the other player changed here while we were elsewhere
+    else if (room_up && hosting()) apply_pending();  // TLDCoop_DLC: changes that waited for a room of ours
     const double t0 = now_ms();
     std::vector<Loose> loose = scan_loose(true);
     std::string inspected, placing;
@@ -1563,6 +1601,10 @@ void scan(double now) {
                        it->second.prefab.c_str(), short_id(it->first).c_str());
         else if (it->second.shared && !through_door && !all_at_once)
             send_gone(it->first, it->second);
+        else if (it->second.shared) {  // TLDCoop_DLC: through a door / all at once: what went into our pack is still told
+            Il2CppObject* gi = gear_on(object_by_pdid(it->first));
+            if (gi && get<bool>(gi, api.in_inventory)) send_gone(it->first, it->second, true);
+        }
         it = g_known.erase(it);
     }
     if (room_items)
@@ -2102,6 +2144,21 @@ void on_frame(bool in_game) {
     // Host: once a friend's changes from while the link was down are in, our list has them.
     if (hosting())
         for (uint8_t id : g_together.arrived(g_baseline ? g_scene : std::string())) send_list(id);
+    // TLDCoop_DLC: a Seamless Interiors room came up (ours or a friend's): its items as full records, not only hashes
+    // (where they lie, opened, lit...), as answers (applied as the host's, not passed on).
+    if (hosting() && g_baseline)
+        for (auto& [to, ids] : seamless_interiors::take_room_puts()) {
+            const std::unordered_set<std::string> rooms(ids.begin(), ids.end());
+            int sent = 0;
+            for (auto& [pdid, k] : g_known) {
+                if (k.unique) continue;
+                Il2CppObject* gi = gear_on(object_by_pdid(pdid));
+                if (!gi || !rooms.count(seamless_interiors::room_of(gi))) continue;
+                send_put(gi, pdid, k, now, net::kItemAnswer, to);
+                ++sent;
+            }
+            if (sent) logx::info("items: %d item(s) of the room(s) just up sent as they are here (player %u)", sent, to);
+        }
 }
 
 void save_kept(std::vector<world_keep::Record>& out) {

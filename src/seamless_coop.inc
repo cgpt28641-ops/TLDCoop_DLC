@@ -35,6 +35,15 @@ struct HostRooms {
     std::unordered_set<std::string> ids;
 } g_host_rooms;                                                                 // friend: the host's ready rooms
 std::array<std::unordered_set<std::string>, net::kMaxPlayers> g_friend_rooms;  // host: each friend's ready rooms
+std::array<uint32_t, net::kMaxPlayers> g_friend_link{};  // host: the link those came on (a new link: forgotten, K5)
+// Host: rooms whose items go to a friend as full records (kItemAnswer) once the lists go again (K6): a hash says an
+// item is there, not where it lies or what state it's in.
+struct RoomPuts {
+    uint8_t player = 0;  // 0: every friend
+    std::vector<std::string> ids;
+    double at = 0;
+};
+std::vector<RoomPuts> g_room_puts, g_room_puts_due;
 uint32_t g_rooms_gen = 0;
 std::string g_rooms_said;  // what we last told (region and ids)
 double g_rooms_said_at = 0;
@@ -45,7 +54,10 @@ struct PendingResync {
 std::vector<PendingResync> g_resyncs;  // host: lists to send again once the world modules have taken the room in
 
 bool host_has(const Instance& in) {
-    return g_host_rooms.have && g_host_rooms.region == g_region && g_host_rooms.ids.count(in.cfg->id) > 0;
+    if (!g_host_rooms.have || g_host_rooms.region != g_region || !g_host_rooms.ids.count(in.cfg->id)) return false;
+    // (K2) and the host is in this region now (its Rooms may be from before it left)
+    const auto st = netrt::remote_state(0);
+    return !(st && st->valid && st->scene != g_region);
 }
 
 std::vector<std::string> ready_ids() {
@@ -70,7 +82,24 @@ void tick_coop_rooms() {
     const double now = now_ms();
     static std::vector<net::Packet> packets;
     packets.clear();
-    netrt::drain_packets(net::Msg::Rooms, packets);
+    netrt::drain_packets(net::Msg::Rooms, packets);  // (always: unread they would pile up)
+    if (!g_engaged) {  // the feature off here: nothing of rooms
+        g_host_rooms = {};
+        g_resyncs.clear();
+        g_room_puts.clear();
+        for (auto& r : g_friend_rooms) r.clear();
+        return;
+    }
+    if (role == Coop::Host) {  // (K5) a friend's rooms belong to their link: another link (or none) starts over
+        std::array<uint32_t, net::kMaxPlayers> links{};
+        for (const net::PlayerInfo& pi : netrt::status().players)
+            if (pi.linked && pi.id > 0 && pi.id < net::kMaxPlayers) links[pi.id] = pi.link;
+        for (uint8_t id = 1; id < net::kMaxPlayers; ++id)
+            if (links[id] != g_friend_link[id]) {
+                g_friend_rooms[id].clear();
+                g_friend_link[id] = links[id];
+            }
+    }
     for (const net::Packet& p : packets) {
         net::Reader r = net::packet_body(p);
         net::RoomsMsg m;
@@ -87,6 +116,10 @@ void tick_coop_rooms() {
         } else if (role == Coop::Host && p.from > 0 && p.from < net::kMaxPlayers) {
             std::unordered_set<std::string> ids;
             if (m.region == g_region) ids.insert(m.ids.begin(), m.ids.end());
+            if (p.link != g_friend_link[p.from]) {
+                g_friend_rooms[p.from].clear();
+                g_friend_link[p.from] = p.link;
+            }
             auto& known = g_friend_rooms[p.from];
             std::vector<std::string> fresh;
             for (const std::string& id : ids)
@@ -97,12 +130,16 @@ void tick_coop_rooms() {
                 logx::info("interiors: player %u's game has a room up now (%s); our lists of %s go to them again", p.from,
                            joined(fresh).c_str(), g_region.c_str());
                 g_resyncs.push_back({p.from, now + kResyncDelayMs});
+                g_room_puts.push_back({p.from, fresh, now + kResyncDelayMs});
             }
         }
     }
     if (role == Coop::Solo) {
         g_host_rooms = {};
         g_resyncs.clear();
+        g_room_puts.clear();
+        for (auto& r : g_friend_rooms) r.clear();
+        g_friend_link.fill(0);
         return;
     }
     if (role == Coop::Host) {
@@ -114,8 +151,16 @@ void tick_coop_rooms() {
             netrt::resync(it->player);
             it = g_resyncs.erase(it);
         }
+        for (auto it = g_room_puts.begin(); it != g_room_puts.end();) {
+            if (now < it->at) {
+                ++it;
+                continue;
+            }
+            g_room_puts_due.push_back(std::move(*it));
+            it = g_room_puts.erase(it);
+        }
     }
-    if (g_region.empty()) return;
+    if (g_region.empty()) return;  // (loading: nothing to say yet)
     net::RoomsMsg m;
     m.region = g_region;
     m.ids = ready_ids();
@@ -134,10 +179,12 @@ void tick_coop_rooms() {
 // --- ids every game shares ---------------------------------------------------------------------------------------------
 
 Instance* instance_of_tf(Il2CppObject* t) {
+    const auto& roots = room_roots();
+    if (roots.empty()) return nullptr;
     Il2CppObject* root = alive(t) ? il2::invoke(api.tf_root, t) : nullptr;
     if (!root) return nullptr;
-    for (Instance& in : g_instances)
-        if (in.master_tf && target(in.master_tf) == root) return &in;
+    for (const auto& [r, in] : roots)
+        if (r == root) return in;
     return nullptr;
 }
 
@@ -206,7 +253,10 @@ void coop_room_ready(Instance& in) {
     if (role == Coop::Solo) return;
     coop_rekey(in);
     ++g_rooms_gen;
-    if (role == Coop::Host) g_resyncs.push_back({0, now_ms() + kResyncDelayMs});
+    if (role == Coop::Host) {
+        g_resyncs.push_back({0, now_ms() + kResyncDelayMs});
+        g_room_puts.push_back({0, {in.cfg->id}, now_ms() + kResyncDelayMs});
+    }
     logx::info("interiors: %s: ready in our game (%s); %s", in.cfg->id, role == Coop::Host ? "the host's" : "a friend's",
                role == Coop::Host ? "the friends get our lists again in a moment" : "the host's lists bring what is in it");
 }
@@ -228,11 +278,41 @@ Instance* hosted_unready(Il2CppObject* door) {
 
 // --- a co-op teleport (a join, a respawn) ------------------------------------------------------------------------------
 
-V3 door_of_unbuilt(const Instance& in) {
-    const Config& c = *in.cfg;
+V3 door_of_unbuilt(const Config& c) {
     if (!is_zero(c.exit)) return c.exit;
     if (c.doors_count > 0) return kDoors[c.doors_first].exit;
     return c.fallback;
+}
+V3 door_of_unbuilt(const Instance& in) { return door_of_unbuilt(*in.cfg); }
+
+Instance* instance_of_tf(Il2CppObject* t);
+// (K9) a spot in the room an unbuilt building's room will stand on: its box once it has one (the build's Waking),
+// else the parked spot within the building's own radius.
+bool in_unbuilt_room(const Instance& in, V3 p) {
+    if (in.stage == Stage::Ready || in.stage == Stage::Vanilla) return false;
+    if (in.have_trigger && master_of(in)) return in_volume(in, p, 0.5f);
+    const V3 parked = in.cfg->fallback + kParkOffset;
+    const float up = p.y - parked.y;
+    return up > -6.0f && up < 14.0f && dist_xz(p, parked) < std::max(6.0f, in.cfg->bounds_radius + 1.0f);
+}
+
+// The co-op ids (coop_rekey) of the items in a room's saved file, read once per region visit (K1: a friend's take of
+// one of them, while the room isn't built here, waits for it).
+std::unordered_map<const Instance*, std::unordered_set<std::string>> g_file_item_ids;
+const std::unordered_set<std::string>& file_item_ids(Instance& in) {
+    auto it = g_file_item_ids.find(&in);
+    if (it != g_file_item_ids.end()) return it->second;
+    std::unordered_set<std::string>& ids = g_file_item_ids[&in];
+    ensure_dir(in);
+    if (in.dir.empty()) return ids;
+    const Records r = read_records(building_file(in.dir, in, "gear"), "gear", 14);
+    for (const auto& row : r.rows) {
+        const std::string g = unesc(row[1]);
+        if (g.empty()) continue;
+        ids.insert(md5_guid("coop|gear|" + g));
+        for (int n = 1; n <= 3; ++n) ids.insert(md5_guid("coop|gear|" + g + "#" + std::to_string(n)));
+    }
+    return ids;
 }
 
 }  // namespace (reopened below)
@@ -257,18 +337,28 @@ bool sync_skips(Il2CppObject* obj) {
 }
 
 std::string room_key(Il2CppObject* comp) {
-    if (!api.ok || g_instances.empty()) return {};
+    if (!api.ok || g_instances.empty() || no_room_objects()) return {};
     Il2CppObject* t = tf_of_any(comp);
     const Instance* in = instance_of_tf(t);
     if (!in || !in_room(in)) return {};
     Il2CppObject* go = il2::il2cpp_object_get_class(comp) == api.go_class ? comp : go_of(comp);
+    // (K6) part of a piece of furniture with an id: by that id and its spot on it, so the key stays when the furniture
+    // was moved (in the host's room, not in a friend's template)
+    if (Il2CppObject* pl = api.t_placeable ? in_parent(comp, api.t_placeable) : nullptr; pl && papi.placeable_guid >= 0)
+        if (const std::string g = placeable_guid(pl); !g.empty()) {
+            Il2CppObject* pt = tf_of(pl);
+            const V3 on = rotate(conj(rotation(pt)), position(t) - position(pt));
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%ld,%ld,%ld", std::lround(on.x * 100), std::lround(on.y * 100), std::lround(on.z * 100));
+            return std::string("si:") + in->cfg->id + "|g:" + g + "|" + clean_name(name_of(go)) + "|" + buf;
+        }
     return std::string("si:") + in->cfg->id + "|" + clean_name(name_of(go)) + "|" + local_cm(*in, t);
 }
 
 uint32_t rooms_generation() { return g_rooms_gen; }
 
 bool active_in_closed_room(Il2CppObject* go) {
-    if (!api.ok || g_instances.empty() || !alive(go)) return false;
+    if (!api.ok || g_instances.empty() || no_room_objects() || !alive(go)) return false;
     Il2CppObject* t = go_tf(go);
     const Instance* in = instance_of_tf(t);
     if (!in || !in_room(in) || !in->hydrated) return false;
@@ -282,6 +372,7 @@ bool settle_in_room(Il2CppObject* gear) {
     const V3 p = position(t);
     for (Instance& in : g_instances) {
         if (!in_room(&in) || !in.hydrated || !master_of(in) || !in_parked_room(in, p, 0)) continue;
+        if (in.gear_blocked) return false;  // (its items aren't written: it stays the region's)
         Il2CppObject* mt = live(in.master_tf);
         if (!mt || child_of(t, mt)) return true;
         if (active_self(master_of(in))) return false;  // open here: it's adopted when the room closes (hide_room)
@@ -297,15 +388,39 @@ bool settle_in_room(Il2CppObject* gear) {
 }
 
 bool unbuilt_room_at(float x, float y, float z) {
-    if (!api.ok || g_instances.empty()) return false;
+    if (!api.ok || !g_engaged || g_instances.empty()) return false;
     const V3 p{x, y, z};
-    for (const Instance& in : g_instances) {
+    for (const Instance& in : g_instances)
+        if (in_unbuilt_room(in, p)) return true;
+    return false;
+}
+
+bool unbuilt_room_has_item(const std::string& pdid) {
+    if (!api.ok || !g_engaged || g_instances.empty() || pdid.empty() || coop() != Coop::Host) return false;
+    for (Instance& in : g_instances) {
         if (in.stage == Stage::Ready || in.stage == Stage::Vanilla) continue;
-        const V3 parked = in.cfg->fallback + kParkOffset;
-        const float reach = std::max(15.0f, in.cfg->bounds_radius + 3.0f);
-        if (std::fabs(p.y - parked.y) < 20.0f && dist_xz(p, parked) < reach) return true;
+        if (file_item_ids(in).count(pdid)) return true;
     }
     return false;
+}
+
+bool host_lacks_room_of(Il2CppObject* obj) {
+    if (!api.ok || !g_engaged || coop() != Coop::Friend || no_room_objects()) return false;
+    const Instance* in = instance_of_tf(tf_of_any(obj));
+    return in && !host_has(*in);
+}
+
+std::string room_of(Il2CppObject* obj) {
+    if (!api.ok || !g_engaged || no_room_objects()) return {};
+    const Instance* in = instance_of_tf(tf_of_any(obj));
+    return in && in_room(in) ? in->cfg->id : std::string();
+}
+
+std::vector<std::pair<uint8_t, std::vector<std::string>>> take_room_puts() {
+    std::vector<std::pair<uint8_t, std::vector<std::string>>> out;
+    for (RoomPuts& r : g_room_puts_due) out.emplace_back(r.player, std::move(r.ids));
+    g_room_puts_due.clear();
+    return out;
 }
 
 bool prepare_teleport(const std::string& where, float& x, float& y, float& z, bool& indoors) {
@@ -314,10 +429,22 @@ bool prepare_teleport(const std::string& where, float& x, float& y, float& z, bo
     if (g_engaged && g_inside && g_inside != in) exit_room(*g_inside, "teleported to another player", true);
     if (!in) {
         if (where.empty()) return false;
-        // no such room here (yet): beside its building, not 80 m up where the room would stand
+        // no such room here (yet): at its building's door (K8), else beside it - not 80 m up where the room would stand
+        for (int i = 0; i < kConfigCount; ++i)
+            if (where == kConfigs[i].id) {
+                const V3 door = door_of_unbuilt(kConfigs[i]);
+                x = door.x;
+                y = door.y;
+                z = door.z;
+                indoors = false;
+                g_fall_guard_until = now_ms() + kFallGuardMs;
+                logx::info("interiors: the other player is inside %s, which we don't have; to its door (%.1f, %.1f, %.1f)",
+                           where.c_str(), door.x, door.y, door.z);
+                return true;
+            }
         y -= kParkOffset.y;
         indoors = false;
-        logx::info("interiors: the other player is inside %s, which we don't have; to its building instead", where.c_str());
+        logx::info("interiors: the other player is inside %s, which we don't know; to below their spot instead", where.c_str());
         return true;
     }
     if (in_room(in) && master_of(*in)) {

@@ -433,21 +433,37 @@ void apply(Il2CppObject* c, const std::string& id, const std::string& theirs, co
                on_screen ? " (on screen, refreshed)" : "");
 }
 
+// TLDCoop_DLC: a Seamless Interiors room's container ("si:..."): it may only be missing because its room isn't built
+// here yet; kept (applied once the room is up) instead of dropped.
+bool room_container(const std::string& id) { return id.rfind("si:", 0) == 0; }
+
 void apply_stored() {
     const auto it = g_store.find(g_scene);
     if (it == g_store.end()) return;
-    int applied = 0;
-    for (const auto& [id, s] : it->second) {
-        if (!s.from_peer) continue;
+    int applied = 0, waiting = 0;
+    for (auto e = it->second.begin(); e != it->second.end();) {
+        const std::string& id = e->first;
+        const Stored& s = e->second;
+        if (!s.from_peer) {
+            e = it->second.erase(e);
+            continue;
+        }
         if (Il2CppObject* c = find(id)) {
             apply(c, id, s.text, "the other player changed, while we were elsewhere,");
             ++applied;
+        } else if (room_container(id)) {
+            ++waiting;
+            ++e;
+            continue;
         } else {
             logx::warn("containers: the other player changed %s in %s, but it isn't here", short_id(id).c_str(), g_scene.c_str());
         }
+        e = it->second.erase(e);
     }
-    g_store.erase(it);  // our containers here are what counts now
+    if (it->second.empty()) g_store.erase(it);  // our containers here are what counts now
     if (applied) logx::info("containers: %d container(s) the other player changed in %s while we were elsewhere", applied, g_scene.c_str());
+    if (waiting)
+        logx::info("containers: %d change(s) to Seamless Interiors rooms' containers wait for their rooms here", waiting);
 }
 
 // Host: friend `from` is opening this container.
@@ -487,6 +503,12 @@ void receive_put(const net::Packet& p, const net::ContainerPutMsg& m) {
     }
     Il2CppObject* c = find(m.id);
     if (!c) {
+        if (hosting() && !answer && room_container(m.id)) {  // TLDCoop_DLC: its room isn't up here yet: kept for it
+            g_store[m.scene][m.id] = Stored{m.text, true};
+            logx::info("containers: the other player changed %s, in a Seamless Interiors room not built here yet; kept "
+                       "for it", short_id(m.id).c_str());
+            return;
+        }
         logx::warn("containers: the other player's container %s isn't in our %s", short_id(m.id).c_str(), g_scene.c_str());
         return;
     }
@@ -1182,6 +1204,12 @@ void on_frame(bool in_game) {
     receive();
     lock_receive();
     if (g_scene.empty()) return;
+    // TLDCoop_DLC: a Seamless Interiors room came up here: the changes kept for its containers
+    static uint32_t rooms_seen = 0;
+    if (const uint32_t rooms_now = seamless_interiors::rooms_generation(); rooms_now != rooms_seen) {
+        rooms_seen = rooms_now;
+        if (hosting()) apply_stored();
+    }
     lock_tick();
     if (now - g_last_watch >= kWatchMs) {
         g_last_watch = now;

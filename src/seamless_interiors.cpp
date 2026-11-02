@@ -3710,6 +3710,7 @@ void forget_region(const char* why) {
     g_scene_keys.clear();
     g_scene_keys_read = g_scene_keys_failed = false;
     g_overlay.clear();  // an import not finished in this region (nothing of it was written)
+    g_file_item_ids.clear();
     g_region_scene_state = 0;
     g_region_state_searches = 0;
     g_state_corrections = 0;
@@ -3829,9 +3830,9 @@ void on_frame(const std::string& scene, bool in_game) {
                                                 : "off (every door is the game's own)");
     }
     g_engaged = engaged_now;
+    tick_coop_rooms();  // milestone 2: which rooms each game has (also with none here: the others are told so; K2)
     if (!g_engaged || g_instances.empty()) return;
     (void)scene;
-    tick_coop_rooms();  // milestone 2: which rooms each game has
     tick_build();
     check_inside_record();  // milestone 1b: back into the room the save was made in
     tick_hold();

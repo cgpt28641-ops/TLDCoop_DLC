@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <string>
 
 #include "hooks.h"
 #include "il2cpp_api.h"
@@ -28,6 +29,8 @@ struct Api {
     const MethodInfo* refresh = nullptr;          // BasicMenu.Refresh()
     const MethodInfo* on_done = nullptr;          // Panel_PauseMenu.OnDone(): back to the game
     const MethodInfo* save = nullptr;             // static GameManager.SaveGameAndDisplayHUDMessage()
+    ptrdiff_t models = -1;                        // BasicMenu.m_ItemModelList (List<BasicMenuItemModel>)
+    ptrdiff_t model_id = -1;                      // BasicMenuItemModel.m_Id
 } api;
 
 uintptr_t g_menu = 0;     // the pause menu's BasicMenu (GC handle)
@@ -73,7 +76,26 @@ void configure_detour(Il2CppObject* self, const MethodInfo* method) {
     if (logged++ < 3) logx::info("save: 'ZAPISZ GRĘ' added to ESC's menu (row %d)", index);
 }
 
-bool ours(Il2CppObject* self, int32_t index) { return self && self == menu() && index == g_index && g_index >= 0; }
+// The id of the menu's row `index` ("" if it can't be read).
+bool row_id(Il2CppObject* m, int32_t index, std::string& out) {
+    if (!m || api.models < 0 || api.model_id < 0 || index < 0) return false;
+    Il2CppObject* list = il2::read_field<Il2CppObject*>(m, api.models);
+    if (!list) return false;
+    Il2CppObject* items = il2::read_field<Il2CppObject*>(list, 0x10);
+    const int32_t size = il2::read_field<int32_t>(list, 0x18);
+    if (index >= size || static_cast<size_t>(index) >= il2::array_length(items)) return false;
+    Il2CppObject* model = il2::array_object_at(items, static_cast<size_t>(index));
+    Il2CppObject* id = model ? il2::read_field<Il2CppObject*>(model, api.model_id) : nullptr;
+    out = id ? il2::to_utf8(reinterpret_cast<Il2CppString*>(id)) : std::string();
+    return true;
+}
+// Our row, by its id (the row's index only when the rows can't be read).
+bool ours(Il2CppObject* self, int32_t index) {
+    if (!self || self != menu()) return false;
+    std::string id;
+    if (row_id(self, index, id)) return id == kItemId;
+    return index == g_index && g_index >= 0;
+}
 
 void do_save_from_menu() {
     logx::info("save: 'ZAPISZ GRĘ' chosen; the game saves as the menu closes");
@@ -122,17 +144,20 @@ void init() {
     const MethodInfo* clicked = il2::find_method(basic, "OnItemClicked", 1);
     const MethodInfo* double_clicked = il2::find_method(basic, "OnItemDoubleClicked", 1);
     const MethodInfo* confirm = il2::find_method(basic, "OnConfirm", 0);
-    const bool ok = api.basic_menu >= 0 && api.add_item && api.save && configure && clicked &&
-                    hooks::install_method("Panel_PauseMenu.ConfigureMenu", configure, reinterpret_cast<void*>(&configure_detour),
-                                          reinterpret_cast<void**>(&g_configure)) &&
-                    hooks::install_method("BasicMenu.OnItemClicked", clicked, reinterpret_cast<void*>(&clicked_detour),
-                                          reinterpret_cast<void**>(&g_clicked));
+    api.models = il2::field_offset_quiet(basic, "m_ItemModelList");
+    if (Il2CppClass* model = il2::find_nested_class(basic, "BasicMenuItemModel")) api.model_id = il2::field_offset_quiet(model, "m_Id");
+    // The handlers first: the row is added only once a click on it is ours (else it would do nothing).
+    bool ok = api.basic_menu >= 0 && api.add_item && api.save && configure && clicked &&
+              hooks::install_method("BasicMenu.OnItemClicked", clicked, reinterpret_cast<void*>(&clicked_detour),
+                                    reinterpret_cast<void**>(&g_clicked));
     if (ok && double_clicked)
         hooks::install_method("BasicMenu.OnItemDoubleClicked", double_clicked, reinterpret_cast<void*>(&double_clicked_detour),
                               reinterpret_cast<void**>(&g_double_clicked));
     if (ok && confirm)
         hooks::install_method("BasicMenu.OnConfirm", confirm, reinterpret_cast<void*>(&confirm_detour),
                               reinterpret_cast<void**>(&g_confirm));
+    ok = ok && hooks::install_method("Panel_PauseMenu.ConfigureMenu", configure, reinterpret_cast<void*>(&configure_detour),
+                                     reinterpret_cast<void**>(&g_configure));
     logx::info("save: %s", ok ? "ready ('ZAPISZ GRĘ' in ESC's menu)" : "UNAVAILABLE (TLD API missing)");
 }
 

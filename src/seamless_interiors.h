@@ -21,7 +21,10 @@
 //
 // Building list: src/seamless_configs.inc (tools/seamless/gen_configs.py from SI's own list).
 
+#include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "config.h"
 
@@ -82,6 +85,20 @@ bool settle_in_room(Il2CppObject* gear_item);
 // A world position inside the parked spot of a room that isn't built in our game: what the other game puts there
 // can't stand here yet (it comes with the host's lists once the room is up).
 bool unbuilt_room_at(float x, float y, float z);
+
+// Host: the item (by its co-op id) is in the saved file of a room that isn't built in our game yet: a friend's change
+// to it waits for the room (it'd be missing here until then).
+bool unbuilt_room_has_item(const std::string& pdid);
+
+// Friend: a room object of ours whose room the host hasn't said is up in its game: the host's lists don't have it yet
+// (it isn't removed for missing from them).
+bool host_lacks_room_of(Il2CppObject* component_or_game_object);
+
+// The building whose ready room holds this object ("" for anything else).
+std::string room_of(Il2CppObject* component_or_game_object);
+
+// Host: rooms whose items go to a friend as full records once the lists go to them again (player 0: every friend).
+std::vector<std::pair<uint8_t, std::vector<std::string>>> take_room_puts();
 
 // Before a co-op teleport next to another player (a join, a respawn): their place. Leaves the room we're in when they
 // are elsewhere; takes us into theirs when it is built here (true, `indoors` set: teleport to their spot), or puts the
