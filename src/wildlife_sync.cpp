@@ -1963,6 +1963,7 @@ bool init() {
     {
         const auto ini = paths::instance_dir() / L"coop.ini";
         g_own_config = GetPrivateProfileIntW(L"wildlife", L"ownership", 1, ini.c_str()) != 0;
+        g_own_record = GetPrivateProfileIntW(L"wildlife", L"handover_record", 1, ini.c_str()) != 0;
         coop_features::set_own(net::kFeatureWildOwnership, g_own_config);
         logx::info("wildlife: ownership %s ([wildlife] ownership=%d; the host's counts)%s", g_own_config ? "on" : "off",
                    g_own_config ? 1 : 0,

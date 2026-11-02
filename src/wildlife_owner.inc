@@ -33,6 +33,8 @@ constexpr double kOwnPuppetStaleMs = 2500;
 constexpr double kOwnWrongMs = 2000;
 
 bool g_own_config = true;  // host: coop.ini [wildlife] ownership (default 1)
+bool g_own_record = true;  // [wildlife] handover_record (default 1): TLD's own record of the animal goes with it
+                           // (BaseAi.Serialize / Deserialize); 0: only what we read ourselves
 bool g_own_was = false;
 std::string g_own_scene;
 bool g_pool_released = false;  // this visit: our hidden animals were put back to be shared (we spawn here, nothing known)
@@ -639,7 +641,7 @@ void take_local(const net::WildCtlMsg& t, double now) {
     Il2CppObject* go = go_of(ai);
     set_active(go, true);
     const bool dead_take = (t.flags & net::kTakeDead) != 0 || (s.flags & net::kAnimalDead) != 0;
-    if (!dead_take && !t.text.empty() && api.ai_deserialize) {
+    if (!dead_take && g_own_record && !t.text.empty() && api.ai_deserialize) {
         void* args[] = {il2::il2cpp_string_new(t.text.c_str())};
         il2::invoke(api.ai_deserialize, ai, args);
     }
@@ -741,7 +743,7 @@ void release_local(uint32_t id, uint8_t to, uint16_t epoch, double now) {
     il2::invoke_value(api.get_position, tf, pos);
     il2::invoke_value(api.get_euler, tf, euler);
     t.state = own_record(ai, id, epoch, pos, euler);
-    if (api.ai_serialize)
+    if (api.ai_serialize && g_own_record)
         if (auto* text = reinterpret_cast<Il2CppString*>(il2::invoke(api.ai_serialize, ai))) t.text = il2::to_utf8(text);
     if (t.text.size() > net::kWildTextMax) t.text.clear();
     // A copy in its place, at its pose and animation time.
@@ -903,9 +905,16 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
         if (by_friend) near_friend.insert(key);
         if (by_friend && api.set_culling)
             if (Il2CppObject* animator = il2::read_field<Il2CppObject*>(ai, api.ai_animator)) {
+                // Animated (a whole animal, no imposter) whether or not our camera sees it: another player does.
                 int32_t culling = kCullAlwaysAnimate;
                 void* cull_args[] = {&culling};
                 il2::invoke(api.set_culling, animator, cull_args);
+                static const ptrdiff_t on_screen = il2::field_offset_quiet(il2::find_class(kGame, "", "BaseAi"), "m_ImposterDistanceOnScreen");
+                static const ptrdiff_t off_screen = il2::field_offset_quiet(il2::find_class(kGame, "", "BaseAi"), "m_ImposterDistanceOffScreen");
+                static const ptrdiff_t cull_mode = il2::field_offset_quiet(il2::find_class(kGame, "", "BaseAi"), "m_ImposterCullingMode");
+                write_field<float>(ai, on_screen, 100000.0f);
+                write_field<float>(ai, off_screen, 100000.0f);
+                write_field<int32_t>(ai, cull_mode, culling);
             }
         net::AnimalRec a = own_record(ai, id, own.epoch, pos, euler);
         auto emitters = g_ai_emitters.find(key);
