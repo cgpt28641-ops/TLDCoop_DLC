@@ -3012,6 +3012,20 @@ using LoadScreenFn = void (*)(Il2CppString* scene, const MethodInfo* method);
 LoadScreenFn g_load_screen = nullptr;
 void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
     world_items::door_used();
+    // The game loads one of those interiors as its own scene now: a late load of it given up on is no longer told from
+    // the real one (its GameManager must wake): not kept out any more.
+    if (!g_orphan_loads.empty() && scene) {
+        const std::string base = interior_base(il2::to_utf8(scene));
+        for (auto it = g_orphan_loads.begin(); it != g_orphan_loads.end();) {
+            if (interior_base(it->scene) != base) {
+                ++it;
+                continue;
+            }
+            logx::warn("interiors: the game loads %s itself; the late load of %s is let go", base.c_str(), it->scene.c_str());
+            drop(it->op);
+            it = g_orphan_loads.erase(it);
+        }
+    }
     g_load_screen(scene, method);
 }
 // A vanilla door to an interior whose scene we are loading right now (for a room, or a late load given up on) or whose

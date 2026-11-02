@@ -492,3 +492,32 @@ Karol wants https://github.com/Fuar11/DynamicTrees built in like Ambient Lights.
 - Poprawki 1b: (1) SerializationUtils/FastJson szukane w Assembly-CSharp, a są w TLD.Serialization.dll → meble postawione przez gracza w pokojach NIGDY nie wracały (zostawały w pliku jako sieroty); teraz oba serializatory, drugi jako zapas. (2) begin_gear kasował każdy przedmiot regionu leżący w pokoju – teraz tylko kopię rekordu z pliku (ta sama nazwa ≤12 cm), resztę bierze do pokoju. (3) Zawartość skrzynek do suszenia zapisywana z meblem (3. pole .spawned); gdy nie da się jej przywrócić – stary rekord zostaje. (4) Hook LoadScene.Activate instalowany nawet, gdy reszta SI się nie rozwiąże (door_used z e53e011).
 - Sprawdzone: adopcja przed każdym zapisem (adopt_before_save), przedmioty w zamkniętym pokoju liczone jako obecne (active_in_closed_room), door_used wołane dla każdych drzwi, też bezszwowych.
 - Pominięte: junk (m_JunkManagedSerialized), zepsute dekoracje, zdjęcia w ramkach, klucz „ostatni nieprzypisany” SI dla budynków dzielących scenę (takie zostają przy zwykłych drzwiach).
+
+## 2026-11-02 – Seamless Interiors: poprawki z trzech przeglądów (rdzeń, zapis/import, co-op)
+Każde zgłoszenie sprawdzone w kodzie przed zmianą. Wyłączone SI = jak dotąd (przepuszczanie), poza: drzwi gry czekają, gdy ich wnętrze właśnie się wczytuje (C1), a dane usuniętego zapisu są przenoszone, nie kasowane (P2).
+Rdzeń (seamless_interiors.cpp):
+- C1 crash: zwykłe drzwi do wnętrza, którego scena wczytuje się dla pokoju (g_loading_base), spóźnionego wczytania (sierota) albo którego budynek jest w budowie – zablokowane („[PORTAL-BLOCK] … isn't ready yet”), inaczej skip_game_manager_awake niszczył prawdziwy GameManager.
+- C2: wczytania porzucone (zmiana regionu, limit 45 s, nieudana budowa) trafiają do g_orphan_loads (przeżywa forget_region): ich scena dalej poza grą (GameManager, listy zapisu), po dojściu UnloadSceneAsync; poll_orphans co klatkę, także bez pokoi. Budynek z sierotą swojej sceny nie jest budowany; gdy gra sama wczytuje tę scenę (LoadSceneWithLoadingScreen) – sierota puszczona.
+- C3: wyjmowanie z GearManager/ContainerManager i przesunięcie gracza w PlayerManager.Serialize cofane w destruktorach (wyjątek IL2CPP też je uruchamia); lista czytana ponownie przy oddawaniu.
+- C4: referencje zarządzane (m_IndoorSpaceTrigger, m_TriggerID, m_HeatSource, m_Guid, sloty tablic lightmap/materiałów) przez il2cpp_gc_wbarrier_set_field (eksport opcjonalny, il2::store_ref).
+- C5 SnowPlaneManager szukany najwyżej co 2 s; C6 kopie materiałów niszczone z regionem; C9 Scene.GetRootGameObjectsInternal + List<GameObject> (stara metoda tylko awaryjnie); C10 listy po indeksie; K11 korzenie pokoi w pamięci na klatkę, szybkie „nie” bez pokoi.
+- C7: world_items::door_used tylko dla drzwi gry (ścieżka g_activate) i w GameManager.LoadSceneWithLoadingScreen (dołączenie, krawędź regionu, odrodzenie); drzwi bezszwowe i czekające już go nie wołają.
+- C8: bez zmian poza P2 (commit/discard własnego folderu przy wyłączonym SI jest w porządku).
+Zapis/import (seamless_persist.inc, seamless_import.inc):
+- P1 WAŻNE: purge_leaked usuwa tylko przedmioty regionu obecne (i nieruszone) od początku hydracji (hydration_gear); hide_room: najpierw adopcja, potem purge – patyk położony obok identycznego nie znika.
+- P2 WAŻNE: DeleteSaveFiles nie rusza danych aktualnie granego zapisu; inne foldery przenoszone do worlds/deleted/<folder>_<data>.
+- P3: RestoreGame czeka na trwający zapis tego slotu (IsAsyncSavePending → WaitAsyncSaveComplete); jeśli dalej trwa – pliki .pending zostają.
+- P4: OnSaveCompleted: commit tylko przy ASYNC(0)/SUCCESS(4); BUSY/ERROR/ERROR_SILENT – zostają staged (log).
+- P5: zapis CreateFileW/WriteFile/FlushFileBuffers + MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH) z ponowieniami; nowe pliki „TLDCOOP-SI 2 <rodzaj>” ze stopką „#end <liczba>”; brak/niezgodna stopka = nieczytelny (kopia, blokada, nigdy nadpisany). Pliki „TLDCOOP-SI 1” (bez stopki) czytane jak dotąd i przepisywane do wersji 2 przy zapisie. UWAGA: starszy build moda uzna pliki v2 za nieczytelne (zablokuje, niczego nie straci).
+- P6: save_* zwracają wynik; znacznik .imported dopiero gdy wszystkie pliki zapisane (inaczej czeka w Instance::import_marker na następny udany zapis); nieudany commit zostawia commit.failed, a wczytanie wtedy commituje zamiast wyrzucać.
+- P7: rodzaj z nieczytelnym plikiem nie jest adoptowany (przedmioty/meble), .spawned zapisywany mimo zablokowanego .placeables; settle_in_room nie bierze do pokoju z zablokowanym .gear.
+- P8: bliźniaki regionu i przedmioty gracza znalezione w pokoju przez begin_gear – usuwane/brane do pokoju dopiero na końcu hydracji (po import_complete); przy porzuceniu importu zostają w regionie.
+- P9: noszona dekoracja po obiekcie (handle), nie po guid (budynki ze wspólną sceną); zapas „cała scena” w restore_placeables pomija inne pokoje; rekordy ognisk z zapisu regionu tylko gdy plik budynku nie ma żadnych FI i scena nie jest wspólna.
+- P10 deterministic_ids z „#n” dla identycznych w tym samym miejscu; P11 adopcja przed zapisem tylko dla pokoi z folderem tego zapisu; P12 recursive_mutex na save_rooms i commit_import; P13 f2 przez std::to_chars.
+Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, wildlife_targets.cpp):
+- K1 WAŻNE: host: ItemPut znajomego do niezbudowanego pokoju i zabranie przedmiotu z pliku niezbudowanego pokoju czekają w g_pending (apply_pending ponownie przy rooms_generation); zmiany szafek „si:” czekają na pokój; znajomy: apply_list nie usuwa przedmiotów z pokoi, których host nie zgłosił. Nie zrobione: opóźnianie list hosta (zastąpione powyższym), ogniska.
+- K2: Rooms wysyłane także bez pokoi (ids={}), pakiety Rooms zawsze odbierane; host_has wymaga hosta w tym regionie.
+- K3: przez drzwi/„wszystko naraz”: Taken nadal wysyłany (tylko gdy przedmiot faktycznie w plecaku), wstrzymane tylko Destroyed.
+- K4: wyłączony przedmiot hosta użyty tylko gdy po włączeniu jest w świecie (inaczej kopia), stan (sidła, puszka, światło, garnek) wczytany.
+- K5 pokoje znajomego zapominane przy nowym połączeniu; K6 po pojawieniu się pokoju host wysyła pełne ItemPut (kItemAnswer) jego przedmiotów; klucz szafek/obiektów pokoju po guid mebla (gdy jest); K7 znajomy w pokoju = zniknął dla zwierząt; K8 teleport do nieznanego pokoju – pod jego drzwi; K9 unbuilt_room_at wg bryły/promienia pokoju.
+- K10 przycisk ZAPISZ GRĘ: najpierw hooki kliknięć, ConfigureMenu tylko jeśli się udały; nasz wiersz po id.
