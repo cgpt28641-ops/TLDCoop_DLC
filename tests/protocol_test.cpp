@@ -172,6 +172,32 @@ int main() {
         refuse.op = WildOp::Refuse;
         refuse.id = 77, refuse.epoch = 2;
         round_trip("WildCtl Refuse", Msg::WildCtl, refuse, write_wild_ctl, read_wild_ctl);
+        // v45
+        frame.animals[0].region = 0xA1B2C3D4;
+        round_trip("WildFrame region", Msg::WildFrame, frame, write_wild_frame, read_wild_frame);
+        WildCtlMsg moved = take;
+        moved.flags = kTakeMoved;
+        moved.hours = 6.5;
+        round_trip("WildCtl Take moved", Msg::WildCtl, moved, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg gone;
+        gone.op = WildOp::Gone;
+        gone.id = 0x2000009, gone.epoch = 4;
+        round_trip("WildCtl Gone", Msg::WildCtl, gone, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg kill;
+        kill.op = WildOp::Kill;
+        kill.id = 0x3000003, kill.flags = kKillGone, kill.died_on = 2, kill.kind = 1, kill.region = 99;
+        kill.scene = "LakeRegion";
+        round_trip("WildCtl Kill", Msg::WildCtl, kill, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg regions;
+        regions.op = WildOp::Regions;
+        regions.scene = "CoastalRegion";
+        regions.hours = 120.25;
+        regions.regions = {{7, 2, 1, 5.5f, -3.0f, 0.0f}, {8, 0, 0, -1.0f, 2.0f, 24.0f}};
+        round_trip("WildCtl Regions", Msg::WildCtl, regions, write_wild_ctl, read_wild_ctl);
+        WildCtlMsg keep = take;
+        keep.op = WildOp::Keep;
+        keep.hours = 333.5;
+        round_trip("WildCtl Keep", Msg::WildCtl, keep, write_wild_ctl, read_wild_ctl);
 
         WildHitMsg wild_hit;
         wild_hit.op = WildHitOp::Hit;

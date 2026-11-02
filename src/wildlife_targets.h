@@ -13,7 +13,8 @@
 //            with the health it has left.
 //   damage - AiTarget.ApplyDamage on their stand-in, and the animal's wound events (DamageEventTable.MaybeApplyAttack:
 //            bleeding, sprains, torn clothing), are sent to them to apply.
-// Every animal kind goes through the same calls. Host only; main thread.
+// Every animal kind goes through the same calls. Host only; main thread. v45 (wildlife ownership): a friend's game
+// does step 1 for the animals it runs; step 2 isn't done there (the host hands the animal to the player it is after).
 
 #include <cstdint>
 #include <functional>

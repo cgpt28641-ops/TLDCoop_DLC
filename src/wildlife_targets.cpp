@@ -174,7 +174,7 @@ struct StandIn {
 };
 StandIn g_stand_in;  // main thread only (BaseAi runs there)
 
-std::unordered_map<uintptr_t, uint8_t> g_hunts_friend;  // BaseAi -> the player it picked (0: the host)
+std::unordered_map<uintptr_t, uint8_t> g_hunts_friend;  // BaseAi -> the player it picked (kLocal: ours)
 // Animals fighting a friend on their game: paused here until the result comes back.
 struct Fight {
     uintptr_t ai = 0;  // gchandle
@@ -197,6 +197,13 @@ bool hosting() {
     const auto role = netrt::role();
     return role && *role == net::Role::Host;
 }
+
+// TLDCoop_DLC (v45): with wildlife ownership a friend's game runs real animals too (the ones it owns): they see every
+// player (the avatars), as the host's always did. What they would do to another player isn't done there: the host
+// hands such an animal to that player's game within a second (it is after them), where TLD's own fight runs.
+bool real_animals() { return hosting() || wildlife_sync::ownership(); }
+bool runs(Il2CppObject* ai) { return wildlife_sync::ownership() ? wildlife_sync::owned_here(ai) : hosting(); }
+constexpr uint8_t kLocal = 0xFE;  // in pick_player and g_hunts_friend: our own player (the host's, on the host)
 
 bool position_of(Il2CppObject* component_or_transform, bool is_transform, Vector3& out) {
     Il2CppObject* tf = is_transform ? component_or_transform : il2::invoke(api.component_transform, component_or_transform);
@@ -278,6 +285,7 @@ std::vector<Candidate> candidates(Il2CppObject* ai, const Vector3& at) {
     // TLDCoop_DLC: a player inside a Seamless Interiors room (80 m above its building) isn't here for the animals
     if (v.host_here) {
         Candidate host;
+        host.player = kLocal;
         host.target = il2::read_field<Il2CppObject*>(ai, api.player_target);
         host.metres = distance(at, v.host);
         out.push_back(host);
@@ -294,20 +302,21 @@ std::vector<Candidate> candidates(Il2CppObject* ai, const Vector3& at) {
 
 const char* who_text(uint8_t player) {
     static char text[32];
+    if (player == kLocal) return hosting() ? "the host" : "our player";
     if (player == 0) return "the host";
     snprintf(text, sizeof(text), "the other player (%u)", player);
     return text;
 }
 
-// Which player this animal deals with now: the one it is already after, else the nearest one. The host's own player
-// is 0; a friend's stand-in comes back in `out`.
+// Which player this animal deals with now: the one it is already after, else the nearest one. Our own player is
+// kLocal; a friend's stand-in comes back in `out`.
 uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
     Il2CppObject* current = il2::read_field<Il2CppObject*>(ai, api.current_target);
     Il2CppObject* host_target = il2::read_field<Il2CppObject*>(ai, api.player_target);  // the host's own, here
     const auto key = reinterpret_cast<uintptr_t>(ai);
     const auto memo = g_hunts_friend.find(key);
     Vector3 me{};
-    if (!position_of(ai, false, me)) return 0;
+    if (!position_of(ai, false, me)) return kLocal;
     const std::vector<Candidate> all = candidates(ai, me);
     auto find = [&](uint8_t player) -> const Candidate* {
         for (const Candidate& c : all)
@@ -321,9 +330,9 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
         if (current && current == c.target) after = &c;
     const bool busy = after != nullptr;
     const Candidate* was = after ? after : memo != g_hunts_friend.end() ? find(memo->second) : nullptr;
-    if (!was) was = find(0);
+    if (!was) was = find(kLocal);
     if (!was && view().host_inside && !all.empty()) was = &all.front();  // TLDCoop_DLC: the host is in a room
-    if (!was) return 0;  // the host isn't in the game (loading): leave TLD alone
+    if (!was) return kLocal;  // our player isn't in the game (loading): leave TLD alone
     const Candidate* nearest = was;
     for (const Candidate& c : all)
         if (c.metres < nearest->metres) nearest = &c;
@@ -342,7 +351,7 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
             if (!fighting && nearest->metres < kSwitchCloserFactor * was->metres && nearest->metres < kSwitchMaxMetres) {
                 now = nearest;
                 // Hand it the new target directly: it keeps stalking / charging, at the closer player now.
-                Il2CppObject* new_target = now->player ? now->target : host_target;
+                Il2CppObject* new_target = now->player != kLocal ? now->target : host_target;
                 il2::store_ref(ai, api.current_target, new_target);
             }
         }
@@ -364,7 +373,7 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
 // loses them the way TLD's animals lose a target, rather than going after a stand-in that's gone.
 void forget_gone_friend(Il2CppObject* ai) {
     const auto memo = g_hunts_friend.find(reinterpret_cast<uintptr_t>(ai));
-    if (memo == g_hunts_friend.end() || memo->second == 0) return;
+    if (memo == g_hunts_friend.end() || memo->second == kLocal) return;
     const uint8_t player = memo->second;
     const FrameView& v = view();
     // TLDCoop_DLC: in a Seamless Interiors room (80 m above its building) they're gone for an animal outside too
@@ -442,7 +451,7 @@ bool holding_raised_spear_detour(Il2CppObject* self, const MethodInfo* method) {
 // friend's stand-in has its own: its root, m_EyeOffset up. Without it an animal measures a friend's torch from the
 // host (MaybeHoldGroundForTorch: the eyes within reach and in sight), and looks for them where the host is.
 Vector3* eye_pos_detour(Vector3* out, Il2CppObject* self, const MethodInfo* method) {
-    if (hosting() && avatar::player_of(self) && position_of(self, false, *out)) {
+    if (real_animals() && avatar::player_of(self) && position_of(self, false, *out)) {
         if (api.eye_offset >= 0) out->y += il2::read_field<float>(self, api.eye_offset);
         return out;
     }
@@ -544,8 +553,9 @@ void lose_player_inside() {
 template <typename Original>
 void think(Il2CppObject* self, const MethodInfo* method, Original original) {
     Candidate who;
-    if (hosting() && !g_stand_in.animal) forget_gone_friend(self);
-    if (g_stand_in.animal || !hosting() || view().shown.empty() || !pick_player(self, who)) {
+    const bool ours = runs(self);
+    if (ours && !g_stand_in.animal) forget_gone_friend(self);
+    if (g_stand_in.animal || !ours || view().shown.empty() || pick_player(self, who) == kLocal) {
         original(self, method);
         return;
     }
@@ -664,6 +674,17 @@ void struggle_begin_detour(Il2CppObject* self, Il2CppObject* partner, const Meth
         g_struggle_begin(self, partner, method);
         return;
     }
+    if (!hosting()) {
+        // v45: a friend's game: no fight with another player's avatar here; the animal keeps after them (Attack) and
+        // the host hands it to their game, where it jumps them for real
+        static int held = 0;
+        if (held++ < 20) logx::info("wildlife: a %s we run reached %s: it keeps after them until their game takes it",
+                                    kind_of(ai), who_text(g_stand_in.player));
+        int32_t mode = kAiModeAttack;
+        void* args[] = {&mode};
+        il2::invoke(api.set_mode, ai, args);
+        return;
+    }
     const net::AttackMsg attack = attack_from(ai, net::AttackType::Struggle, g_stand_in.player);
     if (!attack.animal || g_fights.count(attack.animal)) {
         logx::info("wildlife: a %s jumped the other player but isn't shared with them; it backs off", kind_of(ai));
@@ -694,7 +715,14 @@ void struggle_begin_detour(Il2CppObject* self, Il2CppObject* partner, const Meth
 // Damage meant for a friend's stand-in goes to them; the host's own condition is never touched.
 void target_damage_detour(Il2CppObject* self, float damage, int32_t source, Il2CppString* collider,
                           const MethodInfo* method) {
-    if (const auto player = hosting() ? avatar::player_of(self) : std::nullopt) {
+    if (const auto player = real_animals() ? avatar::player_of(self) : std::nullopt) {
+        if (!hosting()) {  // v45: a friend's game: theirs to take, once their game runs the animal
+            static int dropped = 0;
+            if (dropped++ < 20)
+                logx::info("wildlife: %.1f damage for another player (%u) from an animal we run: not dealt here (their "
+                           "game gets the animal)", damage, *player);
+            return;
+        }
         net::AttackMsg a = attack_from(g_stand_in.animal, net::AttackType::Damage, *player);
         a.damage = damage;
         a.source = source;
@@ -711,10 +739,16 @@ Il2CppObject* wounds_detour(Il2CppObject* self, Il2CppObject* instigator, int32_
     std::optional<uint8_t> player;
     if (g_stand_in.animal && instigator == g_stand_in.animal) {
         player = g_stand_in.player;
-    } else if (instigator && hosting() && api.current_target >= 0) {
+    } else if (instigator && real_animals() && api.current_target >= 0) {
         // TLDCoop_DLC: outside its Update too (a cougar's passing attack bites on an animation event): an animal after a
         // friend wounds them, not the host.
         player = avatar::player_of(il2::read_field<Il2CppObject*>(instigator, api.current_target));
+    }
+    if (player && !hosting()) {  // v45: as for damage (a friend's game)
+        static int dropped = 0;
+        if (dropped++ < 20)
+            logx::info("wildlife: wound events for another player (%u) from an animal we run: not dealt here", *player);
+        return nullptr;
     }
     if (player) {
         net::AttackMsg a = attack_from(instigator, net::AttackType::Wounds, *player);
@@ -743,7 +777,7 @@ bool first_shown(uint8_t& player, Il2CppObject*& go, Il2CppObject*& transform, I
 
 bool as_friends_doing(Il2CppObject* ai, uint8_t player, const std::function<void(const FriendStandIn&)>& action) {
     Il2CppObject *go = nullptr, *transform = nullptr, *target = nullptr;
-    if (!ai || !hosting() || !avatar::stand_in(player, go, transform, target)) return false;
+    if (!ai || !real_animals() || !avatar::stand_in(player, go, transform, target)) return false;
     Il2CppObject* pm = il2::invoke(api.player_manager, nullptr);
     if (!pm || api.pm_ai_target < 0) return false;
     // PlayerManager.m_AiTarget: what TLD's reactions aim at (MaybeFleeOrAttackFromProjectileHit sets m_CurrentTarget
@@ -776,7 +810,7 @@ bool test_attack_host(Il2CppObject* ai) {
     Il2CppObject* pm = ai && hosting() && api.pm_ai_target >= 0 ? il2::invoke(api.player_manager, nullptr) : nullptr;
     Il2CppObject* target = pm ? il2::read_field<Il2CppObject*>(pm, api.pm_ai_target) : nullptr;
     if (!target) return false;
-    pin_on_friend(ai, target, 0);  // player 0: the host
+    pin_on_friend(ai, target, kLocal);  // our own player
     int32_t mode = kAiModeAttack;
     void* args[] = {&mode};
     il2::invoke(api.set_mode, ai, args);

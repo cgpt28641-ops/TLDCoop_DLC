@@ -12,7 +12,7 @@
 //   + kInsideMetres when they are inside a Seamless Interiors room (80 m above the building, not out here)
 // Hysteresis: the best one takes over only when it beats the owner by kMarginMetres (or kMarginShare of the owner's
 // score) for kHoldMs (kEngagedHoldMs when the animal is after them), never sooner than kMinSwitchMs after the last
-// switch, never during a fight (Struggle) or a handover, never for a dead animal. An owner who left the scene is
+// switch (kEngagedMinSwitchMs to the one it is after), never during a fight (Struggle) or a handover, never for a dead animal. An owner who left the scene is
 // replaced at once.
 
 #include <algorithm>
@@ -35,6 +35,7 @@ constexpr float kMarginShare = 0.25f;
 constexpr double kHoldMs = 3000;
 constexpr double kEngagedHoldMs = 750;
 constexpr double kMinSwitchMs = 5000;
+constexpr double kEngagedMinSwitchMs = 1500;  // v45: to the one it is after (their game runs the attack)
 
 // AiMode values (TLD's)
 constexpr uint8_t kModeAttack = 1, kModeDead = 2, kModeFlee = 4, kModeHoldGround = 6, kModeInvestigate = 8,
@@ -154,7 +155,7 @@ inline uint8_t decide(Track& t, const Facts& f, const std::vector<Seat>& seats, 
         t.since_ms = now_ms;
     }
     const double hold = engaged ? kEngagedHoldMs : kHoldMs;
-    if (now_ms - t.since_ms < hold || now_ms - t.last_switch_ms < kMinSwitchMs) return kNobody;
+    if (now_ms - t.since_ms < hold || now_ms - t.last_switch_ms < (engaged ? kEngagedMinSwitchMs : kMinSwitchMs)) return kNobody;
     t.candidate = kNobody;
     t.last_switch_ms = now_ms;
     why = engaged ? Why::Engaged : (best->looking && !current->looking) ? Why::Looking : Why::Closer;

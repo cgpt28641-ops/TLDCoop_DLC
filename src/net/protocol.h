@@ -112,13 +112,16 @@
 //   WildFrame either       (v44, [wildlife] ownership=1) one game's own animals, 10 Hz, as Animals but from any owner:
 //                          u8 owner, u32 frame, f64 capture time, u8 part, u8 parts, scene[48], u8 count, then per
 //                          animal u32 id, u16 epoch, u8 kind, u8 mode, u8 flags, u8 target, f32 x y z yaw pitch roll
-//                          hp, f32 bleed elapsed, f32 bleed limit, u8 layers + (i32 state, f32 time) each, u16 n + n
+//                          hp, f32 bleed elapsed, f32 bleed limit, (v45) u32 spawn region, u8 layers + (i32 state, f32 time) each, u16 n + n
 //                          bytes animator parameters. A friend sends its own to the host, the host passes them on.
 //   WildCtl  either        (v44) u8 op: Controllers (host: per scene the game that lets TLD spawn, and whether the
 //                          registry has nothing there), Release (host -> owner: hand animal id to player `to`),
 //                          Take (the state of the animal for its new owner: the old owner -> host -> new owner, or
 //                          the host's registry when the old owner is gone; TLD's own BaseAi.Serialize() inside),
-//                          Refuse (new owner -> host: it couldn't take it)
+//                          Refuse (new owner -> host: it couldn't take it); v45: Gone (owner -> host: TLD removed
+//                          it), Kill (host -> the scene's spawning game: an animal of one of its spawn regions died or
+//                          is gone), Regions (spawn regions' respawn state: the spawning game -> host, host -> the
+//                          next spawning game), Keep (the host's registry in its save, world_keep only)
 //   WildSounds either      (v44) as AnimalSounds, from any owner (the host passes a friend's on)
 //   WildHit  host->client  (v44) u8 op (1 hit, 2 thrown), u8 who (the shooter), then a Hit or Thrown body: a shot on
 //                          an animal another game runs, passed on to its owner
@@ -135,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 44;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 45;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -191,6 +194,8 @@ constexpr uint16_t kProtocolVersion = 44;  // v4: World. v5: Animals. v6: sounds
                                            // v44 (TLDCoop_DLC): wildlife ownership (each animal run by one game, the
                                            // host the arbiter): WildFrame, WildCtl, WildSounds, WildHit; Features'
                                            // kFeatureWildOwnership
+                                           // v45 (TLDCoop_DLC): wildlife stages 2/3: AnimalRec's spawn region,
+                                           // WildCtl Gone / Kill / Regions, Take's kTakeMoved / kTakeBody and hours
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -296,6 +301,9 @@ struct AnimalRec {
     uint16_t epoch = 0;
     uint8_t target = 0xFF;
     float bleed_elapsed = 0, bleed_limit = 0;
+    // v45: the spawn region it belongs to (a hash of where the region is, the same in every game; 0 unknown), kept
+    // with the animal from owner to owner.
+    uint32_t region = 0;
 };
 constexpr uint8_t kAnimalDead = 1;
 constexpr uint8_t kAnimalAurora = 2;  // TLDCoop_DLC: an aurora animal (its own model)
@@ -1586,7 +1594,7 @@ struct WildFrameMsg {
     std::vector<AnimalRec> animals;
     double received_ms = 0;  // not sent
 };
-inline size_t wild_rec_size(const AnimalRec& a) { return 4 + 2 + 4 + 36 + 1 + a.layers.size() * 8 + 2 + a.params.size(); }
+inline size_t wild_rec_size(const AnimalRec& a) { return 4 + 2 + 4 + 36 + 4 + 1 + a.layers.size() * 8 + 2 + a.params.size(); }
 constexpr size_t kWildFrameHeader = 7 + 1 + 4 + 8 + 2 + kSceneLen + 1;
 
 inline void write_wild_rec(Writer& w, const AnimalRec& a) {
@@ -1597,6 +1605,7 @@ inline void write_wild_rec(Writer& w, const AnimalRec& a) {
     w.put(a.flags);
     w.put(a.target);
     for (float v : {a.x, a.y, a.z, a.yaw, a.pitch, a.roll, a.hp, a.bleed_elapsed, a.bleed_limit}) w.put(v);
+    w.put(a.region);
     const size_t layers = a.layers.size() < kMaxAnimalLayers ? a.layers.size() : kMaxAnimalLayers;
     w.put(static_cast<uint8_t>(layers));
     for (size_t l = 0; l < layers; ++l) {
@@ -1618,6 +1627,7 @@ inline bool read_wild_rec(Reader& r, AnimalRec& a) {
         *v = r.get<float>();
         if (!std::isfinite(*v)) return false;
     }
+    a.region = r.get<uint32_t>();
     const uint8_t layers = r.get<uint8_t>();
     if (layers > kMaxAnimalLayers) return false;
     a.layers.clear();
@@ -1660,10 +1670,24 @@ inline bool read_wild_frame(Reader& r, WildFrameMsg& m) {
 }
 
 // WildCtl: the host arbitrates who runs each animal.
-enum class WildOp : uint8_t { Controllers = 1, Release = 2, Take = 3, Refuse = 4 };
+enum class WildOp : uint8_t { Controllers = 1, Release = 2, Take = 3, Refuse = 4, Gone = 5, Kill = 6, Regions = 7, Keep = 8 };
 constexpr uint8_t kTakeDead = 1;     // Take: the animal died on its owner; the host runs its carcass from here
 constexpr uint8_t kTakeKept = 2;     // Take: the old owner keeps it (a fight began meanwhile); `to` is the old owner
 constexpr uint8_t kTakeNoState = 4;  // Take: the old owner hasn't got it any more: the host's registry fills it in
+constexpr uint8_t kTakeMoved = 8;    // v45 Take: nobody saw it for a while (hours): placed anew in its spawn region
+constexpr uint8_t kTakeBody = 16;    // v45 Take (with kTakeDead): `text` is its carcass (BodyHarvest.Serialize())
+constexpr uint8_t kKillGone = 1;     // v45 Kill: it didn't die, it's just gone (TLD put it away): no respawn wait
+constexpr uint8_t kKillCounted = 2;  // v45 Kill: TLD's own spawn region bookkeeping already counted it where it died
+constexpr size_t kWildRegionsMax = 128;
+// v45: one spawn region's respawn state, its times relative to the game hours of whoever sent it.
+struct WildRegionState {
+    uint32_t key = 0;
+    int32_t pending = 0;        // SpawnRegion.m_NumRespawnsPending
+    int32_t trapped = 0;        // m_NumTrapped
+    float next_h = 0;           // m_ElapasedHoursNextRespawnAllowed - now
+    float trap_reset_h = 0;     // m_HoursNextTrapReset - now
+    float cooldown_h = 0;       // m_CooldownTimerHours - now
+};
 constexpr size_t kWildTextMax = 32 * 1024;  // BaseAi.Serialize()
 constexpr size_t kWildScenesMax = 16;
 struct WildSceneControl {
@@ -1680,7 +1704,14 @@ struct WildCtlMsg {
     uint8_t flags = 0;                     // Take: kTake*
     std::string scene;                     // Take
     AnimalRec state;                       // Take: as the old owner (or the registry) last had it
-    std::string text;                      // Take: BaseAi.Serialize() ("" none)
+    std::string text;                      // Take: BaseAi.Serialize() ("" none); kTakeBody: BodyHarvest.Serialize()
+    // v45
+    double hours = 0;                      // Take kTakeMoved: game hours nobody saw it; Keep: game hours when frozen;
+                                           // Regions: (host's store) its game hours when the states were reported
+    uint32_t region = 0;                   // Kill: the spawn region (AnimalRec.region)
+    uint8_t died_on = kNoPlayer;           // Kill: the game it died in
+    uint8_t kind = 0;                      // Kill
+    std::vector<WildRegionState> regions;  // Regions (scene: `scene`)
 };
 
 inline void write_wild_ctl(Writer& w, const WildCtlMsg& m) {
@@ -1709,10 +1740,45 @@ inline void write_wild_ctl(Writer& w, const WildCtlMsg& m) {
             w.put_str(m.scene, kSceneLen);
             write_wild_rec(w, m.state);
             w.put_long_blob(m.text.size() <= kWildTextMax ? m.text : std::string());
+            w.put(m.hours);
             break;
         case WildOp::Refuse:
+        case WildOp::Gone:
             w.put(m.id);
             w.put(m.epoch);
+            break;
+        case WildOp::Kill:
+            w.put(m.id);
+            w.put(m.flags);
+            w.put(m.died_on);
+            w.put(m.kind);
+            w.put(m.region);
+            w.put_str(m.scene, kSceneLen);
+            break;
+        case WildOp::Regions: {
+            w.put_str(m.scene, kSceneLen);
+            w.put(m.hours);
+            const size_t n = m.regions.size() < kWildRegionsMax ? m.regions.size() : kWildRegionsMax;
+            w.put(static_cast<uint8_t>(n));
+            for (size_t i = 0; i < n; ++i) {
+                const WildRegionState& g = m.regions[i];
+                w.put(g.key);
+                w.put(g.pending);
+                w.put(g.trapped);
+                w.put(g.next_h);
+                w.put(g.trap_reset_h);
+                w.put(g.cooldown_h);
+            }
+            break;
+        }
+        case WildOp::Keep:
+            w.put(m.id);
+            w.put(m.epoch);
+            w.put(m.flags);
+            w.put(m.hours);
+            w.put_str(m.scene, kSceneLen);
+            write_wild_rec(w, m.state);
+            w.put_long_blob(m.text.size() <= kWildTextMax ? m.text : std::string());
             break;
     }
 }
@@ -1746,11 +1812,49 @@ inline bool read_wild_ctl(Reader& r, WildCtlMsg& m) {
             m.scene = r.get_str(kSceneLen);
             if (!read_wild_rec(r, m.state)) return false;
             m.text = r.get_long_blob(kWildTextMax);
-            return r.ok();
+            m.hours = r.get<double>();
+            return r.ok() && std::isfinite(m.hours);
         case WildOp::Refuse:
+        case WildOp::Gone:
             m.id = r.get<uint32_t>();
             m.epoch = r.get<uint16_t>();
             return r.ok();
+        case WildOp::Kill:
+            m.id = r.get<uint32_t>();
+            m.flags = r.get<uint8_t>();
+            m.died_on = r.get<uint8_t>();
+            m.kind = r.get<uint8_t>();
+            m.region = r.get<uint32_t>();
+            m.scene = r.get_str(kSceneLen);
+            return r.ok();
+        case WildOp::Regions: {
+            m.scene = r.get_str(kSceneLen);
+            m.hours = r.get<double>();
+            const uint8_t n = r.get<uint8_t>();
+            if (n > kWildRegionsMax) return false;
+            m.regions.clear();
+            for (uint8_t i = 0; i < n && r.ok(); ++i) {
+                WildRegionState g;
+                g.key = r.get<uint32_t>();
+                g.pending = r.get<int32_t>();
+                g.trapped = r.get<int32_t>();
+                g.next_h = r.get<float>();
+                g.trap_reset_h = r.get<float>();
+                g.cooldown_h = r.get<float>();
+                if (!std::isfinite(g.next_h) || !std::isfinite(g.trap_reset_h) || !std::isfinite(g.cooldown_h)) return false;
+                m.regions.push_back(g);
+            }
+            return r.ok() && std::isfinite(m.hours);
+        }
+        case WildOp::Keep:
+            m.id = r.get<uint32_t>();
+            m.epoch = r.get<uint16_t>();
+            m.flags = r.get<uint8_t>();
+            m.hours = r.get<double>();
+            m.scene = r.get_str(kSceneLen);
+            if (!read_wild_rec(r, m.state)) return false;
+            m.text = r.get_long_blob(kWildTextMax);
+            return r.ok() && std::isfinite(m.hours);
     }
     return false;
 }

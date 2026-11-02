@@ -15,6 +15,7 @@
 #include <string>
 
 #include "il2cpp_api.h"
+#include "world_keep.h"
 
 namespace wildlife_sync {
 
@@ -46,6 +47,9 @@ uint8_t owner_of(uint32_t id);
 bool owned_here(Il2CppObject* ai);
 bool copies_shown();
 std::string describe_owners();  // dev command 'owners'
+// v45 (host, world_keep): the wildlife registry and the spawn regions' state go with the host's save.
+void save_kept(std::vector<world_keep::Record>& out);
+bool load_kept(const world_keep::Record& r);
 
 void carcass_gone(uint32_t id, Il2CppObject* carcass_go);
 

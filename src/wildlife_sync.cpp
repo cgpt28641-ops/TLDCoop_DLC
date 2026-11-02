@@ -27,6 +27,7 @@
 #include "net_runtime.h"
 #include "paths.h"
 #include "seamless_interiors.h"
+#include "world_keep.h"
 
 namespace wildlife_sync {
 namespace {
@@ -149,6 +150,20 @@ struct Api {
     const MethodInfo* ai_set_pos_rot = nullptr;  // BaseAi.SetPositionAndRotation(Vector3, Quaternion)
     const MethodInfo* ai_clear_target = nullptr; // BaseAi.ClearTarget()
     const MethodInfo* ai_apply_damage = nullptr; // virtual BaseAi.ApplyDamage(float, float, DamageSource, string)
+    // TLDCoop_DLC (v45): wildlife stages 2/3 (spawn regions, carcasses handed over, game hours).
+    ptrdiff_t ai_region = -1;                      // BaseAi.m_SpawnRegionParent
+    ptrdiff_t ai_body = -1;                        // BaseAi.m_BodyHarvest
+    const MethodInfo* bh_serialize = nullptr;      // BodyHarvest.Serialize()
+    const MethodInfo* bh_deserialize = nullptr;    // BodyHarvest.Deserialize(string, bool)
+    ptrdiff_t region_mode = -1, region_spawns = -1, region_pending = -1, region_next = -1, region_trapped = -1,
+              region_trap_reset = -1, region_cooldown = -1;  // SpawnRegion.m_WildlifeMode, m_Spawns, ...
+    const MethodInfo* region_remove = nullptr;     // SpawnRegion.RemoveFromSpawnRegion(BaseAi)
+    const MethodInfo* region_target = nullptr;     // SpawnRegion.CalculateTargetPopulation()
+    const MethodInfo* region_between = nullptr;    // SpawnRegion.GetNumHoursBetweenRespawns()
+    const MethodInfo* region_try_pos = nullptr;    // SpawnRegion.TryGetSpawnPositionAndRotation(out Vector3, out Quaternion)
+    const MethodInfo* region_population = nullptr; // SpawnRegion.GetCurrentActivePopulation(WildlifeMode)
+    const MethodInfo* tod = nullptr;               // static GameManager.GetTimeOfDayComponent()
+    const MethodInfo* hours_played = nullptr;      // TimeOfDay.GetHoursPlayedNotPaused()
 } api;
 
 bool g_ready = false;
@@ -1679,6 +1694,7 @@ void mirror(const std::string& scene, double now) {
     }
 }
 
+#include "wildlife_regions.inc"
 #include "wildlife_owner.inc"
 
 // While we mirror the host's animals, TLD's own spawning stays off: every spawn it makes at runtime (topping up a
@@ -1750,6 +1766,10 @@ bool copies_shown() {
     return role && (*role == net::Role::Client || ownership());
 }
 std::string describe_owners() { return describe_ownership(); }
+void save_kept(std::vector<world_keep::Record>& out) {
+    if (g_ready) own_save_kept(out);
+}
+bool load_kept(const world_keep::Record& r) { return g_ready && own_load_kept(r); }
 
 void carcass_made(uint32_t id, Il2CppObject* carcass_go) {
     if (carcass_go) g_carcasses.push_back(carcass_go);
@@ -1960,6 +1980,26 @@ bool init() {
     api.ai_clear_target = il2::find_method_quiet(base_ai, "ClearTarget", 0);
     api.ai_apply_damage = il2::find_method_params_quiet(base_ai, "ApplyDamage",
                                                         {"System.Single", "System.Single", "DamageSource", "System.String"});
+    api.ai_region = il2::field_offset_quiet(base_ai, "m_SpawnRegionParent");
+    api.ai_body = il2::field_offset_quiet(base_ai, "m_BodyHarvest");
+    if (Il2CppClass* bh = il2::find_class(kGame, "", "BodyHarvest")) {
+        api.bh_serialize = il2::find_method_quiet(bh, "Serialize", 0);
+        api.bh_deserialize = il2::find_method_quiet(bh, "Deserialize", 2);
+    }
+    api.region_mode = il2::field_offset_quiet(spawn_region, "m_WildlifeMode");
+    api.region_spawns = il2::field_offset_quiet(spawn_region, "m_Spawns");
+    api.region_pending = il2::field_offset_quiet(spawn_region, "m_NumRespawnsPending");
+    api.region_next = il2::field_offset_quiet(spawn_region, "m_ElapasedHoursNextRespawnAllowed");
+    api.region_trapped = il2::field_offset_quiet(spawn_region, "m_NumTrapped");
+    api.region_trap_reset = il2::field_offset_quiet(spawn_region, "m_HoursNextTrapReset");
+    api.region_cooldown = il2::field_offset_quiet(spawn_region, "m_CooldownTimerHours");
+    api.region_remove = il2::find_method_quiet(spawn_region, "RemoveFromSpawnRegion", 1);
+    api.region_target = il2::find_method_quiet(spawn_region, "CalculateTargetPopulation", 0);
+    api.region_between = il2::find_method_quiet(spawn_region, "GetNumHoursBetweenRespawns", 0);
+    api.region_try_pos = il2::find_method_quiet(spawn_region, "TryGetSpawnPositionAndRotation", 2);
+    api.region_population = il2::find_method_quiet(spawn_region, "GetCurrentActivePopulation", 1);
+    api.tod = il2::find_method_quiet(game_manager, "GetTimeOfDayComponent", 0);
+    if (Il2CppClass* tod = il2::find_class(kGame, "", "TimeOfDay")) api.hours_played = il2::find_method_quiet(tod, "GetHoursPlayedNotPaused", 0);
     {
         const auto ini = paths::instance_dir() / L"coop.ini";
         g_own_config = GetPrivateProfileIntW(L"wildlife", L"ownership", 1, ini.c_str()) != 0;
@@ -1988,6 +2028,9 @@ bool init() {
             region_update && g_region_override >= 0)
             hooks::install_method("SpawnRegion.UpdateFromManager", region_update,
                                   reinterpret_cast<void*>(&region_update_detour), reinterpret_cast<void**>(&g_region_update));
+        if (api.region_population && api.region_target)  // TLDCoop_DLC (v45): the spawning game counts animals elsewhere
+            hooks::install_method("SpawnRegion.GetCurrentActivePopulation", api.region_population,
+                                  reinterpret_cast<void*>(&population_detour), reinterpret_cast<void**>(&g_population));
         if (const MethodInfo* can_update = il2::find_method(ai_manager, "CanUpdateAI", 1))  // TLDCoop_DLC
             hooks::install_method("BaseAiManager.CanUpdateAI", can_update, reinterpret_cast<void*>(&can_update_detour),
                                   reinterpret_cast<void**>(&g_can_update));

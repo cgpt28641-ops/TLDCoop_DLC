@@ -27,6 +27,8 @@ enum class Tag : uint8_t {
     ContainerOurs = 6,    // ContainerPut: what we had there when we left
     WaterChange = 7,      // WaterPut (world_water g_store) (TLDCoop_DLC)
     ItemList = 8,         // ItemList: the loose items of a scene as we last saw them there (world_items) (TLDCoop_DLC)
+    Wildlife = 9,         // WildCtl Keep: an animal of the wildlife registry (wildlife_sync) (TLDCoop_DLC v45)
+    WildRegions = 10,     // WildCtl Regions: a scene's spawn regions' respawn state (wildlife_sync) (TLDCoop_DLC v45)
 };
 
 struct Record {

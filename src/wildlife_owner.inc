@@ -22,12 +22,23 @@
 // animal from owner to owner.
 // Spawning: one game per scene (the host says which: the one there longest) lets TLD spawn and shares what it has;
 // the others hide their own animals (kept to become animals handed to them).
+//
+// v45, stage 2: the registry goes with the host's save (world_keep, WildOp::Keep records) and animals nobody is near
+// stay frozen there (game hours noted); whoever comes near one again gets it as it would be by now: one bleeding out
+// died meanwhile (its carcass where it was), one left alone for an hour or more is somewhere else in its spawn region
+// (kTakeMoved). An animal TLD puts away in its owner's game is gone from the registry too (Gone). A carcass a friend's
+// game kept goes to the host with what was harvested from it (kTakeBody).
+// Stage 3 (wildlife_regions.inc): the spawning game counts animals alive in other games and every death anywhere
+// (Kill), and the regions' respawn state goes from one spawning game to the next (Regions, kept with the save).
 
 constexpr double kOwnArbiterMs = 250;
 constexpr double kOwnControllersMs = 2000;
 constexpr double kOwnPendingMs = 3000;
 constexpr double kOwnSilentMs = 3000;            // host: an owner in the scene that stopped sending an animal
-constexpr double kOwnFrozenMs = 30 * 60 * 1000.0;  // host: frozen animals forgotten after this long
+constexpr double kFrozenForgetHours = 7 * 24;    // host: frozen animals forgotten after this many game hours
+constexpr double kMovedAfterHours = 1.0;         // a frozen animal left alone this long is placed anew in its region
+constexpr double kRegionsReportMs = 20000;       // the spawning game reports its regions this often
+constexpr double kBodyEveryMs = 10000;           // a friend keeping a carcass (the host away) sends it this often
 constexpr double kOwnBlockMs = 60000;            // host: a game that couldn't take an animal isn't asked again for this long
 constexpr double kOwnPuppetStaleMs = 2500;
 constexpr double kOwnWrongMs = 2000;
@@ -50,6 +61,13 @@ struct Owned {
     bool kill_pending = false;  // a dead animal handed to us, made for it: killed once TLD has started it
     net::AnimalRec state;  // what it was given
     double since_ms = 0;
+    // v45
+    uint32_t region = 0;     // its spawn region (kept with it from owner to owner)
+    bool dead_told = false;  // its death was told (Kill), or it came to us dead
+    std::string body;        // a carcass handed to us: what was harvested from it, put on once TLD has made its body
+    double body_at = 0;
+    double body_sent_ms = 0; // a friend: when the host last got our carcass of it
+    bool moved = false;      // kTakeMoved: placed anew in its region once TLD has started it
 };
 std::map<uint32_t, Owned> g_owned;
 // A friend's animal that died here while the host was in the scene: the host runs its carcass; ours stays (dying) until
@@ -153,12 +171,30 @@ struct Entry {
     net::wild::Track track;
     std::array<double, net::kMaxPlayers> blocked_until{};
     double wrong_ms = 0;
+    // v45
+    double frozen_h = -1;    // game hours when it was frozen (-1: unknown)
+    std::string body;        // a carcass: BodyHarvest.Serialize() as its last owner had it
+    bool quiet_logged = false;
 };
 std::unordered_map<uint32_t, Entry> g_registry;
 net::wild::RateLimit g_handovers{4, 6};
 double g_last_arbiter = 0, g_last_controllers = 0;
 std::array<std::pair<std::string, double>, net::kMaxPlayers> g_arrival{};  // host: where each player is, since when
 std::string g_controllers_sent;
+
+// v45 (stage 3): spawn regions across games.
+std::unordered_map<uint32_t, std::unordered_set<uint32_t>> g_away;  // controller: region key -> ids of its animals we
+                                                                    // handed to other games (alive there)
+struct RegionStore {
+    net::WildCtlMsg msg;  // Regions: scene, hours (host's game hours when reported), states relative to then
+    uint8_t reporter = net::kNoPlayer;
+};
+std::unordered_map<std::string, RegionStore> g_region_store;               // host: per scene
+std::unordered_map<std::string, std::vector<net::WildCtlMsg>> g_kills_queued;  // host: deaths for a scene nobody spawns in
+std::unordered_map<std::string, net::WildCtlMsg> g_regions_in;  // a controller: the state to put on our regions
+std::vector<net::WildCtlMsg> g_kills_in;                        // ...and deaths to count, after it
+bool g_regions_applied = false;  // this visit
+double g_last_regions_report = 0;
 
 void take_local(const net::WildCtlMsg& t, double now);
 void release_local(uint32_t id, uint8_t to, uint16_t epoch, double now);
@@ -184,14 +220,145 @@ net::WildCtlMsg take_from_registry(const Entry& e, uint8_t to, uint16_t epoch) {
     t.state = e.last;
     t.state.epoch = epoch;
     t.text = e.text;
-    if (e.last.flags & net::kAnimalDead) t.flags |= net::kTakeDead;  // a body (only ever the host's)
+    if (e.last.flags & net::kAnimalDead) {
+        t.flags |= net::kTakeDead;  // a body
+        t.text = e.body;            // v45: what was harvested from it
+        if (!e.body.empty()) t.flags |= net::kTakeBody;
+    }
     return t;
+}
+
+// --- v45, host: deaths and spawn regions across games --------------------------------------------------------------
+
+void kill_local(const net::WildCtlMsg& k);
+void regions_local(const net::WildCtlMsg& m);
+
+// A death (or an animal gone) for the game that spawns in its scene; kept until one does.
+void tell_controller_kill(const net::WildCtlMsg& k) {
+    const auto c = g_controllers.find(k.scene);
+    if (c == g_controllers.end() || c->second.player == net::kNoPlayer) {
+        auto& q = g_kills_queued[k.scene];
+        if (q.size() < 64) q.push_back(k);
+        return;
+    }
+    if (c->second.player == self_id()) {
+        kill_local(k);
+        return;
+    }
+    net::Writer w(net::Msg::WildCtl, 128);
+    net::write_wild_ctl(w, k);
+    netrt::send_packet_to(c->second.player, w, true);
+}
+
+net::WildCtlMsg kill_of(const Entry& e, uint8_t flags, uint8_t died_on) {
+    net::WildCtlMsg k;
+    k.op = net::WildOp::Kill;
+    k.id = e.id;
+    k.flags = flags;
+    k.died_on = died_on;
+    k.kind = e.last.kind;
+    k.region = e.last.region;
+    k.scene = e.scene;
+    return k;
+}
+
+// The owner's game put it away (TLD's own reasons): gone from the registry, and from the spawning game's count.
+void host_gone(uint32_t id, uint8_t from) {
+    const auto it = g_registry.find(id);
+    if (it == g_registry.end() || it->second.owner != from) return;
+    logx::info("wildlife: #%u (%s) is gone from %s's game (TLD put it away): forgotten", id, kind_name(it->second.last.kind),
+               who_name(from).c_str());
+    tell_controller_kill(kill_of(it->second, net::kKillGone, from));
+    g_registry.erase(it);
+}
+
+// The spawning game's regions as it reported them: kept for the next game to spawn there (and with the save).
+void host_store_regions(net::WildCtlMsg m, uint8_t from) {
+    const double h = game_hours();
+    if (h < 0 || m.regions.empty()) return;
+    m.hours = h;
+    RegionStore& st = g_region_store[m.scene];
+    const bool first = st.msg.regions.empty();
+    st.msg = std::move(m);
+    st.reporter = from;
+    if (first)
+        logx::info("wildlife: %s's spawn regions in '%s' (%zu) kept for whoever spawns there next", who_name(from).c_str(),
+                   st.msg.scene.c_str(), st.msg.regions.size());
+}
+
+// A new spawning game in `scene`: the regions' state as last known (times brought up to now), and deaths meanwhile.
+void host_hand_regions(const std::string& scene, uint8_t to) {
+    if (to == net::kNoPlayer) return;
+    if (const auto st = g_region_store.find(scene); st != g_region_store.end() && st->second.reporter != to) {
+        const double h = game_hours();
+        net::WildCtlMsg m = st->second.msg;
+        const float since = h >= 0 && m.hours >= 0 ? static_cast<float>(h - m.hours) : 0.0f;
+        for (net::WildRegionState& g : m.regions) {
+            g.next_h -= since;
+            g.trap_reset_h -= since;
+            g.cooldown_h -= since;
+        }
+        m.hours = h;
+        logx::info("wildlife: %s spawns in '%s' now: %zu spawn region(s) as %s left them (%.1f h ago)", who_name(to).c_str(),
+                   scene.c_str(), m.regions.size(), who_name(st->second.reporter).c_str(), since);
+        if (to == self_id()) {
+            regions_local(m);
+        } else {
+            net::Writer w(net::Msg::WildCtl, net::kMaxMessage);
+            net::write_wild_ctl(w, m);
+            netrt::send_packet_to(to, w, true);
+        }
+    }
+    if (const auto q = g_kills_queued.find(scene); q != g_kills_queued.end()) {
+        const std::vector<net::WildCtlMsg> kills = std::move(q->second);
+        g_kills_queued.erase(q);
+        if (!kills.empty())
+            logx::info("wildlife: %zu death(s) in '%s' while nobody spawned there: to %s", kills.size(), scene.c_str(),
+                       who_name(to).c_str());
+        for (const net::WildCtlMsg& k : kills) tell_controller_kill(k);
+    }
+}
+
+// A frozen animal handed out again: as it would be by now (stage 2, "in the background").
+void age_frozen(Entry& e, net::WildCtlMsg& t) {
+    const double now_h = game_hours();
+    const double from_h = e.frozen_h;
+    e.frozen_h = -1;
+    if (from_h < 0 || now_h < 0 || now_h <= from_h || (e.last.flags & net::kAnimalDead)) return;
+    const double h = now_h - from_h;
+    if ((e.last.flags & net::kAnimalBleeding) && e.last.bleed_limit > 0) {
+        e.last.bleed_elapsed += static_cast<float>(h * 60.0);
+        if (e.last.bleed_elapsed >= e.last.bleed_limit) {
+            logx::info("wildlife: #%u (%s) bled out while nobody was near (%.1f h): its carcass lies where it was", e.id,
+                       kind_name(e.last.kind), h);
+            e.last.flags = static_cast<uint8_t>((e.last.flags | net::kAnimalDead) & ~net::kAnimalBleeding);
+            e.last.mode = kAiModeDead;
+            e.last.hp = 0;
+            e.last.target = net::kNoPlayer;
+            e.text.clear();
+            e.body.clear();
+            tell_controller_kill(kill_of(e, 0, net::kNoPlayer));
+            const uint8_t to = t.to;
+            const uint16_t epoch = t.epoch;
+            t = take_from_registry(e, to, epoch);
+            return;
+        }
+        t.state.bleed_elapsed = e.last.bleed_elapsed;
+    }
+    if (h >= kMovedAfterHours) {
+        t.flags |= net::kTakeMoved;
+        t.hours = h;
+        t.state.target = net::kNoPlayer;
+        t.text.clear();  // (its old plans: where it fled to, what it stalked)
+        logx::info("wildlife: #%u (%s) was left alone %.1f h: it has moved on in its spawn region", e.id, kind_name(e.last.kind), h);
+    }
 }
 
 void transfer(Entry& e, uint8_t to, const char* why, const std::vector<Present>& players, double now) {
     const uint16_t epoch = static_cast<uint16_t>(e.epoch + 1);
     logx::info("wildlife: #%u owner %s -> %s (%s)", e.id, who_name(e.owner).c_str(), who_name(to).c_str(), why);
     const bool owner_here = e.owner != net::kNoPlayer && player_in_scene(players, e.owner, e.scene);
+    const bool was_frozen = e.frozen;
     e.frozen = false;
     if (owner_here) {
         e.pending_to = to;
@@ -215,7 +382,9 @@ void transfer(Entry& e, uint8_t to, const char* why, const std::vector<Present>&
     e.owner = to;
     e.epoch = epoch;
     e.pending_to = net::kNoPlayer;
-    deliver_take(take_from_registry(e, to, epoch), now);
+    net::WildCtlMsg t = take_from_registry(e, to, epoch);
+    if (was_frozen) age_frozen(e, t);
+    deliver_take(t, now);
 }
 
 void host_take(net::WildCtlMsg t, uint8_t from, double now) {
@@ -235,8 +404,9 @@ void host_take(net::WildCtlMsg t, uint8_t from, double now) {
             logx::info("wildlife: %s says #%u died, but %s runs it; ignored", who_name(from).c_str(), t.id, who_name(e.owner).c_str());
             return;
         }
-        logx::info("wildlife: #%u owner %s -> %s (it died: the host keeps its carcass)", t.id, who_name(from).c_str(),
-                   who_name(0).c_str());
+        logx::info("wildlife: #%u owner %s -> %s (it died: the host keeps its carcass%s)", t.id, who_name(from).c_str(),
+                   who_name(0).c_str(), (t.flags & net::kTakeBody) ? ", as harvested there" : "");
+        if (t.flags & net::kTakeBody) e.body = t.text;
         e.owner = 0;
         e.epoch = t.epoch;
         e.pending_to = net::kNoPlayer;
@@ -381,16 +551,26 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
             seats.push_back(s);
         }
         const bool owner_here = e.owner != net::kNoPlayer && player_in_scene(players, e.owner, e.scene);
-        if (seats.empty()) {
+        // v45: nobody runs it (frozen, or its owner left): only someone near enough takes it; out of everyone's
+        // range it stays as it was, frozen
+        bool near_one = false;
+        for (const net::wild::Seat& st : seats) near_one |= st.metres <= kRangeMetres;
+        const bool dead_now = (e.last.flags & net::kAnimalDead) != 0;
+        if (seats.empty() || (!owner_here && !near_one && !(dead_now && host_here))) {
             if (!e.frozen) {
                 e.frozen = true;
                 e.frozen_ms = now;
-                logx::info("wildlife: #%u (%s) frozen in '%s' at (%.0f, %.0f, %.0f), hp %.0f: nobody is there", e.id,
-                           kind_name(e.last.kind), e.scene.c_str(), e.last.x, e.last.y, e.last.z, e.last.hp);
+                e.frozen_h = game_hours();
+                logx::info("wildlife: #%u (%s) frozen in '%s' at (%.0f, %.0f, %.0f), hp %.0f: nobody is %s", e.id,
+                           kind_name(e.last.kind), e.scene.c_str(), e.last.x, e.last.y, e.last.z, e.last.hp,
+                           seats.empty() ? "there" : "near it");
                 e.owner = net::kNoPlayer;
             }
-            if (now - e.frozen_ms > kOwnFrozenMs) {
-                logx::info("wildlife: #%u forgotten (frozen too long)", e.id);
+            const double h = game_hours();
+            if (e.frozen_h >= 0 && h >= 0 && h - e.frozen_h > kFrozenForgetHours) {
+                logx::info("wildlife: #%u (%s) forgotten (nobody came near it for %.0f game hours)", e.id,
+                           kind_name(e.last.kind), h - e.frozen_h);
+                if (!dead_now) tell_controller_kill(kill_of(e, net::kKillGone, net::kNoPlayer));
                 it = g_registry.erase(it);
                 continue;
             }
@@ -398,10 +578,13 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
             continue;
         }
         if (owner_here && now - e.last_ms > kOwnSilentMs) {
-            logx::info("wildlife: #%u (%s) is no longer shared by %s (out of everyone's range, or gone from its game)",
-                       e.id, kind_name(e.last.kind), who_name(e.owner).c_str());
-            it = g_registry.erase(it);
-            continue;
+            // v45: out of everyone's range; its owner still runs it (and says so if TLD puts it away: Gone)
+            if (!e.quiet_logged)
+                logx::info("wildlife: #%u (%s) is out of everyone's range; %s still runs it", e.id, kind_name(e.last.kind),
+                           who_name(e.owner).c_str());
+            e.quiet_logged = true;
+        } else {
+            e.quiet_logged = false;
         }
         const bool dead = (e.last.flags & net::kAnimalDead) != 0;
         if (dead && !owner_here) {
@@ -448,6 +631,11 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
         summary += scene + "=" + std::to_string(c.player) + (c.fresh ? "*" : "") + " ";
         m.scenes.push_back({scene, c.player, static_cast<uint8_t>(c.fresh ? 1 : 0)});
     }
+    std::vector<std::pair<std::string, uint8_t>> new_controllers;
+    for (const auto& [scene, c] : scenes) {
+        const auto old = g_controllers.find(scene);
+        if (old == g_controllers.end() || old->second.player != c.player) new_controllers.emplace_back(scene, c.player);
+    }
     g_controllers.clear();
     for (const auto& [scene, c] : scenes) g_controllers[scene] = c;
     const bool changed = summary != g_controllers_sent;
@@ -463,6 +651,8 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
             g_controllers_sent = summary;
         }
     }
+    // v45: a new spawning game gets the regions' state (after Controllers: it knows it spawns there by then)
+    for (const auto& [scene, player] : new_controllers) host_hand_regions(scene, player);
 }
 
 // --- every game: what we own --------------------------------------------------------------------------------------
@@ -608,6 +798,45 @@ Il2CppObject* pool_take(int kind, bool aurora) {
     return fallback;
 }
 
+// v45: whether anyone we know of stands within `metres` of `p` in our scene.
+bool player_near(const Vector3& p, float metres) {
+    auto close = [&](float x, float y, float z) {
+        const float dx = p.x - x, dy = p.y - y, dz = p.z - z;
+        return dx * dx + dy * dy + dz * dz <= metres * metres;
+    };
+    const game::PlayerState me = game::read_player();
+    if (me.valid && close(me.position.x, me.position.y, me.position.z)) return true;
+    for (const net::StateMsg& st : netrt::remote_states())
+        if (st.valid && st.scene == g_own_scene && close(st.x, st.y, st.z)) return true;
+    return false;
+}
+
+// v45 (kTakeMoved): somewhere else in its spawn region, out of everyone's sight (TLD's own spawn spot choice).
+bool moved_spot(uint32_t key, Vector3& pos, float& yaw, double now) {
+    Il2CppObject* r = region_by_key(key, now);
+    if (!r || !api.region_try_pos) return false;
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        Vector3 p{};
+        Quaternion q{0, 0, 0, 1};
+        void* args[] = {&p, &q};
+        bool ok = false;
+        if (!il2::invoke_value(api.region_try_pos, r, ok, args) || !ok || !std::isfinite(p.x)) continue;
+        if (player_near(p, 80.0f)) continue;
+        pos = p;
+        yaw = std::atan2(2.0f * (q.w * q.y + q.x * q.z), 1.0f - 2.0f * (q.y * q.y + q.x * q.x)) * 180.0f / 3.14159265f;
+        return true;
+    }
+    return false;
+}
+
+std::string body_text(Il2CppObject* ai) {
+    Il2CppObject* bh = ai && api.ai_body >= 0 ? il2::read_field<Il2CppObject*>(ai, api.ai_body) : nullptr;
+    if (!bh || !api.bh_serialize) return {};
+    auto* text = reinterpret_cast<Il2CppString*>(il2::invoke(api.bh_serialize, bh));
+    std::string out = text ? il2::to_utf8(text) : std::string();
+    return out.size() <= net::kWildTextMax ? out : std::string();
+}
+
 // We run animal t.id from now: one of ours becomes it.
 void take_local(const net::WildCtlMsg& t, double now) {
     const net::AnimalRec& s = t.state;
@@ -631,27 +860,32 @@ void take_local(const net::WildCtlMsg& t, double now) {
     if (t.scene != g_own_scene) return refuse("we aren't in its scene");
     const bool aurora = (s.flags & net::kAnimalAurora) != 0;
     Vector3 pos{s.x, s.y, s.z};
+    float yaw = s.yaw;
+    const bool dead_given = (t.flags & net::kTakeDead) != 0 || (s.flags & net::kAnimalDead) != 0;
+    bool moved = false;
+    if ((t.flags & net::kTakeMoved) && !dead_given) moved = moved_spot(s.region, pos, yaw, now);
+    for (auto& [key, ids] : g_away) ids.erase(t.id);  // v45: (ours to count again, as one of ours here)
     Il2CppObject* ai = pool_take(s.kind, aurora);
     bool spawned = false;
     if (!ai) {
-        ai = spawn_stand_in(s.kind, pos, s.yaw, kAiModeWander, true);
+        ai = spawn_stand_in(s.kind, pos, yaw, kAiModeWander, true);
         spawned = ai != nullptr;
     }
     if (!ai) return refuse("no animal of that kind here to take its place, and none could be made");
     Il2CppObject* go = go_of(ai);
     set_active(go, true);
-    const bool dead_take = (t.flags & net::kTakeDead) != 0 || (s.flags & net::kAnimalDead) != 0;
-    if (!dead_take && g_own_record && !t.text.empty() && api.ai_deserialize) {
+    const bool dead_take = dead_given;
+    if (!dead_take && !moved && g_own_record && !t.text.empty() && api.ai_deserialize) {
         void* args[] = {il2::il2cpp_string_new(t.text.c_str())};
         il2::invoke(api.ai_deserialize, ai, args);
     }
-    const float half = s.yaw * 0.5f * 3.14159265f / 180.0f;
+    const float half = yaw * 0.5f * 3.14159265f / 180.0f;
     Quaternion rot{0, std::sin(half), 0, std::cos(half)};
     if (api.ai_set_pos_rot) {
         void* args[] = {&pos, &rot};
         il2::invoke(api.ai_set_pos_rot, ai, args);
     } else {
-        Vector3 facing{0, s.yaw, 0};
+        Vector3 facing{0, yaw, 0};
         void* pa[] = {&pos};
         void* ra[] = {&facing};
         il2::invoke(api.set_position, transform_of(ai), pa);
@@ -682,11 +916,12 @@ void take_local(const net::WildCtlMsg& t, double now) {
         }
         if (!has_target && api.ai_clear_target) il2::invoke(api.ai_clear_target, ai);
         if (mode == kAiModeDead || mode == kAiModeStruggle || mode == 0 || (aggressive(mode) && !has_target)) mode = kAiModeWander;
+        if (moved && mode != kAiModeWander && s.mode != 4 /* Flee */) mode = kAiModeWander;
         if (il2::read_field<int32_t>(ai, api.ai_mode) != mode) {
             void* args[] = {&mode};
             il2::invoke(api.set_mode, ai, args);
         }
-        set_animator(il2::read_field<Il2CppObject*>(ai, api.ai_animator), s);
+        if (!moved) set_animator(il2::read_field<Il2CppObject*>(ai, api.ai_animator), s);
     }
     // Its copy here goes in the same frame.
     if (auto p = g_puppets.find(t.id); p != g_puppets.end()) {
@@ -703,7 +938,16 @@ void take_local(const net::WildCtlMsg& t, double now) {
     o.kill_pending = spawned && dead_take;
     o.state = s;
     o.since_ms = now;
+    o.region = s.region ? s.region : region_key(region_of(ai));
+    o.dead_told = dead_take;  // (it died elsewhere: told there)
+    if (dead_take && (t.flags & net::kTakeBody) && !t.text.empty()) {
+        o.body = t.text;
+        o.body_at = now + 1500;  // once TLD has made its carcass
+    }
     g_owned[t.id] = std::move(o);
+    if (moved)
+        logx::info("wildlife: #%u was left alone %.1f h: placed anew in its spawn region at (%.0f, %.0f, %.0f)", t.id, t.hours,
+                   pos.x, pos.y, pos.z);
     logx::info("wildlife: we run #%u now (%s%s, %s, hp %.0f%s%s; %s)", t.id, kind_name(s.kind), aurora ? ", aurora" : "",
                il2::enum_name(il2::find_class(kGame, "", "AiMode"), dead_take ? kAiModeDead : mode).c_str(), s.hp,
                (s.flags & net::kAnimalBleeding) ? ", bleeding" : "", t.text.empty() ? "" : ", TLD's record of it",
@@ -743,6 +987,7 @@ void release_local(uint32_t id, uint8_t to, uint16_t epoch, double now) {
     il2::invoke_value(api.get_position, tf, pos);
     il2::invoke_value(api.get_euler, tf, euler);
     t.state = own_record(ai, id, epoch, pos, euler);
+    t.state.region = o->second.region;
     if (api.ai_serialize && g_own_record)
         if (auto* text = reinterpret_cast<Il2CppString*>(il2::invoke(api.ai_serialize, ai))) t.text = il2::to_utf8(text);
     if (t.text.size() > net::kWildTextMax) t.text.clear();
@@ -763,8 +1008,13 @@ void release_local(uint32_t id, uint8_t to, uint16_t epoch, double now) {
         p.pred.add(pose, now, now);
         g_puppets[id] = std::move(p);
     }
-    // Our real one: hidden, kept (it may become another animal handed to us).
+    // Our real one: hidden, kept (it may become another animal handed to us). v45: arrows stuck in it drop where it
+    // stands (they'd be gone with it, or turn up in another animal it becomes); out of its spawn region's list (TLD
+    // would switch it back on), and the spawning game counts it as alive elsewhere.
     Il2CppObject* go = go_of(ai);
+    free_stuck_arrows(go);
+    detach_from_region(ai);
+    if (i_control(g_own_scene) && t.state.region) g_away[t.state.region].insert(id);
     set_active(go, false);
     const auto addr = reinterpret_cast<uintptr_t>(go);
     if (!g_hidden.count(addr)) g_hidden.emplace(addr, hold(go));
@@ -775,6 +1025,81 @@ void release_local(uint32_t id, uint8_t to, uint16_t epoch, double now) {
                kind_name(t.state.kind), il2::enum_name(il2::find_class(kGame, "", "AiMode"), t.state.mode).c_str(),
                t.state.hp, who_name(to).c_str(), t.text.size());
     send_take(t, now);
+}
+
+// --- v45, every game: spawn regions where we spawn ------------------------------------------------------------------
+
+void kill_local(const net::WildCtlMsg& k) {
+    if (g_kills_in.size() < 128) g_kills_in.push_back(k);
+}
+void regions_local(const net::WildCtlMsg& m) { g_regions_in[m.scene] = m; }
+
+// Where we spawn: the regions' state from the last game that spawned here, the deaths elsewhere counted, what the
+// regions should count as alive (population_detour), and our regions' state for the host, now and then.
+void own_regions(const std::string& scene, bool control, double now) {
+    g_pop_extra.clear();
+    if (!control) return;
+    const double now_h = game_hours();
+    if (now_h < 0) return;
+    if (const auto in = g_regions_in.find(scene); in != g_regions_in.end()) {
+        int put = 0;
+        for (const net::WildRegionState& g : in->second.regions)
+            if (Il2CppObject* r = region_by_key(g.key, now)) {
+                apply_region(r, g, now_h);
+                ++put;
+            }
+        if (put || now - g_own_arrived_ms > 15000) {  // (the regions may not be up yet just after loading)
+            logx::info("wildlife: %d of %zu spawn region(s) here as the last game spawning here left them", put,
+                       in->second.regions.size());
+            g_regions_in.erase(in);
+            g_regions_applied = true;
+            g_last_regions_report = now;  // (not reported back before they had a moment)
+        }
+    }
+    if (g_regions_in.count(scene)) return;  // its kills after it
+    for (auto it = g_kills_in.begin(); it != g_kills_in.end();) {
+        const net::WildCtlMsg& k = *it;
+        if (k.scene != scene) {
+            it = g_kills_in.erase(it);
+            continue;
+        }
+        for (auto& [key, ids] : g_away) ids.erase(k.id);
+        if (!(k.flags & net::kKillGone) && !((k.flags & net::kKillCounted) && k.died_on == self_id())) {
+            if (Il2CppObject* r = region_by_key(k.region, now)) {
+                count_death(r, now_h);
+                logx::info("wildlife: #%u (%s) died in %s: its spawn region here waits to respawn it, as TLD would",
+                           k.id, kind_name(k.kind), who_name(k.died_on).c_str());
+            } else if (k.region) {
+                logx::info("wildlife: #%u died, but its spawn region isn't here (yet?): not counted", k.id);
+            }
+        }
+        it = g_kills_in.erase(it);
+    }
+    // What each region should count as alive though it isn't active here: its animals in other games, and ours kept
+    // switched off for handovers (still on its list).
+    for (const auto& [addr, h] : g_hidden) {
+        if (g_detached.count(addr)) continue;
+        Il2CppObject* go = target(h);
+        Il2CppObject* ai = go && alive(go) ? base_ai_of(go) : nullptr;
+        if (!ai || dead_animal(ai)) continue;
+        if (Il2CppObject* r = region_of(ai)) ++g_pop_extra[reinterpret_cast<uintptr_t>(r)];
+    }
+    for (const auto& [key, ids] : g_away)
+        if (!ids.empty())
+            if (Il2CppObject* r = region_by_key(key, now)) g_pop_extra[reinterpret_cast<uintptr_t>(r)] += static_cast<int32_t>(ids.size());
+    if (now - g_last_regions_report >= kRegionsReportMs) {
+        g_last_regions_report = now;
+        net::WildCtlMsg m;
+        m.op = net::WildOp::Regions;
+        m.scene = scene;
+        for (Il2CppObject* r : scene_regions()) {
+            if (m.regions.size() >= net::kWildRegionsMax) break;
+            if (const uint32_t key = region_key(r)) m.regions.push_back(read_region(r, key, now_h));
+        }
+        if (m.regions.empty()) return;
+        if (hosting_now()) host_store_regions(std::move(m), self_id());
+        else send_ctl(m);
+    }
 }
 
 // Every animal of ours, 10 times a second: ours are recorded and sent, others hidden (or, where we spawn, shared).
@@ -834,7 +1159,18 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             for (const auto& [did, d] : g_dying) dying |= target(d.ai) == ai;
             if (dying || dead_animal(ai)) continue;  // (our own kills from before stay, as without ownership)
             if (now - g_own_arrived_ms < kInitialMs) g_initial.insert(key);
-            if (!control || (!g_pool_released && g_initial.count(key))) {
+            // v45: one of ours we hid when we came that TLD switched back on a while later, where we spawn, is TLD's own
+            // (re)spawn there (its region was short of animals): shared like any other
+            const auto hidden_it = g_hidden.find(reinterpret_cast<uintptr_t>(go));
+            const bool respawned = control && hidden_it != g_hidden.end() && now - g_own_arrived_ms > kInitialMs * 3;
+            const bool initial_hide = !g_pool_released && g_initial.count(key) && !respawned;
+            if (respawned) {
+                logx::info("wildlife: TLD switched one of our hidden %s back on (its spawn region was short): shared from now",
+                           kind_name(il2::read_field<int32_t>(ai, api.ai_kind)));
+                drop(hidden_it->second);
+                g_hidden.erase(hidden_it);
+            }
+            if (!control || initial_hide) {
                 set_active(go, false);
                 const auto addr = reinterpret_cast<uintptr_t>(go);
                 if (!g_hidden.count(addr)) g_hidden.emplace(addr, hold(go));
@@ -848,6 +1184,7 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             Owned o;
             o.ai = hold(ai);
             o.since_ms = now;
+            o.region = region_key(region_of(ai));
             g_owned[id] = std::move(o);
             ++registered;
         }
@@ -875,6 +1212,51 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             write_field<float>(ai, api.ai_bleed_elapsed, own.state.bleed_elapsed);
             write_field<float>(ai, api.ai_bleed_limit, own.state.bleed_limit);
         }
+        const bool is_dead = dead_animal(ai);
+        if (is_dead && !own.body.empty() && now >= own.body_at) {
+            // v45: a carcass handed to us: as harvested where it was
+            if (Il2CppObject* bh = api.ai_body >= 0 ? il2::read_field<Il2CppObject*>(ai, api.ai_body) : nullptr;
+                bh && api.bh_deserialize) {
+                bool scene_load = false;
+                void* args[] = {il2::il2cpp_string_new(own.body.c_str()), &scene_load};
+                il2::invoke(api.bh_deserialize, bh, args);
+                logx::info("wildlife: #%u's carcass here as it was harvested in its last game (%zu bytes)", id, own.body.size());
+            }
+            own.body.clear();
+        }
+        if (is_dead && !own.dead_told) {
+            // v45: a death here: the game that spawns in this scene counts it (its respawn waits as TLD's would)
+            own.dead_told = true;
+            net::WildCtlMsg k;
+            k.op = net::WildOp::Kill;
+            k.id = id;
+            k.scene = scene;
+            k.region = own.region;
+            k.kind = static_cast<uint8_t>(il2::read_field<int32_t>(ai, api.ai_kind));
+            k.died_on = me;
+            if (control && own.region && !g_detached.count(reinterpret_cast<uintptr_t>(go)) &&
+                region_key(region_of(ai)) == own.region)
+                k.flags |= net::kKillCounted;  // (TLD's own RemoveFromSpawnRegion did it, here where it spawns)
+            logx::info("wildlife: our #%u (%s) died here%s", id, kind_name(k.kind),
+                       (k.flags & net::kKillCounted) ? " (its spawn region counted it)" : ": told to the game that spawns here");
+            if (host) tell_controller_kill(k);
+            else send_ctl(k);
+        }
+        if (is_dead && !host && !host_here && now - own.body_sent_ms > kBodyEveryMs) {
+            // v45: a carcass we keep while the host is away: the host has it as it is here (for when we leave)
+            own.body_sent_ms = now;
+            net::WildCtlMsg k;
+            k.op = net::WildOp::Keep;
+            k.id = id;
+            k.epoch = own.epoch;
+            k.flags = net::kTakeDead;
+            k.scene = scene;
+            k.state = own_record(ai, id, own.epoch, pos, euler);
+            k.state.region = own.region;
+            k.text = body_text(ai);
+            if (!k.text.empty()) k.flags |= net::kTakeBody;
+            send_ctl(k);
+        }
         if (dead_animal(ai) && !host && host_here) {
             // It died here with the host in the scene: the host keeps its carcass (shared with everyone from there).
             if (!g_dying.count(id)) {
@@ -886,6 +1268,9 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                 t.flags = net::kTakeDead;
                 t.scene = scene;
                 t.state = own_record(ai, id, t.epoch, pos, euler);
+                t.state.region = own.region;
+                t.text = body_text(ai);  // v45: as harvested here
+                if (!t.text.empty()) t.flags |= net::kTakeBody;
                 send_ctl(t);
                 g_dying[id] = Dying{hold(ai), now};
                 logx::info("wildlife: our #%u (%s) died: the host keeps its carcass", id, kind_name(t.state.kind));
@@ -917,6 +1302,7 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                 write_field<int32_t>(ai, cull_mode, culling);
             }
         net::AnimalRec a = own_record(ai, id, own.epoch, pos, euler);
+        a.region = own.region;
         auto emitters = g_ai_emitters.find(key);
         if (emitters == g_ai_emitters.end()) emitters = g_ai_emitters.emplace(key, wwise_emitters(go)).first;
         for (size_t e = 0; e < emitters->second.size(); ++e) owners[emitters->second[e]] = {a.id, static_cast<uint8_t>(e)};
@@ -940,10 +1326,22 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             continue;
         }
         logx::info("wildlife: our #%u is gone from our game (TLD %s it)", it->first, ai && alive(ai) ? "switched off" : "removed");
+        if (!it->second.dead_told) {  // v45: gone for everyone (the host forgets it)
+            if (host) {
+                host_gone(it->first, me);
+            } else {
+                net::WildCtlMsg g;
+                g.op = net::WildOp::Gone;
+                g.id = it->first;
+                g.epoch = it->second.epoch;
+                send_ctl(g);
+            }
+        }
         for (auto k = g_ids.begin(); k != g_ids.end();) k = k->second == it->first ? g_ids.erase(k) : std::next(k);
         drop(it->second.ai);
         it = g_owned.erase(it);
     }
+    own_regions(scene, control, now);
     if (hidden) logx::info("wildlife: hid %d of our own animal(s) (another game spawns here; they're kept for handovers)", hidden);
     if (registered) logx::info("wildlife: %d of our animal(s) shared from now (we spawn in '%s')", registered, scene.c_str());
     {
@@ -1091,6 +1489,27 @@ void own_receive(const std::string& scene, bool in_game, double now) {
             case net::WildOp::Refuse:
                 if (host) host_refuse(m.id, m.epoch, pk.from, now);
                 break;
+            case net::WildOp::Gone:
+                if (host) host_gone(m.id, pk.from);
+                break;
+            case net::WildOp::Kill:
+                if (host) tell_controller_kill(m);  // (a death in a friend's game)
+                else kill_local(m);                 // (we spawn there)
+                break;
+            case net::WildOp::Regions:
+                if (host) host_store_regions(std::move(m), pk.from);
+                else regions_local(m);
+                break;
+            case net::WildOp::Keep:
+                if (host) {  // a friend's carcass, kept while we're away
+                    const auto e = g_registry.find(m.id);
+                    if (e != g_registry.end() && e->second.owner == pk.from) {
+                        e->second.last = m.state;
+                        e->second.last_ms = now;
+                        if (m.flags & net::kTakeBody) e->second.body = m.text;
+                    }
+                }
+                break;
         }
     }
     in.clear();
@@ -1147,6 +1566,13 @@ void own_reset(const char* why, bool restore_hidden) {
     }
     g_hidden.clear();
     g_pool_released = false;
+    g_away.clear();  // v45
+    g_pop_extra.clear();
+    g_regions_in.clear();
+    g_kills_in.clear();
+    g_regions_applied = false;
+    g_detached.clear();
+    forget_region_keys();
     {
         std::lock_guard lock(g_sound_mutex);
         g_emitter_owner.clear();
@@ -1160,6 +1586,15 @@ void own_reset(const char* why, bool restore_hidden) {
 
 void own_frame(const std::string& scene, bool in_game, double now) {
     const bool host = hosting_now();
+    if (g_own_counter == 0) g_own_counter = static_cast<uint32_t>((GetTickCount64() * 2654435761ull) >> 7) & 0x7FFFFF;  // v45
+    if (scene == "MainMenu" && (!g_registry.empty() || !g_region_store.empty())) {
+        // v45: another save may come: what's kept goes with this one (world_keep reads it back)
+        logx::info("wildlife: main menu: the registry (%zu) and the spawn regions kept (%zu scene(s)) are put away",
+                   g_registry.size(), g_region_store.size());
+        g_registry.clear();
+        g_region_store.clear();
+        g_kills_queued.clear();
+    }
     const std::vector<Present> players = present_players(scene, in_game);
     if (host) host_arbitrate(players, now);
     if (!in_game) {
@@ -1211,5 +1646,77 @@ std::string describe_ownership() {
         snprintf(line, sizeof(line), "\n  '%s': %s spawns%s", scene.c_str(), who_name(c.player).c_str(), c.fresh ? " (fresh)" : "");
         out += line;
     }
+    size_t away = 0;
+    for (const auto& [key, ids] : g_away) away += ids.size();
+    int32_t counted = 0;
+    for (const auto& [r, n] : g_pop_extra) counted += n;
+    snprintf(line, sizeof(line), "\n  v45: %zu of ours alive in other games, %d counted by our spawn regions, %zu scene(s) of "
+             "regions kept, %zu death(s) waiting for a spawning game, game hours %.1f",
+             away, counted, g_region_store.size(), g_kills_queued.size(), game_hours());
+    out += line;
     return out;
+}
+
+// --- v45: the registry and the spawn regions with the host's save (world_keep) -------------------------------------
+
+void own_save_kept(std::vector<world_keep::Record>& out) {
+    if (!hosting_now() || !own_mode()) return;
+    const double h = game_hours();
+    size_t animals = 0;
+    for (const auto& [id, e] : g_registry) {
+        net::WildCtlMsg k;
+        k.op = net::WildOp::Keep;
+        k.id = id;
+        k.epoch = e.epoch;
+        const bool dead = (e.last.flags & net::kAnimalDead) != 0;
+        k.flags = dead ? net::kTakeDead : 0;
+        k.text = dead ? e.body : e.text;
+        if (dead && !e.body.empty()) k.flags |= net::kTakeBody;
+        k.hours = e.frozen && e.frozen_h >= 0 ? e.frozen_h : h;
+        k.scene = e.scene;
+        k.state = e.last;
+        net::Writer w(net::Msg::WildCtl, net::kMaxMessage);
+        net::write_wild_ctl(w, k);
+        if (!w.ok()) continue;
+        out.push_back(world_keep::record(world_keep::Tag::Wildlife, w));
+        ++animals;
+    }
+    for (const auto& [scene, st] : g_region_store) {
+        net::Writer w(net::Msg::WildCtl, net::kMaxMessage);
+        net::write_wild_ctl(w, st.msg);
+        if (w.ok()) out.push_back(world_keep::record(world_keep::Tag::WildRegions, w));
+    }
+    logx::info("wildlife: saved with our game: %zu animal(s) of the registry, the spawn regions of %zu scene(s)", animals,
+               g_region_store.size());
+}
+
+bool own_load_kept(const world_keep::Record& r) {
+    const net::Packet pk = world_keep::packet(r);
+    net::Reader rd = net::packet_body(pk);
+    net::WildCtlMsg m;
+    if (pk.type != net::Msg::WildCtl || !net::read_wild_ctl(rd, m)) return false;
+    if (m.op == net::WildOp::Keep) {
+        if (g_registry.count(m.id)) return true;  // (already live)
+        Entry e;
+        e.id = m.id;
+        e.scene = m.scene;
+        e.owner = net::kNoPlayer;
+        e.epoch = m.epoch;
+        e.last = m.state;
+        e.last_ms = now_ms();
+        e.frozen = true;
+        e.frozen_ms = e.last_ms;
+        e.frozen_h = m.hours;
+        if (m.flags & net::kTakeDead) e.body = (m.flags & net::kTakeBody) ? m.text : std::string();
+        else e.text = m.text;
+        g_registry.emplace(m.id, std::move(e));
+        return true;
+    }
+    if (m.op == net::WildOp::Regions) {
+        RegionStore& st = g_region_store[m.scene];
+        st.msg = std::move(m);
+        st.reporter = net::kNoPlayer;
+        return true;
+    }
+    return false;
 }

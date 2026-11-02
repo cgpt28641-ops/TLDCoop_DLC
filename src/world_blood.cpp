@@ -9,6 +9,7 @@
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
+#include "wildlife_sync.h"
 
 namespace world_blood {
 namespace {
@@ -57,11 +58,13 @@ Il2CppObject* our_trail() {
 bool ours_to_tell(Il2CppObject* self) {
     if (g_applying || g_depth != 1 || !self || !netrt::status().connected || core::settled_scene().empty()) return false;
     if (self == our_trail()) return true;
-    if (hosting() && api.trail_ai >= 0 && il2::read_field<Il2CppObject*>(self, api.trail_ai)) {
-        if (g_animal_sent++ == 0) logx::info("blood: an animal's blood goes to the others too");
-        return true;
-    }
-    return false;
+    Il2CppObject* ai = api.trail_ai >= 0 ? il2::read_field<Il2CppObject*>(self, api.trail_ai) : nullptr;
+    if (!ai) return false;
+    // TLDCoop_DLC (v45): with wildlife ownership each animal bleeds in the game that runs it (a friend's too): its
+    // blood trail is told from there, so every hunter can follow it
+    const bool tell = wildlife_sync::ownership() ? wildlife_sync::owned_here(ai) : hosting();
+    if (tell && g_animal_sent++ == 0) logx::info("blood: an animal's blood goes to the others too");
+    return tell;
 }
 
 void send(net::BloodMarkMsg m) {

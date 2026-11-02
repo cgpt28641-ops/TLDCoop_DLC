@@ -64,6 +64,17 @@ int main() {
         decide(t, f, seats, 0, why);
         check(decide(t, f, seats, kEngagedHoldMs + 1, why) == 2 && why == Why::Engaged, "the hunted player's game takes it");
     }
+    // v45: soon after a switch, still to the one it hunts (not the full kMinSwitchMs).
+    {
+        Track t;
+        t.last_switch_ms = 0;
+        Facts f;
+        f.owner = 0, f.owner_present = true, f.mode = kModeAttack, f.target = 3;
+        const std::vector<Seat> seats = {seat(0, 10), seat(3, 30)};
+        Why why;
+        decide(t, f, seats, 100, why);
+        check(decide(t, f, seats, kEngagedMinSwitchMs + 1, why) == 3, "the hunted player gets it 1.5 s after a switch");
+    }
     // Never during a fight, never for the dead (while the owner is there).
     {
         Track t;

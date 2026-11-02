@@ -19,6 +19,7 @@
 #include "world_items.h"
 #include "world_objects.h"
 #include "world_water.h"
+#include "wildlife_sync.h"
 
 namespace world_keep {
 namespace {
@@ -65,6 +66,7 @@ void save() {
     world_fires::save_kept(records);
     world_containers::save_kept(records);
     world_water::save_kept(records);
+    wildlife_sync::save_kept(records);
     std::string data;
     put_u32(data, kFileMagic);
     put_u32(data, kFileVersion);
@@ -133,6 +135,8 @@ void load() {
             case Tag::ContainerTheirs:
             case Tag::ContainerOurs: ok = world_containers::load_kept(r); break;
             case Tag::WaterChange: ok = world_water::load_kept(r); break;
+            case Tag::Wildlife:
+            case Tag::WildRegions: ok = wildlife_sync::load_kept(r); break;
         }
         ++(ok ? loaded : bad);
     }
