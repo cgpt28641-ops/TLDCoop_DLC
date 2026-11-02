@@ -122,7 +122,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 41;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 42;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -171,6 +171,8 @@ constexpr uint16_t kProtocolVersion = 41;  // v4: World. v5: Animals. v6: sounds
                                            // v40 (TLDCoop_DLC): AnimalHandover (a friend's animals back to the host)
                                            // v41 (TLDCoop_DLC): Seamless Interiors in co-op: State's place (the
                                            // building a player is inside), Rooms (which rooms each game has built)
+                                           // v42 (TLDCoop_DLC): RoomPlace (furniture moved, taken or put down in a
+                                           // Seamless Interiors room)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -194,7 +196,7 @@ enum class Msg : uint8_t {
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
     BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
-    Rooms = 47
+    Rooms = 47, RoomPlace = 48
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1277,6 +1279,51 @@ inline bool read_rooms(Reader& r, RoomsMsg& m) {
     if (!r.ok() || n > kRoomsMax) return false;
     m.ids.clear();
     for (uint8_t i = 0; i < n && r.ok(); ++i) m.ids.push_back(r.get_blob(kRoomIdMax));
+    return r.ok();
+}
+
+// RoomPlace (TLDCoop_DLC, v42), either way: furniture and decorations of a Seamless Interiors room (its placeables,
+// which TLD's PlaceableManager doesn't hold) as one player's game has them: moved, put away (gone: taken into a pack or
+// carried off) or put down. Keyed by the building and the placeable's id (stable in every game). Room-local transform.
+// A friend's goes to the host, which applies it, keeps it with its room files and passes it on; the host's goes to the
+// friends. `spawned`: TLD's record of a placeable the player brought into the room (PlaceableSaveData, room-local), for
+// a game that hasn't got it; "" for the room's own furniture.
+constexpr size_t kRoomPlaceGuidMax = 64;
+constexpr size_t kRoomPlaceSpawnedMax = 16 * 1024;
+struct RoomPlaceMsg {
+    std::string region;
+    std::string building;
+    std::string guid;
+    uint8_t gone = 0;    // 1: not in the room any more (picked up / taken)
+    uint8_t active = 1;  // its GameObject switched on
+    float pos[3] = {};
+    float rot[4] = {0, 0, 0, 1};
+    float scale[3] = {1, 1, 1};
+    std::string spawned;
+};
+
+inline void write_room_place(Writer& w, const RoomPlaceMsg& m) {
+    w.put_str(m.region, kSceneLen);
+    w.put_blob(m.building, kRoomIdMax);
+    w.put_blob(m.guid, kRoomPlaceGuidMax);
+    w.put(m.gone);
+    w.put(m.active);
+    for (float v : m.pos) w.put(v);
+    for (float v : m.rot) w.put(v);
+    for (float v : m.scale) w.put(v);
+    w.put_blob(m.spawned, kRoomPlaceSpawnedMax);
+}
+
+inline bool read_room_place(Reader& r, RoomPlaceMsg& m) {
+    m.region = r.get_str(kSceneLen);
+    m.building = r.get_blob(kRoomIdMax);
+    m.guid = r.get_blob(kRoomPlaceGuidMax);
+    m.gone = r.get<uint8_t>();
+    m.active = r.get<uint8_t>();
+    for (float& v : m.pos) v = r.get<float>();
+    for (float& v : m.rot) v = r.get<float>();
+    for (float& v : m.scale) v = r.get<float>();
+    m.spawned = r.get_blob(kRoomPlaceSpawnedMax);
     return r.ok();
 }
 

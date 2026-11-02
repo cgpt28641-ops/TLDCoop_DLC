@@ -105,6 +105,10 @@ constexpr const char* kDefaultIni =
     "; A building you already used without it (its interior is in your save) gets its room built from your save once\n"
     "; (items, containers, furniture, curing boxes); 0 = such buildings keep the game's door. The save is only read.\n"
     "import_old=1\n"
+    "; Rooms kept while you are in another region (or in an interior through a game's door) and put back when you\n"
+    "; return, instead of being built again (at most 6, only the region you just left, only rooms saved on the way out).\n"
+    "; 0 = every room is built again from its saved files, as before.\n"
+    "keep_rooms=1\n"
     "\n"
     "[death]\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
@@ -237,6 +241,7 @@ Settings load() {
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
     s.seamless_interiors = GetPrivateProfileIntW(L"interiors", L"enabled", 0, ini.c_str()) != 0;
     s.seamless_import_old = GetPrivateProfileIntW(L"interiors", L"import_old", 1, ini.c_str()) != 0;
+    s.seamless_keep_rooms = GetPrivateProfileIntW(L"interiors", L"keep_rooms", 1, ini.c_str()) != 0;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");

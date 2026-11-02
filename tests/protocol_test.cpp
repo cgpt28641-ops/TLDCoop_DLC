@@ -84,6 +84,18 @@ int main() {
     rooms.ids = {"CampOffice", "LakeCabinA", "INTERACTIVE_CampOfficeInteriorDoorFront_Prefab"};
     round_trip("Rooms", Msg::Rooms, rooms, write_rooms, read_rooms);
 
+    RoomPlaceMsg place;
+    place.region = "LakeRegion";
+    place.building = "LakeCabinA_2";
+    place.guid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+    place.gone = 1;
+    place.active = 0;
+    place.pos[0] = 1.25f, place.pos[1] = -0.5f, place.pos[2] = 3;
+    place.rot[1] = 0.7071f, place.rot[3] = 0.7071f;
+    place.scale[0] = 2;
+    place.spawned = "{\"m_Guid\":\"0f1e\",\"m_Position\":[1,2,3]}";
+    round_trip("RoomPlace", Msg::RoomPlace, place, write_room_place, read_room_place);
+
     WorldMsg world;
     world.seq = 9;
     world.valid = true;

@@ -442,6 +442,7 @@ struct Session::Impl {
             case Msg::FirePut:
             case Msg::WaterPut:
             case Msg::SprayMark:
+            case Msg::RoomPlace:   // TLDCoop_DLC: furniture moved in a Seamless Interiors room
             case Msg::Harvest:     // a carcass harvest (the host counts each once: net::HarvestLedger)
             case Msg::Quartered: return true;
             // TLDCoop_DLC: a handover's end (Done carries the item: it's out of the giver's pack already). The op is the
@@ -921,6 +922,7 @@ struct Session::Impl {
             case Msg::Report:
             case Msg::Chat:
             case Msg::Rooms:
+            case Msg::RoomPlace:
             case Msg::Sleep:
             case Msg::Give: {
                 if (!linked) return;

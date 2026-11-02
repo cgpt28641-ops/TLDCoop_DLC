@@ -148,7 +148,7 @@ przedmioty. Gracz bez tego DLC nie miałby czego wczytać.
 - **The Long Dark 2.59** (189140 S, sprawdzone też na 2.58) na Steam, Windows. Wszyscy gracze muszą mieć tę samą wersję gry. Mod to
   sprawdza.
 - **Włączony i zalogowany Steam.** Każdy gracz potrzebuje własnej kopii gry.
-- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v41**, więc nie zagra z oryginalnym TLDCoop v0.13.1
+- **Ten sam zip u wszystkich.** Ta wersja używa protokołu **v42**, więc nie zagra z oryginalnym TLDCoop v0.13.1
   (v27).
 - **Gracze dołączający muszą mieć wszystkie DLC hosta** (zobacz wyżej).
 
@@ -229,6 +229,7 @@ pojawiają się tylko w nowym `coop.ini` (stary można usunąć, zrobi się nowy
 | `[trees] enabled=1` | **Nowe.** Dynamic Trees w solo (w co-opie decyduje host: MODS). Ilość śniegu na drzewach jest zapisywana osobno dla każdego zapisu gry w `TLDCoop\dynamic_trees.ini`. |
 | `[interiors] enabled=0` | **Nowe, w budowie (domyślnie wyłączone).** Seamless Interiors (karsontr13, za zgodą autora): drzwi budynku wpuszczają do środka bez ekranu ładowania. W co-opie decyduje host (MODS). Pokoje zapisują się z grą. |
 | `[interiors] import_old=1` | Budynek, w którym już byłeś bez Seamless Interiors (jego wnętrze jest w zapisie gry), dostaje pokój zbudowany raz z tego zapisu: przedmioty, szafki, meble, skrzynki do suszenia. Zapis gry jest tylko czytany. Gdy czegoś nie da się przenieść w całości, budynek zostaje przy zwykłych drzwiach. `0` = takie budynki zawsze mają zwykłe drzwi. |
+| `[interiors] keep_rooms=1` | Pokoje regionu, który właśnie opuściłeś (najwyżej 6, tylko zapisane przy wyjściu), czekają w pamięci i wracają przy powrocie zamiast budować się od nowa (czas w nich płynie dalej). Gdy coś się nie zgadza – pokój budowany od nowa z plików, jak dotąd. `0` = zawsze od nowa. |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
 | `[game] screenshots=0` | **Nowe.** Wbudowane zrzuty ekranu TLD pod F8/F9/F10 (zapis obrazka przy każdym wciśnięciu) są wyłączone, bo mod używa tych klawiszy; `1` je włącza. |

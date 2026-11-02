@@ -2552,6 +2552,7 @@ void tick_closed_time() {
 
 // --- the save as a whole (SI: SavePlaceablePositionsPatch = SaveGameSystem.SaveSceneData postfix) ---------------------
 
+uint64_t room_print(Instance& in);
 void save_rooms(const char* scene_name) {
     std::lock_guard lock(g_files);  // (P12: no commit between one room's files and the next)
     const std::string sid = game::save_id();
@@ -2579,6 +2580,8 @@ void save_rooms(const char* scene_name) {
         }
         if (in.rolled) g_rolled_ids.insert(in.cfg->id);
         in.has_data = true;
+        if (ok) in.last_saved_ms = now_ms();  // A8: written by this save
+        if (ok && in.persist_pending) in.persist_print = room_print(in);  // (adopted strays are in it now)
         ++written;
     }
     if (written) {
@@ -2726,6 +2729,9 @@ int32_t save_done_detour(Il2CppString* name, int32_t size, const MethodInfo* met
 using RestoreFn = void (*)(Il2CppString* name, const MethodInfo* method);
 RestoreFn g_restore_game = nullptr;
 void restore_game_detour(Il2CppString* name, const MethodInfo* method) {
+    ++g_restore_gen;  // A8: the kept rooms belong to the play being left
+    g_last_restore_ms = now_ms();
+    if (api.ok) drop_kept("a save is being loaded");
     if (api.ok && name) {
         const std::string n = il2::to_utf8(name);
         bool pending = false;
@@ -2825,6 +2831,216 @@ Il2CppClass* class_in(std::initializer_list<const char*> dlls, const char* ns, c
             if (Il2CppClass* k = il2::il2cpp_class_from_name(image, ns, name)) return k;
     logx::warn("interiors: class %s%s%s not found", ns, *ns ? "." : "", name);
     return nullptr;
+}
+
+// --- A8: rooms kept across a region change (SI: OnSceneWasUnloaded's PERSIST + ReattachPersistedInterior) ------------
+// When the game loads another scene with its loading screen (a region's edge, a game's door, not a save being loaded),
+// the finished rooms of the region we leave that are closed and have their folder are moved out of the region
+// (DontDestroyOnLoad) before it goes. The save the game makes on the way out writes them as usual; only a room written
+// by it is kept (the others are destroyed: their files are what comes back). Coming back to that region (same save, no
+// load in between) each kept room is checked (still whole: the same items, furniture, containers and fires as when it
+// left), moved back into the region, put on its building again, its fires and items registered with the game again and
+// its closed time moved on by the hours that passed. Anything off: destroyed and built again from its files, as without.
+// Only the region last left is kept, at most kKeepRoomsMax rooms; solo and host only (a friend's rooms are the host's).
+constexpr size_t kKeepRoomsMax = 6;
+bool g_keep_rooms = true;  // coop.ini [interiors] keep_rooms
+struct KeepApi {
+    bool tried = false;
+    const MethodInfo *keep = nullptr, *hours = nullptr, *gear_add = nullptr;
+    FieldInfo* gear_list = nullptr;
+} kapi;
+void resolve_keep() {
+    if (kapi.tried) return;
+    kapi.tried = true;
+    if (Il2CppClass* o = il2::find_class(kCore, "UnityEngine", "Object")) kapi.keep = il2::find_method(o, "DontDestroyOnLoad", 1);
+    if (Il2CppClass* t = il2::find_class(kGame, "", "TimeOfDay")) kapi.hours = il2::find_method(t, "GetHoursPlayedNotPaused", 0);
+    if (Il2CppClass* g = il2::find_class(kGame, "", "GearManager")) {
+        kapi.gear_add = il2::find_method_params(g, "Add", {"GearItem"});
+        kapi.gear_list = il2::il2cpp_class_get_field_from_name(g, "m_Gear");
+    }
+    if (!kapi.keep || !kapi.hours || !kapi.gear_add || !kapi.gear_list)
+        logx::info("interiors: keeping rooms across regions unavailable (TLD API missing); rooms are built again");
+}
+bool keep_ready() {
+    resolve_keep();
+    return kapi.keep && kapi.hours && kapi.gear_add && kapi.gear_list;
+}
+double hours_played() {
+    Il2CppObject* tod = il2::invoke(papi.tod_component, nullptr);
+    float h = -1;
+    return tod && il2::invoke_value(kapi.hours, tod, h) ? h : -1;
+}
+// What a room holds, in short: if Unity or the game took anything out of it while it was kept, this changes.
+uint64_t room_print(Instance& in) {
+    uint64_t gear = 0, ids = 0, places = 0, boxes = 0, fires = 0;
+    each_in(master_of(in), api.t_gear, [&](Il2CppObject* gi) {
+        ++gear;
+        ids += static_cast<uint64_t>(static_cast<int64_t>(instance_id(gi)));
+    });
+    each_in(master_of(in), api.t_placeable, [&](Il2CppObject*) { ++places; });
+    each_in(master_of(in), api.t_container, [&](Il2CppObject*) { ++boxes; });
+    each_in(master_of(in), api.t_fire, [&](Il2CppObject*) { ++fires; });
+    return (gear * 0x9E3779B97F4A7C15ull) ^ (ids * 0xC2B2AE3D27D4EB4Full) ^ (places << 40) ^ (boxes << 20) ^ fires;
+}
+void destroy_kept(Persisted& p, const char* why) {
+    if (Il2CppObject* m = live(p.in.master)) destroy(m);
+    logx::info("interiors: %s (kept from %s): destroyed (%s); built again from its files next time", p.in.cfg->id, p.region.c_str(), why);
+    for (uintptr_t* h : {&p.in.master, &p.in.master_tf, &p.in.trigger, &p.in.space}) drop(*h);
+    for (uintptr_t& h : p.in.keep_off) drop(h);
+    for (uintptr_t& h : p.in.junk_off) drop(h);
+    for (auto* list : {&p.in.closed_fires, &p.in.closed_pots, &p.in.closed_lamps, &p.in.closed_torches, &p.in.closed_flares,
+                       &p.in.closed_evolve})
+        for (uintptr_t& h : *list) drop(h);
+}
+void drop_kept(const char* why) {
+    for (Persisted& p : g_persisted) destroy_kept(p, why);
+    if (!g_persisted.empty()) rooms_changed();
+    g_persisted.clear();
+}
+
+// LoadSceneWithLoadingScreen (to another scene): the rooms to keep are taken out of the region before it goes.
+void persist_before_load(const std::string& to) {
+    for (Instance& in : g_instances) in.persist_pending = false;
+    if (!g_keep_rooms || !engaged() || g_region.empty() || coop() == Coop::Friend || to.empty() || to == g_region) return;
+    if (now_ms() - g_last_restore_ms < 15000) return;  // a save being loaded: its rooms come from its files
+    bool restoring = false;
+    if ((japi.restore_busy && il2::invoke_value(japi.restore_busy, nullptr, restoring) && restoring)) return;
+    if (!keep_ready()) return;
+    const double hours = hours_played();
+    if (hours < 0) return;
+    std::vector<std::pair<float, Instance*>> fit;
+    const V3 me = player_pos();
+    for (Instance& in : g_instances) {
+        Il2CppObject* m = master_of(in);
+        if (!m || !can_persist(in) || in.coop_friend || in.legacy != kLegacyNone || !in.import_marker.empty() ||
+            in.placeable_blocked || in.spawn_blocked || in.gear_blocked || in.container_blocked || in.state_blocked ||
+            active_self(m) || g_inside == &in || g_building == &in)
+            continue;
+        fit.emplace_back(distance_from(in, me), &in);
+    }
+    std::sort(fit.begin(), fit.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    if (fit.size() > kKeepRoomsMax) fit.resize(kKeepRoomsMax);
+    int kept = 0;
+    for (auto& [d, inp] : fit) {
+        Instance& in = *inp;
+        Il2CppObject* m = master_of(in);
+        in.persist_print = room_print(in);
+        void* a[] = {m};
+        il2::invoke(kapi.keep, nullptr, a);
+        in.persist_pending = true;
+        in.persist_hours = hours;
+        in.persist_at = now_ms();
+        ++kept;
+    }
+    if (kept) logx::info("interiors: leaving %s for %s: %d room(s) kept out of the region (put back if we come back)", g_region.c_str(),
+                         to.c_str(), kept);
+}
+
+// forget_region: the kept rooms the save on the way out wrote move to g_persisted; the others go.
+void keep_on_forget() {
+    bool any = false;
+    for (Instance& in : g_instances) any = any || in.persist_pending;
+    if (!any) return;
+    drop_kept("another region was left since");  // only the region last left
+    const std::string save = game::save_id();
+    for (Instance& in : g_instances) {
+        if (!in.persist_pending) continue;
+        in.persist_pending = false;
+        if (!master_of(in)) {
+            logx::info("interiors: %s: the room kept out of %s didn't survive the region's unload", in.cfg->id, g_region.c_str());
+            continue;
+        }
+        if (in.last_saved_ms < in.persist_at - 5000) {  // not written on the way out: its files are older than it
+            Persisted p;
+            p.region = g_region;
+            p.in = std::move(in);
+            destroy_kept(p, "the game didn't save it on the way out");
+            in = Instance{};
+            in.cfg = p.in.cfg;
+            continue;
+        }
+        Persisted p;
+        p.region = g_region;
+        p.save = save;
+        p.restore_gen = g_restore_gen;
+        // what belonged to the region goes (dead with it); the room's own objects stay
+        drop(in.shell);
+        for (uintptr_t& h : in.outsiders) drop(h);
+        for (uintptr_t& h : in.colliders_off) drop(h);
+        in.outsiders.clear();
+        in.colliders_off.clear();
+        drop(in.cached_lightmaps);
+        drop(in.cached_probes);
+        for (Instance::ContainerJob& j : in.container_jobs) drop(j.container);
+        in.container_jobs.clear();
+        for (auto* list : {&in.deferred_twins, &in.deferred_taken})
+            for (Instance::RegionItem& r : *list) drop(r.gi);
+        in.deferred_twins.clear();
+        in.deferred_taken.clear();
+        in.hydration_gear.clear();
+        in.shell_box_cached = false;
+        p.in = std::move(in);
+        in = Instance{};
+        in.cfg = p.in.cfg;
+        g_persisted.push_back(std::move(p));
+    }
+    if (!g_persisted.empty()) {
+        rooms_changed();
+        logx::info("interiors: %zu room(s) of %s kept while we're away", g_persisted.size(), g_persisted.front().region.c_str());
+    }
+}
+
+// enter_region: a kept room of this building, if it can come back whole. True: `in` is it, back in the region.
+bool reattach_kept(Instance& in, const std::string& region) {
+    auto it = std::find_if(g_persisted.begin(), g_persisted.end(),
+                           [&](const Persisted& p) { return p.region == region && p.in.cfg == in.cfg; });
+    if (it == g_persisted.end()) return false;
+    Persisted p = std::move(*it);
+    g_persisted.erase(it);
+    rooms_changed();
+    auto fail = [&](const char* why) {
+        destroy_kept(p, why);
+        return false;
+    };
+    if (!g_feature_on) return fail("Seamless Interiors is off now");
+    if (!master_of(p.in)) return fail("it didn't survive");
+    if (p.save != game::save_id()) return fail("another save is being played");
+    if (p.restore_gen != g_restore_gen) return fail("a save was loaded since");
+    if (coop() == Coop::Friend) return fail("we're a friend in co-op now (the host's rooms count)");
+    if (room_print(p.in) != p.in.persist_print) return fail("something in it changed or went while it was kept");
+    const int32_t h = scene_by_name(region);
+    Il2CppObject* m = master_of(p.in);
+    move_to_scene(m, h);
+    if (!h || scene_of(m) != h) return fail("it couldn't be moved back into the region");
+    in = std::move(p.in);
+    Il2CppObject* shell = find_shell(in);
+    in.shell = hold(shell);
+    align_room(in);
+    set_active(m, false);
+    // the game's lists: fires, items (GearManager.Reset at the scene change)
+    register_fires(in);
+    int gear_added = 0;
+    if (Il2CppObject* list = static_object(kapi.gear_list))
+        each_in(m, api.t_gear, [&](Il2CppObject* gi) {
+            if (list_contains(list, gi)) return;
+            void* a[] = {gi};
+            il2::invoke(kapi.gear_add, nullptr, a);
+            ++gear_added;
+        });
+    safehouse_fix(in);
+    // the hours that passed while we were away (SI: FrozenTime for a kept room)
+    const double now_h = hours_played();
+    const float away = now_h > in.persist_hours ? static_cast<float>((now_h - in.persist_hours) * 3600.0) : 0.0f;
+    in.closed_dirty = true;
+    rebuild_closed_cache(in);
+    if (away > 0) advance_closed(in, away);
+    in.closed_was_open = false;
+    in.stage_since = now_ms();
+    if (Il2CppObject* s = live(in.shell)) set_active(s, true);
+    rooms_changed();
+    logx::info("interiors: %s: its room kept from our last visit is back (%.1f h passed; %d item(s) back in the game's list)",
+               in.cfg->id, away / 3600.0f, gear_added);
+    return true;
 }
 
 void resolve_persist() {

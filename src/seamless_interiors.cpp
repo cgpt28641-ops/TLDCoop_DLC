@@ -717,8 +717,23 @@ struct Instance {
     // A11 (SI: Junk.cs): the safehouse "clear junk" of this building (kept in its .state file as "JK|cleared")
     bool junk_cleared = false;
     std::vector<uintptr_t> junk_off;  // the junk it switched off (switched back on if a load says it wasn't cleared)
+    // A8 (seamless_persist.inc): kept across a region change
+    bool persist_pending = false;  // taken out of the region on its way out (DontDestroyOnLoad)
+    uint64_t persist_print = 0;    // what it held then (room_print)
+    double persist_hours = 0, persist_at = 0;
+    double last_saved_ms = -1e18;  // the last save that wrote all of its files
 };
 std::vector<Instance> g_instances;
+// A8: rooms kept from the region last left (their masters in DontDestroyOnLoad, switched off)
+struct Persisted {
+    std::string region, save;
+    uint32_t restore_gen = 0;
+    Instance in;
+};
+std::vector<Persisted> g_persisted;
+uint32_t g_restore_gen = 0;        // A8: saves loaded (a kept room belongs to the play it was kept in)
+double g_last_restore_ms = -1e18;
+void drop_kept(const char* why);
 std::string g_region;               // the region these instances belong to
 bool g_feature_on = false;          // coop_features: our own or the host's choice
 bool g_engaged = false;             // hooks act (on, or rooms still standing in this region)
@@ -791,6 +806,8 @@ const std::vector<std::pair<Il2CppObject*, Instance*>>& room_roots() {
     for (auto& [base, h] : g_pristine)
         if (Il2CppObject* p = live(h))
             if (Il2CppObject* t = go_tf(p)) g_room_roots.emplace_back(t, nullptr);
+    for (Persisted& p : g_persisted)  // A8: kept rooms aren't the region's (nor shared: no instance here)
+        if (Il2CppObject* t = p.in.master_tf ? target(p.in.master_tf) : nullptr) g_room_roots.emplace_back(t, nullptr);
     return g_room_roots;
 }
 // Nothing of ours stands in the scene or is coming in: every "is it a room's?" question is a cheap no.
@@ -806,6 +823,9 @@ std::vector<DeferredGear> g_deferred_gear;
 // Milestone 1b, in seamless_persist.inc (included further down).
 int adopt_strays(Instance& in, const char* why);
 void end_junk_view();
+void persist_before_load(const std::string& to);
+void keep_on_forget();
+bool reattach_kept(Instance& in, const std::string& region);
 int purge_leaked(Instance& in);
 int stabilize_guids(Instance& in);
 bool decide_loot(Instance& in);
@@ -831,6 +851,7 @@ std::string loot_seed_save();
 void coop_room_ready(Instance& in);
 Instance* hosted_unready(Il2CppObject* door);
 void tick_coop_rooms();
+void tick_room_places();
 
 // --- a room's geometry (SI: Instances.cs) ------------------------------------------------------------------------------
 
@@ -3045,6 +3066,7 @@ void tick_waited() {
 
 void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
     world_items::door_used();
+    if (api.ok && scene) persist_before_load(il2::to_utf8(scene));  // A8: the rooms to keep leave the region first
     // The game loads one of those interiors as its own scene now: a late load of it given up on is no longer told from
     // the real one (its GameManager must wake): not kept out any more.
     if (!g_orphan_loads.empty() && scene) {
@@ -3148,7 +3170,9 @@ bool root_is_room(Il2CppObject* t) {
         if (r == root) return true;
     return false;
 }
-bool no_room_objects() { return room_roots().empty() && g_loading_base.empty() && g_orphan_loads.empty(); }
+bool no_room_objects() {
+    return room_roots().empty() && g_loading_base.empty() && g_orphan_loads.empty() && g_persisted.empty();
+}
 bool under_any_room(Il2CppObject* comp) { return root_is_room(tf_of(comp)); }
 
 // SI: PreventFakeManagerPatch is skip_game_manager_awake below.
@@ -3726,10 +3750,13 @@ void forget_region(const char* why) {
     if (g_hold.active) release_hold("the region changed");
     g_record_checked = false;
     g_rolled_read = false;
-    g_mod_guids.clear();
-    g_stable_checked.clear();
+    if (g_persisted.empty()) {  // (A8: a kept room's items and furniture keep their ids)
+        g_mod_guids.clear();
+        g_stable_checked.clear();
+    }
     g_carried_wrong_prev.clear();
     g_urgent = nullptr;
+    keep_on_forget();  // A8: the rooms kept on the way out (and written by its save) move aside first
     for (Instance& in : g_instances) {
         for (auto* list : {&in.closed_fires, &in.closed_pots, &in.closed_lamps, &in.closed_torches, &in.closed_flares,
                            &in.closed_evolve})
@@ -3770,11 +3797,13 @@ void forget_region(const char* why) {
     g_snow_moved = g_snow_planes_hidden = false;
     drop(g_snow_planes);
     g_snow_planes_next = 0;
-    for (auto& [id, h] : g_stripped_materials) {  // the rooms' material copies (SI: s_StrippedMaterialCache)
-        if (Il2CppObject* mat = live(h)) destroy(mat);
-        drop(h);
+    if (g_persisted.empty()) {  // (A8: kept rooms still use them)
+        for (auto& [id, h] : g_stripped_materials) {  // the rooms' material copies (SI: s_StrippedMaterialCache)
+            if (Il2CppObject* mat = live(h)) destroy(mat);
+            drop(h);
+        }
+        g_stripped_materials.clear();
     }
-    g_stripped_materials.clear();
     drop(g_fog_layer);
     g_capsule_applied = false;
     if (had) logx::info("interiors: %s left (%s); its %zu building(s) forgotten", g_region.c_str(), why, had);
@@ -3788,8 +3817,18 @@ void enter_region(const std::string& region) {
         if (region != kConfigs[i].region) continue;
         Instance in;
         in.cfg = &kConfigs[i];
-        g_instances.push_back(in);
+        g_instances.push_back(std::move(in));
     }
+    // A8: rooms kept from our last visit come back (in place, the vector is complete: pointers stay)
+    int back = 0;
+    for (Instance& in : g_instances)
+        if (reattach_kept(in, region)) {
+            ensure_dir(in);
+            coop_room_ready(in);  // (the host: friends get its lists again)
+            ++back;
+        }
+    // (rooms kept from another region stay: we may go back there; leaving this one with rooms to keep drops them)
+    if (back) ++g_rooms_gen;
     rooms_changed();
     if (!g_instances.empty())
         logx::info("interiors: %s: %zu building(s) with seamless doors; rooms are built as the player comes within %.0f m",
@@ -3847,6 +3886,7 @@ bool skip_game_manager_awake(Il2CppObject* gm) {
 void set_settings(const config::Settings& s) {
     coop_features::set_own(net::kFeatureSeamlessInteriors, s.seamless_interiors);
     g_import_old = s.seamless_import_old;
+    g_keep_rooms = s.seamless_keep_rooms;  // A8
     logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s)", s.seamless_interiors ? "on" : "off",
                g_import_old ? "imported" : "left to the game's doors");
 }
@@ -3883,6 +3923,7 @@ void on_frame(const std::string& scene, bool in_game) {
     }
     g_engaged = engaged_now;
     tick_coop_rooms();  // milestone 2: which rooms each game has (also with none here: the others are told so; K2)
+    tick_room_places();  // A5: furniture moved in the rooms
     if (!g_engaged || g_instances.empty()) return;
     (void)scene;
     tick_build();

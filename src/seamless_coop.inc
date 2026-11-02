@@ -44,6 +44,13 @@ struct RoomPuts {
     double at = 0;
 };
 std::vector<RoomPuts> g_room_puts, g_room_puts_due;
+struct PlaceFull {
+    uint8_t player = 0;
+    std::vector<std::string> ids;
+    double at = 0;
+};
+std::vector<PlaceFull> g_place_full;  // A5, host: whole rooms' furniture to send to a friend whose room came up
+
 uint32_t g_rooms_gen = 0;
 std::string g_rooms_said;  // what we last told (region and ids)
 double g_rooms_said_at = 0;
@@ -131,6 +138,7 @@ void tick_coop_rooms() {
                            joined(fresh).c_str(), g_region.c_str());
                 g_resyncs.push_back({p.from, now + kResyncDelayMs});
                 g_room_puts.push_back({p.from, fresh, now + kResyncDelayMs});
+                g_place_full.push_back({p.from, fresh, now + kResyncDelayMs});  // A5: and its furniture as we have it
             }
         }
     }
@@ -313,6 +321,363 @@ const std::unordered_set<std::string>& file_item_ids(Instance& in) {
         for (int n = 1; n <= 3; ++n) ids.insert(md5_guid("coop|gear|" + g + "#" + std::to_string(n)));
     }
     return ids;
+}
+
+
+// --- A5: furniture and decorations in rooms (Msg::RoomPlace) -----------------------------------------------------------
+// A room's placeables are kept out of TLD's PlaceableManager (so world_objects never sees them): each game looks at its
+// ready rooms' placeables once a second and tells the other games what changed, by building and the placeable's stable
+// id (stabilize_guids): its room-local transform, switched on or off, or gone from the room (taken into a pack). The
+// host's game is the authority: a friend's change goes to the host, which applies it (its room files keep it with the
+// next save) and passes it on; the host's go to every friend; a friend whose room comes up gets the host's whole room.
+// A change for a room not built here waits for it (as K1). Nothing is ever destroyed: one gone is switched off (what
+// it holds stays with it); one a game doesn't have is made from TLD's record of it (or, if it's elsewhere in the
+// scene with that id, moved), never twice.
+struct PlaceSnap {
+    std::string sig;
+    net::RoomPlaceMsg msg;
+};
+std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_place_seen;  // building -> guid -> sig
+std::unordered_map<std::string, uintptr_t> g_place_master;  // building -> the room (master handle) those were seen in
+std::string g_place_region;
+double g_place_next_scan = 0;
+std::unordered_map<std::string, std::unordered_map<std::string, net::RoomPlaceMsg>> g_place_waiting;  // "region|id" -> guid
+int g_place_logged = 0;
+
+std::string place_sig(bool gone, bool active, V3 p, Quat q, V3 s);
+constexpr const char* kJunkGuid = "#junk";
+// What a scan would see of it now (so a change we applied isn't told back).
+std::string actual_sig(Instance& in, Il2CppObject* p) {
+    Il2CppObject* t = tf_of(p);
+    return place_sig(false, active_self(go_of(p)), to_local(in, position(t)), mul(conj(in.master_rot), rotation(t)), local_scale(t));
+}
+std::string place_sig(bool gone, bool active, V3 p, Quat q, V3 s) {
+    if (gone) return "gone";
+    char b[200];
+    std::snprintf(b, sizeof(b), "%d|%.2f,%.2f,%.2f|%.3f,%.3f,%.3f,%.3f|%.2f,%.2f,%.2f", active ? 1 : 0, p.x, p.y, p.z, q.x, q.y,
+                  q.z, q.w, s.x, s.y, s.z);
+    return b;
+}
+
+// The room's placeables as this game has them now (by id; one on the player or in a pack isn't in the room).
+std::unordered_map<std::string, PlaceSnap> scan_places(Instance& in, bool with_spawned) {
+    std::unordered_map<std::string, PlaceSnap> out;
+    std::vector<Il2CppObject*> all;
+    each_in(master_of(in), api.t_placeable, [&](Il2CppObject* p) { all.push_back(p); });
+    const auto best = best_per_guid(all, in);
+    for (const auto& [g, p] : best) {
+        Il2CppObject* t = tf_of(p);
+        if (g == kStableGuidMarker || player_or_inventory(t) || is_carried(in, p)) continue;
+        PlaceSnap s;
+        s.msg.region = g_region;
+        s.msg.building = in.cfg->id;
+        s.msg.guid = g;
+        const V3 lp = to_local(in, position(t));
+        const Quat lr = mul(conj(in.master_rot), rotation(t));
+        const V3 sc = local_scale(t);
+        const bool on = active_self(go_of(p));
+        s.msg.active = on ? 1 : 0;
+        s.msg.pos[0] = lp.x, s.msg.pos[1] = lp.y, s.msg.pos[2] = lp.z;
+        s.msg.rot[0] = lr.x, s.msg.rot[1] = lr.y, s.msg.rot[2] = lr.z, s.msg.rot[3] = lr.w;
+        s.msg.scale[0] = sc.x, s.msg.scale[1] = sc.y, s.msg.scale[2] = sc.z;
+        s.sig = place_sig(false, on, lp, lr, sc);
+        if (with_spawned && is_spawned_placeable(in, p)) {
+            Il2CppObject* data = nullptr;
+            if (call(papi.placeable_save, p, nullptr, &data) && data) {
+                put<V3>(data, papi.data_position, to_local(in, get<V3>(data, papi.data_position)));
+                put<Quat>(data, papi.data_rotation, mul(conj(in.master_rot), get<Quat>(data, papi.data_rotation)));
+                void* sa[] = {data};
+                s.msg.spawned = call_text(papi.utils_serialize, nullptr, sa);
+                if (s.msg.spawned.size() > net::kRoomPlaceSpawnedMax) s.msg.spawned.clear();
+            }
+        }
+        out.emplace(g, std::move(s));
+    }
+    {  // A11: the room's "junk cleared" goes the same way (a pseudo placeable: active 0 = cleared)
+        PlaceSnap s;
+        s.msg.region = g_region;
+        s.msg.building = in.cfg->id;
+        s.msg.guid = kJunkGuid;
+        s.msg.active = in.junk_cleared ? 0 : 1;
+        s.sig = in.junk_cleared ? "junk:cleared" : "junk:there";
+        out.emplace(kJunkGuid, std::move(s));
+    }
+    return out;
+}
+
+void send_place(const net::RoomPlaceMsg& m, int to /* -1 everyone (or the host), else one friend */, int except = -1) {
+    net::Writer w(net::Msg::RoomPlace, net::kMaxMessage);
+    net::write_room_place(w, m);
+    if (!w.ok()) return;
+    if (to >= 0) netrt::send_packet_to(static_cast<uint8_t>(to), w, true);
+    else if (except >= 0) netrt::send_packet_except(static_cast<uint8_t>(except), w, true);
+    else netrt::send_packet(w, true);
+}
+
+Il2CppObject* placeable_in_room(Instance& in, const std::string& guid) {
+    std::vector<Il2CppObject*> all;
+    each_in(master_of(in), api.t_placeable, [&](Il2CppObject* p) {
+        if (placeable_guid(p) == guid) all.push_back(p);
+    });
+    if (all.empty()) return nullptr;
+    const auto best = best_per_guid(all, in);
+    auto it = best.find(guid);
+    return it == best.end() ? nullptr : it->second;
+}
+
+// A placeable of this id anywhere in the scene outside the rooms (switched off ones too), not carried.
+Il2CppObject* placeable_elsewhere(const std::string& guid) {
+    if (!japi.find_all || !api.t_placeable) return nullptr;
+    bool inactive = true;
+    void* a[] = {api.t_placeable, &inactive};
+    Il2CppObject* all = il2::invoke(japi.find_all, nullptr, a);
+    for (size_t i = 0, n = all ? il2::array_length(all) : 0; i < n; ++i) {
+        Il2CppObject* p = il2::array_object_at(all, i);
+        if (!alive(p) || placeable_guid(p) != guid || is_clone_object(p) || player_or_inventory(tf_of(p))) continue;
+        return p;
+    }
+    return nullptr;
+}
+
+// One of a room's placeables that isn't under it any more: where it is (`held`: in the player's hands, being moved),
+// or null when it's in a pack or no more.
+Il2CppObject* placeable_anywhere(const std::string& guid, bool& held) {
+    held = false;
+    if (Il2CppObject* p = placeable_elsewhere(guid)) return p;
+    if (!japi.find_all || !api.t_placeable || is_carried(guid)) return nullptr;
+    bool inactive = false;
+    void* a[] = {api.t_placeable, &inactive};
+    Il2CppObject* all = il2::invoke(japi.find_all, nullptr, a);
+    for (size_t i = 0, n = all ? il2::array_length(all) : 0; i < n; ++i) {
+        Il2CppObject* p = il2::array_object_at(all, i);
+        if (alive(p) && placeable_guid(p) == guid && player_or_inventory(tf_of(p)) && !in_inventory(tf_of(p))) {
+            held = true;
+            return p;
+        }
+    }
+    return nullptr;
+}
+
+void place_at(Instance& in, Il2CppObject* p, const net::RoomPlaceMsg& m) {
+    Il2CppObject* t = tf_of(p);
+    set_position(t, to_world(in, V3{m.pos[0], m.pos[1], m.pos[2]}));
+    Quat r = mul(in.master_rot, Quat{m.rot[0], m.rot[1], m.rot[2], m.rot[3]});
+    void* ra[] = {&r};
+    il2::invoke(api.tf_set_rotation, t, ra);
+    V3 sc{m.scale[0], m.scale[1], m.scale[2]};
+    void* sa[] = {&sc};
+    il2::invoke(api.tf_set_local_scale, t, sa);
+}
+
+// Applies another game's word on one of a room's placeables. False: the room isn't here to take it (it waits).
+bool apply_place(const net::RoomPlaceMsg& m, uint8_t from) {
+    Instance* in = find_instance(m.building.c_str());
+    if (!in || m.region != g_region || !in_room(in) || !in->hydrated || !master_of(*in)) return false;
+    const char* who = from == 0 ? "the host" : "a friend";
+    auto& seen = g_place_seen[in->cfg->id];
+    if (m.guid == kJunkGuid) {  // A11: its junk cleared (or, a load of an older save, not)
+        const bool cleared = m.active == 0;
+        if (cleared != in->junk_cleared) {
+            const int n = cleared ? clear_junk_in(*in) : restore_junk_in(*in);
+            logx::info("interiors: %s: %s %s the room's junk (%d object(s))", in->cfg->id, who, cleared ? "cleared" : "brought back", n);
+            if (g_junk_owner == in)
+                if (Il2CppObject* jm = junk_manager()) put<bool>(jm, japi.cleared, cleared);
+        }
+        seen[m.guid] = cleared ? "junk:cleared" : "junk:there";
+        return true;
+    }
+    Il2CppObject* p = placeable_in_room(*in, m.guid);
+    if (p && (player_or_inventory(tf_of(p)) || is_carried(*in, p))) {  // ours, in our hands or pack: not theirs to move
+        if (g_place_logged++ < 60) logx::info("interiors: %s: %s's word on '%s' isn't applied: we carry it", in->cfg->id, who, m.guid.c_str());
+        return true;
+    }
+    if (m.gone) {
+        if (p && active_self(go_of(p))) {
+            set_active(go_of(p), false);  // (switched off, never destroyed: whatever it holds stays with it)
+            if (g_place_logged++ < 60)
+                logx::info("interiors: %s: %s took '%s' (%s) from the room", in->cfg->id, who, name_of(go_of(p)).c_str(), m.guid.c_str());
+        }
+        if (p) seen[m.guid] = actual_sig(*in, p);
+        return true;
+    }
+    if (!p) {
+        if (Il2CppObject* other = placeable_elsewhere(m.guid)) {  // put down in the region (not adopted yet): moved there
+            place_at(*in, other, m);
+            set_active(go_of(other), m.active != 0);
+            if (g_place_logged++ < 60)
+                logx::info("interiors: %s: %s put '%s' down in the room (ours stood elsewhere in the scene: moved)", in->cfg->id, who,
+                           m.guid.c_str());
+            return true;
+        }
+        if (m.spawned.empty() || !papi.t_placeable_data || !papi.placeable_create) {
+            if (g_place_logged++ < 60)
+                logx::warn("interiors: %s: %s's word on '%s', which we don't have and can't make; left", in->cfg->id, who, m.guid.c_str());
+            return true;
+        }
+        Il2CppObject* data = deserialize_object(m.spawned, papi.t_placeable_data);
+        Il2CppObject* placed = nullptr;
+        if (data) {
+            put<V3>(data, papi.data_position, to_world(*in, get<V3>(data, papi.data_position)));
+            put<Quat>(data, papi.data_rotation, mul(in->master_rot, get<Quat>(data, papi.data_rotation)));
+            void* a[] = {str(m.guid.c_str()), data};
+            g_creating_placeable_1b = true;
+            call(papi.placeable_create, nullptr, a, &placed);
+            g_creating_placeable_1b = false;
+        }
+        if (!alive(placed)) {
+            logx::warn("interiors: %s: %s put '%s' down in the room; TLD couldn't make it here", in->cfg->id, who, m.guid.c_str());
+            return true;
+        }
+        Il2CppObject* t = tf_of(placed);
+        if (Il2CppObject* mt = live(in->master_tf); mt && !child_of(t, mt)) {
+            bool keep_world = true;
+            void* a[] = {mt, &keep_world};
+            il2::invoke(api.tf_set_parent, t, a);
+        }
+        put<bool>(placed, api.placeable_invalidated, true);
+        void* ra[] = {placed};
+        call(papi.placeable_remove, nullptr, ra);
+        in->spawned_guids.insert(m.guid);
+        p = placed;
+        if (g_place_logged++ < 60) logx::info("interiors: %s: %s put '%s' (%s) down in the room; made here", in->cfg->id, who,
+                                              name_of(go_of(p)).c_str(), m.guid.c_str());
+    }
+    place_at(*in, p, m);
+    set_active(go_of(p), m.active != 0);
+    seen[m.guid] = actual_sig(*in, p);
+    return true;
+}
+
+void tick_room_places() {
+    static std::vector<net::Packet> packets;
+    packets.clear();
+    netrt::drain_packets(net::Msg::RoomPlace, packets);  // (always: unread they would pile up)
+    const Coop role = coop();
+    if (role == Coop::Solo || !g_engaged) {
+        g_place_seen.clear();
+        g_place_master.clear();
+        g_place_full.clear();
+        if (role == Coop::Solo) g_place_waiting.clear();
+        return;
+    }
+    if (g_place_region != g_region) {  // other rooms now (their placeables went with the old region)
+        g_place_seen.clear();
+        g_place_master.clear();
+        g_place_full.clear();
+        g_place_region = g_region;
+    }
+    for (const net::Packet& pk : packets) {
+        net::Reader r = net::packet_body(pk);
+        net::RoomPlaceMsg m;
+        if (!net::read_room_place(r, m) || m.guid.empty()) continue;
+        if (role == Coop::Friend && pk.from != 0) continue;
+        if (role == Coop::Host && pk.from > 0) send_place(m, -1, pk.from);  // the other friends hear of it too
+        if (!apply_place(m, pk.from)) {
+            g_place_waiting[m.region + "|" + m.building][m.guid] = m;  // the newest word on it waits for the room
+            if (g_place_logged++ < 60)
+                logx::info("interiors: %s's word on '%s' in %s waits for that room", pk.from == 0 ? "the host" : "a friend",
+                           m.guid.c_str(), m.building.c_str());
+        }
+    }
+    const double now = now_ms();
+    if (now < g_place_next_scan || g_region.empty()) return;
+    g_place_next_scan = now + 1000;
+    for (Instance& in : g_instances) {
+        if (!in_room(&in) || !in.hydrated || !master_of(in)) continue;
+        // what waited for this room first
+        if (auto w = g_place_waiting.find(g_region + "|" + in.cfg->id); w != g_place_waiting.end()) {
+            auto list = std::move(w->second);
+            g_place_waiting.erase(w);
+            for (auto& [g, m] : list) apply_place(m, role == Coop::Friend ? 0 : 1);
+            logx::info("interiors: %s: %zu furniture change(s) that waited for the room applied", in.cfg->id, list.size());
+        }
+        if (g_place_master[in.cfg->id] != in.master) {  // a room built again (a reload of the region): a fresh first look
+            g_place_seen.erase(in.cfg->id);
+            g_place_master[in.cfg->id] = in.master;
+        }
+        auto seen_it = g_place_seen.find(in.cfg->id);
+        auto now_places = scan_places(in, false);
+        if (seen_it == g_place_seen.end()) {  // first look at it: how it came up (nobody changed anything)
+            auto& base = g_place_seen[in.cfg->id];
+            for (auto& [g, s] : now_places) base[g] = s.sig;
+            continue;
+        }
+        auto& seen = seen_it->second;
+        int sent = 0;
+        std::unordered_map<std::string, PlaceSnap> with;  // (TLD's records of the player's own, made once if needed)
+        bool with_made = false;
+        for (auto& [g, s] : now_places) {
+            auto it = seen.find(g);
+            if (it != seen.end() && it->second == s.sig) continue;
+            if (!with_made) {  // how to make it, for a game that hasn't got it (the player's own furniture only)
+                with = scan_places(in, true);
+                with_made = true;
+            }
+            if (auto w = with.find(g); w != with.end()) s.msg.spawned = w->second.msg.spawned;
+            seen[g] = s.sig;
+            send_place(s.msg, -1);
+            ++sent;
+        }
+        for (auto it = seen.begin(); it != seen.end();) {
+            if (now_places.count(it->first)) {
+                ++it;
+                continue;
+            }
+            // Not under the room: put down somewhere in the scene (TLD may leave a moved one outside the room until it
+            // is adopted), in the player's hands while they move it (not gone), or really gone (in a pack, or no more).
+            bool held = false;
+            if (Il2CppObject* o = placeable_anywhere(it->first, held)) {
+                if (held) {
+                    ++it;
+                    continue;
+                }
+                const std::string sig = actual_sig(in, o);
+                if (sig != it->second) {
+                    Il2CppObject* t = tf_of(o);
+                    net::RoomPlaceMsg m;
+                    m.region = g_region;
+                    m.building = in.cfg->id;
+                    m.guid = it->first;
+                    const V3 lp = to_local(in, position(t));
+                    const Quat lr = mul(conj(in.master_rot), rotation(t));
+                    const V3 sc = local_scale(t);
+                    m.active = active_self(go_of(o)) ? 1 : 0;
+                    m.pos[0] = lp.x, m.pos[1] = lp.y, m.pos[2] = lp.z;
+                    m.rot[0] = lr.x, m.rot[1] = lr.y, m.rot[2] = lr.z, m.rot[3] = lr.w;
+                    m.scale[0] = sc.x, m.scale[1] = sc.y, m.scale[2] = sc.z;
+                    send_place(m, -1);
+                    ++sent;
+                    it->second = sig;
+                }
+                ++it;
+                continue;
+            }
+            net::RoomPlaceMsg m;
+            m.region = g_region;
+            m.building = in.cfg->id;
+            m.guid = it->first;
+            m.gone = 1;
+            send_place(m, -1);
+            ++sent;
+            it = seen.erase(it);
+        }
+        if (sent && g_place_logged++ < 60)
+            logx::info("interiors: %s: %d furniture change(s) told the %s", in.cfg->id, sent, role == Coop::Host ? "friends" : "host");
+    }
+    if (role == Coop::Host)
+        for (auto it = g_place_full.begin(); it != g_place_full.end();) {
+            if (now < it->at) {
+                ++it;
+                continue;
+            }
+            for (const std::string& id : it->ids)
+                if (Instance* in = find_instance(id.c_str()); in && in_room(in) && in->hydrated && master_of(*in)) {
+                    auto all = scan_places(*in, true);
+                    for (auto& [g, s] : all) send_place(s.msg, it->player);
+                    logx::info("interiors: %s: its %zu placeable(s) as we have them sent to player %u", id.c_str(), all.size(), it->player);
+                }
+            it = g_place_full.erase(it);
+        }
 }
 
 }  // namespace (reopened below)
