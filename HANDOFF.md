@@ -534,3 +534,4 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Najważniejsze: skrzynia hosta mogła zostać nadpisana starą kopią znajomego (G1); dawanie przedmiotu ginęło przy spóźnionym Done / zerwanym łączu (G2/G3); utknięcie w walce przy wyjściu hosta (W1); podwójne tusze (W3/W4); przycinanie przez skan wszystkich materiałów (U1); czat zjadał puszczenie klawiszy (U3).
 - Kody dołączania nie są już zapisywane w coop.log (config.cpp, coop_menu.cpp) – log trafia do raportów F11.
 - Otwarte: ack-before-destroy przy dawaniu (G3), zabicia znajomego pod nieobecność hosta nie trafiają do hosta (W5).
+- „Pulpit zasrany screenami”: TLD sam robi zrzuty ekranu pod F8/F9/F10 (InputManager.ProcessScreenshotInput, KeyCode 289/290/291 – sprawdzone disasemblacją); mod używa F8 (gest stop) i F9/F10 (prośby o dołączenie). Hook pomija ProcessScreenshotInput, chyba że coop.ini [game] screenshots=1.

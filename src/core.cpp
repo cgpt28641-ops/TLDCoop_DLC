@@ -638,6 +638,13 @@ void keep_world_running_in_menu() {
         logx::info("menu: ESC's menu open; co-op: the game is not paused (%s)", paused ? "its pause" : "its time scale");
 }
 
+using StaticVoidFn = void (*)(const MethodInfo* method);
+StaticVoidFn g_screenshot_input = nullptr;
+bool g_tld_screenshots = false;
+void screenshot_input_detour(const MethodInfo* method) {
+    if (g_tld_screenshots) g_screenshot_input(method);
+}
+
 using PanelEnableFn = void (*)(Il2CppObject* self, bool enable, const MethodInfo* method);
 PanelEnableFn g_pause_menu_enable = nullptr;
 void pause_menu_enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
@@ -730,6 +737,17 @@ void install_hooks() {
         g_get_time_scale = il2::find_method_quiet(time, "get_timeScale", 0);
         g_set_time_scale = il2::find_method_quiet(time, "set_timeScale", 1);
     }
+    // TLDCoop_DLC: TLD's own screenshot keys (InputManager.ProcessScreenshotInput: F8, F9, F10) save a picture on every
+    // press - and the mod's keys share them (F8 a gesture, F9/F10 a friend's join request): "the desktop is full of
+    // screenshots". Off unless coop.ini [game] screenshots=1.
+    if (Il2CppClass* im = il2::find_class("Assembly-CSharp.dll", "", "InputManager"))
+        if (const MethodInfo* shots = il2::find_method_quiet(im, "ProcessScreenshotInput", 0)) {
+            const auto ini = paths::instance_dir() / L"coop.ini";
+            g_tld_screenshots = GetPrivateProfileIntW(L"game", L"screenshots", 0, ini.c_str()) != 0;
+            hooks::install_method("InputManager.ProcessScreenshotInput", shots, reinterpret_cast<void*>(&screenshot_input_detour),
+                                  reinterpret_cast<void**>(&g_screenshot_input));
+            logx::info("screenshots: TLD's F8/F9/F10 screenshot keys %s", g_tld_screenshots ? "on ([game] screenshots=1)" : "off");
+        }
     if (Il2CppClass* pm = il2::find_class("Assembly-CSharp.dll", "", "Panel_PauseMenu"))
         if (const MethodInfo* enable = il2::find_method_quiet(pm, "Enable", 1))
             hooks::install_method("Panel_PauseMenu.Enable", enable, reinterpret_cast<void*>(&pause_menu_enable_detour),

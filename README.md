@@ -231,6 +231,7 @@ pojawiają się tylko w nowym `coop.ini` (stary można usunąć, zrobi się nowy
 | `[interiors] import_old=1` | Budynek, w którym już byłeś bez Seamless Interiors (jego wnętrze jest w zapisie gry), dostaje pokój zbudowany raz z tego zapisu: przedmioty, szafki, meble, skrzynki do suszenia. Zapis gry jest tylko czytany. Gdy czegoś nie da się przenieść w całości, budynek zostaje przy zwykłych drzwiach. `0` = takie budynki zawsze mają zwykłe drzwi. |
 | `[hud] names / radar / chart` | Nazwy nad głowami, radar i automatyczne rysowanie mapy (`1` włączone, `0` wyłączone). |
 | `[death] lose_percent=70` | **Nowe.** Ile procent zwykłych przedmiotów przepada przy śmierci (`0` nic). |
+| `[game] screenshots=0` | **Nowe.** Wbudowane zrzuty ekranu TLD pod F8/F9/F10 (zapis obrazka przy każdym wciśnięciu) są wyłączone, bo mod używa tych klawiszy; `1` je włącza. |
 | `[report] key=F11`, `all=1` | **Nowe.** Klawisz zgłoszenia błędu (logi pakowane do `TLDCoop\reports`); `all=1`: w co-opie zgłoszenie robią wszyscy gracze naraz. |
 | `[zoom] enabled=1`, `key=Z` | **Nowe.** JustZoom: klawisz przybliżenia; `wheel_step` (5–50) krok kółka, `speed` (1–30) szybkość przybliżania, `smooth` (1–40) płynność obrotu kamery. |
 | `[devconsole] enabled=1`, `key=F1` | **Nowe, na testy.** Konsola deweloperska i jej klawisz. |
