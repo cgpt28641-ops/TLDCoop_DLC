@@ -8,6 +8,7 @@
 #include "core.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "scoped.h"
 #include "net_runtime.h"
 
 namespace world_mode {
@@ -211,9 +212,10 @@ void deserialize_detour(Il2CppObject* self, Il2CppString* text, const MethodInfo
     if (!g_overriding || g_applying) return g_deserialize(self, text, method);
     const std::string restored = text ? il2::to_utf8(text) : std::string();
     if (!restored.empty()) g_own = restored;
-    g_applying = true;
-    g_deserialize(self, il2::il2cpp_string_new(g_host.c_str()), method);
-    g_applying = false;
+    {
+        ScopedValue<bool> applying(g_applying, true);  // TLDCoop_DLC: (put back on a game exception too)
+        g_deserialize(self, il2::il2cpp_string_new(g_host.c_str()), method);
+    }
     if (g_restores_logged < 10) {
         ++g_restores_logged;
         logx::info("mode: TLD restored our save's %s; the host's %s again", mode_name(g_own).c_str(),
@@ -234,8 +236,14 @@ bool config_alive(Il2CppObject* config) {  // UnityEngine.Object.m_CachedPtr: nu
 void save_info_detour(Il2CppObject* slot, const MethodInfo* method) {
     Il2CppObject* host_config = g_overriding && config_alive(g_own_config) ? current_config() : nullptr;
     const bool swapped = host_config && g_own_config && g_own_config != host_config && set_current_config(g_own_config);
+    struct PutBack {  // TLDCoop_DLC: the host's mode back however the save leaves (a game exception too)
+        bool on;
+        Il2CppObject* config;
+        ~PutBack() {
+            if (on && !set_current_config(config)) logx::warn("mode: couldn't put the host's mode back after saving");
+        }
+    } put_back{swapped, host_config};
     g_save_info(slot, method);
-    if (swapped && !set_current_config(host_config)) logx::warn("mode: couldn't put the host's mode back after saving");
 }
 
 void host_frame() {
@@ -254,6 +262,13 @@ void host_frame() {
     const std::string text = serialize_now();
     const int32_t* seed = seed_field();
     if (text.empty() || !seed) return;
+    if (text.size() > net::kGameModeMax) {  // TLDCoop_DLC: the friends' read would refuse it: said, not sent
+        static bool told = false;
+        if (!told) logx::warn("mode: our mode's text is too long to send (%zu chars, %zu at most); friends keep theirs",
+                              text.size(), net::kGameModeMax);
+        told = true;
+        return;
+    }
     net::Writer w(net::Msg::GameMode, net::kMaxMessage);
     net::write_game_mode(w, text, *seed);
     if (text != g_sent || *seed != g_sent_seed) {

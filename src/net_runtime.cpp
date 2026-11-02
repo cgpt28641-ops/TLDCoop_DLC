@@ -2,6 +2,8 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <thread>
 
@@ -12,11 +14,23 @@ namespace {
 
 // The session and its thread. Never destroyed at exit: the game exits without unloading us, and tearing the
 // socket down under a running thread would crash. stop() (from the co-op menu) shuts them down cleanly instead.
-net::Session* g_session = nullptr;
+// TLDCoop_DLC: each start has its own Runner (its flag, its event, its session), which its thread holds: a thread that
+// doesn't stop in time keeps running on its own (leaked, never reused) instead of sharing the next session's flag.
+struct Runner {
+    std::atomic<bool> running{true};
+    HANDLE done = nullptr;  // signalled when the network thread has left its loop
+    net::Session* session = nullptr;
+};
+Runner* g_runner = nullptr;
+net::Session* g_session = nullptr;  // g_runner->session (or null)
 net::Config g_config;  // what g_session was started with
-std::atomic<bool> g_running{false};
-HANDLE g_thread_done = nullptr;  // signalled when the network thread has left its loop
 bool g_keep_offline = false;     // what keep_offline() last told the session
+// TLDCoop_DLC: many modules ask status() every frame; the session's (its lock, its player list built) once per frame,
+// and again after a change of ours.
+uint64_t g_frame = 0;            // 0: no frames yet (every call asks the session)
+uint64_t g_status_frame = ~0ull; // the frame g_status is of
+net::Status g_status;
+void status_changed() { g_status_frame = ~0ull; }
 
 }  // namespace
 
@@ -28,33 +42,48 @@ bool start(const net::Config& config) {
         delete session;
         return false;
     }
-    if (!g_thread_done) g_thread_done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    ResetEvent(g_thread_done);
+    auto* runner = new Runner;
+    runner->done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    runner->session = session;
+    if (!runner->done) {
+        logx::error("net: could not start (no event); co-op disabled this session");
+        session->stop();
+        delete session;
+        delete runner;
+        return false;
+    }
+    g_runner = runner;
     g_session = session;
+    status_changed();
     g_config = config;
     g_keep_offline = false;
-    g_running = true;
-    std::thread([session] {
-        while (g_running) {
-            session->update();
-            session->wait(5);
+    std::thread([runner] {
+        while (runner->running) {
+            runner->session->update();
+            runner->session->wait(5);
         }
-        SetEvent(g_thread_done);
+        SetEvent(runner->done);
     }).detach();
     return true;
 }
 
 void stop() {
-    if (!g_session) return;
-    g_running = false;
-    if (WaitForSingleObject(g_thread_done, 2000) != WAIT_OBJECT_0) {
+    if (!g_session || !g_runner) return;
+    Runner* runner = g_runner;
+    g_runner = nullptr;
+    g_session = nullptr;  // nobody here touches it again, whatever happens below
+    status_changed();
+    runner->running = false;
+    if (WaitForSingleObject(runner->done, 2000) != WAIT_OBJECT_0) {
+        // Its thread still uses the runner and the session: both leaked (the thread stops at its next loop and
+        // signals an event nobody waits on; its socket stays open until the game exits).
         logx::warn("net: network thread didn't stop in time; leaking the old session");
-        g_session = nullptr;
         return;
     }
-    g_session->stop();  // says goodbye to the peer
-    delete g_session;
-    g_session = nullptr;
+    runner->session->stop();  // says goodbye to the peer
+    delete runner->session;
+    CloseHandle(runner->done);
+    delete runner;
     logx::info("net: stopped");
 }
 
@@ -62,7 +91,8 @@ void stop() {
 bool same_link(const net::Config& a, const net::Config& b) {
     return a.role == b.role && a.transport == b.transport && a.bind_ip == b.bind_ip && a.host_ip == b.host_ip &&
            a.port == b.port && a.code == b.code && a.name == b.name && a.game_version == b.game_version &&
-           a.content == b.content && a.content_check == b.content_check;
+           a.content == b.content && a.content_check == b.content_check &&
+           a.ask_to_join == b.ask_to_join;  // TLDCoop_DLC: (the session reads it at start)
 }
 
 bool restart(const net::Config& config) {
@@ -90,9 +120,15 @@ void set_ready(bool ready) {
     if (g_session) g_session->set_ready(ready);
 }
 
-bool admit(uint32_t ticket) { return g_session && g_session->admit(ticket); }
+bool admit(uint32_t ticket) {
+    status_changed();
+    return g_session && g_session->admit(ticket);
+}
 
-bool turn_away(uint32_t ticket) { return g_session && g_session->turn_away(ticket); }
+bool turn_away(uint32_t ticket) {
+    status_changed();
+    return g_session && g_session->turn_away(ticket);
+}
 
 void set_local_state(const net::StateMsg& state) {
     if (g_session) g_session->set_local_state(state);
@@ -155,6 +191,7 @@ void send_packet_except(uint8_t player, const net::Writer& w, bool reliable) {
 }
 
 void keep_offline(bool on) {
+    status_changed();
     if (!g_session || on == g_keep_offline) return;
     g_keep_offline = on;
     g_session->keep_offline(on);
@@ -167,18 +204,56 @@ bool offline() {
 
 // Several modules each take their own message types out of one session inbox (main thread only).
 std::vector<net::Packet> g_packets;
+// TLDCoop_DLC: the types some module drains (seen in drain_packets). Too many waiting: types nobody drains go first
+// (after a while: a module may not have started draining yet), then unreliable ones (oldest first); reliable ones of
+// a type someone drains (world changes, acked already) only beyond kPacketsHard, logged.
+std::array<bool, 256> g_drained{};
+double g_last_trim = 0;
+size_t g_trim_logged = 0;
+constexpr size_t kPacketsSoft = 2048, kPacketsHard = 32768;
+constexpr double kUndrainedKeepMs = 30000;
+
+void trim_packets() {
+    const double now = net::now_ms();
+    if (now - g_last_trim < 1000) return;
+    g_last_trim = now;
+    size_t undrained = 0, unreliable = 0, reliable = 0;
+    g_packets.erase(std::remove_if(g_packets.begin(), g_packets.end(),
+                                   [&](const net::Packet& p) {
+                                       const bool drop = !g_drained[static_cast<uint8_t>(p.type)] &&
+                                                         now - p.received_ms > kUndrainedKeepMs;
+                                       undrained += drop;
+                                       return drop;
+                                   }),
+                    g_packets.end());
+    if (g_packets.size() > kPacketsSoft) {
+        size_t excess = g_packets.size() - kPacketsSoft;
+        g_packets.erase(std::remove_if(g_packets.begin(), g_packets.end(),
+                                       [&](const net::Packet& p) {
+                                           if (excess == 0 || p.reliable) return false;
+                                           --excess;
+                                           ++unreliable;
+                                           return true;
+                                       }),
+                        g_packets.end());
+    }
+    if (g_packets.size() > kPacketsHard) {
+        reliable = g_packets.size() - kPacketsHard;
+        g_packets.erase(g_packets.begin(), g_packets.begin() + static_cast<ptrdiff_t>(reliable));
+    }
+    if ((undrained || unreliable || reliable) && g_trim_logged++ < 50)
+        logx::warn("net: %zu received message(s) waiting; dropped %zu nobody takes, %zu unreliable, %zu reliable (oldest)",
+                   g_packets.size(), undrained, unreliable, reliable);
+}
 
 void drain_packets(net::Msg type, std::vector<net::Packet>& out) {
+    g_drained[static_cast<uint8_t>(type)] = true;
     if (g_session) g_session->drain_packets(g_packets);
-    for (auto it = g_packets.begin(); it != g_packets.end();) {
-        if (it->type == type) {
-            out.push_back(std::move(*it));
-            it = g_packets.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    if (g_packets.size() > 2048) g_packets.erase(g_packets.begin(), g_packets.begin() + 1024);  // nobody wants these
+    // (one pass, both kept in order)
+    const auto ours = std::stable_partition(g_packets.begin(), g_packets.end(), [&](const net::Packet& p) { return p.type != type; });
+    for (auto it = ours; it != g_packets.end(); ++it) out.push_back(std::move(*it));
+    g_packets.erase(ours, g_packets.end());
+    if (g_packets.size() > kPacketsSoft) trim_packets();
 }
 
 std::optional<net::Role> role() {
@@ -197,7 +272,15 @@ std::vector<net::StateMsg> remote_states() {
     return g_session ? g_session->remote_states() : std::vector<net::StateMsg>{};
 }
 
-net::Status status() { return g_session ? g_session->status() : net::Status{}; }
+void new_frame() { ++g_frame; }
+
+net::Status status() {
+    if (!g_session) return net::Status{};
+    if (g_frame != 0 && g_status_frame == g_frame) return g_status;
+    g_status = g_session->status();
+    g_status_frame = g_frame;
+    return g_status;
+}
 
 void drain_remote_states(std::vector<net::TimedState>& out) {
     if (g_session) g_session->drain_remote_states(out);

@@ -18,6 +18,7 @@
 #include "world_fires.h"
 #include "world_items.h"
 #include "world_objects.h"
+#include "world_water.h"
 
 namespace world_keep {
 namespace {
@@ -63,6 +64,7 @@ void save() {
     world_objects::save_kept(records);
     world_fires::save_kept(records);
     world_containers::save_kept(records);
+    world_water::save_kept(records);
     std::string data;
     put_u32(data, kFileMagic);
     put_u32(data, kFileVersion);
@@ -123,12 +125,14 @@ void load() {
         at += size;
         bool ok = false;
         switch (r.tag) {
-            case Tag::ItemChange: ok = world_items::load_kept(r); break;
+            case Tag::ItemChange:
+            case Tag::ItemList: ok = world_items::load_kept(r); break;
             case Tag::ObjectChange:
             case Tag::ObjectGone: ok = world_objects::load_kept(r); break;
             case Tag::FireChange: ok = world_fires::load_kept(r); break;
             case Tag::ContainerTheirs:
             case Tag::ContainerOurs: ok = world_containers::load_kept(r); break;
+            case Tag::WaterChange: ok = world_water::load_kept(r); break;
         }
         ++(ok ? loaded : bad);
     }

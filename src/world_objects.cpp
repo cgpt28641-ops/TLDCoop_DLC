@@ -32,6 +32,8 @@ constexpr const char* kGame = "Assembly-CSharp.dll";
 constexpr const char* kCore = "UnityEngine.CoreModule.dll";
 constexpr double kOursMs = 5000;  // client: our own change this recent may not be in the host's list yet
 constexpr double kGoneMs = 1000;  // objects without a TLD id that a player broke down are checked this often
+constexpr double kGoneRescanMs = 15000;  // TLDCoop_DLC: and looked for among all objects this often (a spawner's new one)
+constexpr size_t kGoneMaxPerScene = 4096;
 constexpr double kLocksMs = 500;  // locks and safes are looked at this often
 constexpr double kPlacedMs = 300;  // a placement a player changed goes this long after (TLD is done with it, its stack too)
 constexpr int32_t kRemoved = 1, kOnPlayer = 2;  // TLD.Placement.PlacementState (0 there, 1 gone, 2 carried, 3 hidden)
@@ -496,7 +498,17 @@ void pass_on(uint8_t from, net::ObjectPutMsg m) {
 }
 
 void remember(const std::string& scene, const net::ObjectState& s) {
-    if (!has_tld_id(s.id) && s.done && !is_lock(s.kind)) g_gone[scene][key_of(s.kind, s.id)] = s;
+    if (has_tld_id(s.id) || !s.done || is_lock(s.kind)) return;
+    auto& here = g_gone[scene];
+    const std::string key = key_of(s.kind, s.id);
+    // TLDCoop_DLC: bounded (a scene's breakdowns without an id are a few hundred at most)
+    if (here.size() >= kGoneMaxPerScene && !here.count(key)) {
+        static bool told = false;
+        if (!told) logx::warn("objects: over %zu broken down without a TLD id in %s; more aren't kept", kGoneMaxPerScene, scene.c_str());
+        told = true;
+        return;
+    }
+    here[key] = s;
 }
 
 void changed_here(const Object& x, const std::string& id, const std::string& name) {
@@ -721,7 +733,8 @@ bool apply(const Object& x, const net::ObjectState& s) {
             Il2CppObject* st = api.repair_save_class ? il2::il2cpp_object_new(api.repair_save_class) : nullptr;
             if (st && api.repair_load && api.repair_save_done >= 0) {
                 put<bool>(st, api.repair_save_done, true);
-                if (api.repair_save_guid >= 0) put<Il2CppString*>(st, api.repair_save_guid, il2::il2cpp_string_new(id_of(x.o).c_str()));
+                if (api.repair_save_guid >= 0)  // (a managed reference: write barrier)
+                    il2::store_ref(st, api.repair_save_guid, il2::il2cpp_string_new(id_of(x.o).c_str()));
                 void* args[] = {st};
                 il2::invoke(api.repair_load, x.o, args);
             }
@@ -987,19 +1000,43 @@ void apply_list(const net::ObjectListMsg& m) {
                m.objects.size() - bodies - matched, picks, bodies, made);
 }
 
-// What a player broke down without a TLD id, put back by its spawner: broken down again.
+// What a player broke down without a TLD id, put back by its spawner: broken down again. TLDCoop_DLC: the objects
+// matching g_gone are found among all of the scene's every kGoneRescanMs (or when g_gone changes there); each second
+// only those are looked at.
+struct GoneCache {
+    std::string scene;
+    size_t count = 0;  // g_gone's size there when found
+    double at = -1e18;
+    std::vector<std::pair<Object, std::string>> objects;  // with their keys
+} g_gone_cache;
+
 void keep_gone() {
     const auto it = g_gone.find(g_scene);
-    if (it == g_gone.end() || it->second.empty()) return;
-    for (const Object& x : all_objects()) {
-        if (done(x) || is_lock(x.kind)) continue;
-        const std::string id = id_of(x.o);
-        if (has_tld_id(id)) continue;
-        const auto gone = it->second.find(key_of(x.kind, id));
+    if (it == g_gone.end() || it->second.empty()) {
+        g_gone_cache.objects.clear();
+        return;
+    }
+    const double now = now_ms();
+    if (g_gone_cache.scene != g_scene || g_gone_cache.count != it->second.size() || now - g_gone_cache.at >= kGoneRescanMs) {
+        g_gone_cache.scene = g_scene;
+        g_gone_cache.count = it->second.size();
+        g_gone_cache.at = now;
+        g_gone_cache.objects.clear();
+        for (const Object& x : all_objects()) {
+            if (is_lock(x.kind)) continue;
+            const std::string id = id_of(x.o);
+            if (has_tld_id(id)) continue;
+            std::string key = key_of(x.kind, id);
+            if (it->second.count(key)) g_gone_cache.objects.emplace_back(x, std::move(key));
+        }
+    }
+    for (const auto& [x, key] : g_gone_cache.objects) {
+        if (!alive(x.o) || done(x)) continue;
+        const auto gone = it->second.find(key);
         if (gone == it->second.end()) continue;
         if (apply(x, gone->second))
             logx::info("objects: %s (%s) is back (its spawner put it there again); %s again", name_of(x.o).c_str(),
-                       short_id(id).c_str(), done_name(x.kind));
+                       short_id(gone->second.id).c_str(), done_name(x.kind));
     }
 }
 
@@ -1689,6 +1726,7 @@ void on_frame(bool in_game) {
         g_lock_seen.clear();
         g_marked.clear();
         g_placed.clear();
+        g_gone_cache = GoneCache{};  // TLDCoop_DLC: (its objects were the old scene's)
         g_scene = settled;
         if (!g_scene.empty()) {
             if (hosting())

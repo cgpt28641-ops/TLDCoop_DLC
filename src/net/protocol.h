@@ -332,6 +332,8 @@ struct Packet {
     uint8_t from = 0;  // host: the friend it came from (1..3); client: 0 (everything comes from the host)
     uint32_t link = 0; // which connection of theirs (a new one each time they link: their counters may start over)
     std::vector<uint8_t> data;
+    bool reliable = false;    // TLDCoop_DLC: it came through the Reliable channel (not sent; never trimmed lightly)
+    double received_ms = 0;   // TLDCoop_DLC: when it came (now_ms; not sent)
 };
 
 // One of the client's projectiles hit one of the host's animals (its copy, on the client). The client works the
@@ -652,7 +654,7 @@ inline bool read_sounds(Reader& r, std::vector<AnimalSound>& out) {
         s.action = r.get<int32_t>();
         s.fade_ms = r.get<int32_t>();
         s.curve = r.get<int32_t>();
-        out.push_back(s);
+        if (r.ok()) out.push_back(s);  // TLDCoop_DLC: a cut-off record isn't one
     }
     return r.ok();
 }
@@ -789,7 +791,7 @@ inline bool read_carcasses(Reader& r, std::vector<CarcassRec>& out) {
         c.flags = r.get<uint8_t>();
         c.seconds_dead = r.get<float>();
         c.harvest_ack = r.get<uint32_t>();
-        out.push_back(std::move(c));
+        if (r.ok()) out.push_back(std::move(c));  // TLDCoop_DLC: a cut-off record isn't one
     }
     return r.ok();
 }
@@ -1419,6 +1421,7 @@ inline bool read_game_mode(Reader& r, std::string& text, int32_t& seed) {
 // Sleeping together (milestone 10 item 12). The host decides from everyone's State (kStateInBed, sleep_vote) and
 // starts the sleep in every game; each game sleeps it TLD's own way.
 enum class SleepOp : uint8_t { Start = 1, End = 2, Woke = 3 };
+constexpr uint8_t kSleepChoiceWire = 10;  // TLDCoop_DLC: net::kSleepChoices (sleep_vote.h; checked in coop_sleep)
 enum class SleepEnd : uint8_t { Done = 1, Woken = 2 };
 // Stopped: a player passing time stopped it (Escape, STOP).
 enum class SleepWhy : uint8_t { None = 0, Animal = 1, Cold = 2, Other = 3, NotInBed = 4, Stopped = 5 };
@@ -1448,7 +1451,12 @@ inline bool read_sleep(Reader& r, SleepMsg& m) {
     m.end = r.get<SleepEnd>();
     m.who = r.get<uint8_t>();
     m.why = r.get<SleepWhy>();
-    return r.ok();
+    // TLDCoop_DLC: only what the game can act on (an op, end and reason it knows; a choice of net::SleepChoice; a
+    // Start's hours a real span of a day at most)
+    if (!r.ok() || m.op < SleepOp::Start || m.op > SleepOp::Woke || m.end < SleepEnd::Done || m.end > SleepEnd::Woken ||
+        m.why > SleepWhy::Stopped || m.choice >= kSleepChoiceWire || !std::isfinite(m.hours))
+        return false;
+    return m.op != SleepOp::Start || (m.hours > 0 && m.hours <= 24);
 }
 
 // Handing an item to a friend (milestone 13, net/handover.h). Each player's pack is their own: the giver offers, the

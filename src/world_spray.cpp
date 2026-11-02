@@ -159,7 +159,7 @@ void apply(const net::SprayMarkMsg& m) {
         void* args[] = {il2::il2cpp_string_new(m.name.c_str()), &pos, &yaw, &normal, &scale, &type, &indoors, &projectile};
         Il2CppObject* d = il2::invoke(api.create, mgr, args);
         if (d) {
-            put<Il2CppString*>(d, api.guid, il2::il2cpp_string_new(m.id.c_str()));
+            il2::store_ref(d, api.guid, il2::il2cpp_string_new(m.id.c_str()));  // (a managed reference: write barrier)
             put<Color>(d, api.tint, Color{m.colour[0], m.colour[1], m.colour[2], m.colour[3]});
             void* place_args[] = {d};
             il2::invoke(api.place_down, mgr, place_args);

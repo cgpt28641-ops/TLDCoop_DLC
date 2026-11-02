@@ -204,8 +204,12 @@ inline const char* const kLists[] = {"m_GearToInstantiateSerialized", "m_Seriali
 
 // A container's save text (Container.Serialize) without one-of-a-kind items (and, merged, with `ours`' own: the ones
 // this game has in that container). The text unchanged if it isn't what's expected.
-inline std::string merge_uniques(const std::string& text, const std::string& ours) {
+// `also(base name)`: more names to treat as one of a kind (TLDCoop_DLC: gear the game itself marks as narrative
+// collectibles, m_NarrativeCollectibleItem, but not on the list).
+template <typename Also>
+inline std::string merge_uniques_also(const std::string& text, const std::string& ours, Also also) {
     using namespace uniques_detail;
+    auto is_unique_gear = [&](std::string_view name) { return net::is_unique_gear(name) || also(gear_base_name(name)); };
     std::string out = text;
     for (const char* list : kLists) {
         const Span a = member(out, list);
@@ -231,6 +235,10 @@ inline std::string merge_uniques(const std::string& text, const std::string& our
         out.replace(a.begin, a.end - a.begin, joined);
     }
     return out;
+}
+
+inline std::string merge_uniques(const std::string& text, const std::string& ours) {
+    return merge_uniques_also(text, ours, [](std::string_view) { return false; });
 }
 
 inline std::string strip_uniques(const std::string& text) { return merge_uniques(text, std::string()); }

@@ -316,4 +316,23 @@ void on_frame(bool in_game) {
     for (uint8_t id : g_together.arrived(g_scene)) send_list(id);
 }
 
+void save_kept(std::vector<world_keep::Record>& out) {
+    for (const auto& [scene, sources] : g_store) {
+        for (const auto& [id, m] : sources) {
+            net::Writer w(net::Msg::WaterPut, net::kMaxMessage);
+            net::write_water_put(w, m);
+            if (w.ok()) out.push_back(world_keep::record(world_keep::Tag::WaterChange, w));
+        }
+    }
+}
+
+bool load_kept(const world_keep::Record& r) {
+    const net::Packet p = world_keep::packet(r);
+    net::Reader body = net::packet_body(p);
+    net::WaterPutMsg m;
+    if (p.type != net::Msg::WaterPut || !net::read_water_put(body, m)) return false;
+    g_store[m.scene][m.id] = std::move(m);
+    return true;
+}
+
 }  // namespace world_water

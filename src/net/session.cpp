@@ -49,6 +49,12 @@ constexpr size_t kOutboxMax = 1024;                 // client: world changes kep
 constexpr size_t kOutboxBytes = 2 * 1024 * 1024;    // ...and their bytes (they go out as Reliables: kReliableQueue)
 constexpr size_t kMaxFriends = kMaxPlayers - 1;
 constexpr size_t kMaxAsking = 8;  // host: friends waiting to be let in at once
+// TLDCoop_DLC: undrained packets for the game thread (e.g. over a long load): beyond the first, only unreliable ones
+// are trimmed (oldest first); reliable ones (world changes, acked already: their sender won't send them again) only
+// beyond the second, logged.
+constexpr size_t kPacketsInSoft = 1024 * kMaxFriends;
+constexpr size_t kPacketsInHard = 16384 * kMaxFriends;
+constexpr size_t kReceivePerUpdate = 2048;  // TLDCoop_DLC: datagrams handled per update (the rest next time)
 
 const char* reject_text(RejectReason reason) {
     switch (reason) {
@@ -168,6 +174,8 @@ struct Session::Impl {
     std::vector<AttackMsg> attacks_in;          // client: from the host
     std::vector<AttackResultMsg> results_in;    // host: from the friends
     std::vector<Packet> packets_in;             // newer message types, for the game thread
+    size_t dropped_in = 0;                      // TLDCoop_DLC: reliable ones dropped from it (kPacketsInHard)
+    int reliable_depth = 0;                     // TLDCoop_DLC: inside a Reliable (its message, or a Chunk's whole)
     double cut_until = 0;                 // test (cut_link): until then nothing goes in or out
     uint32_t send_seq = 0;
     double last_hello = -1e18, last_state = 0, last_profile = -1e18, last_roster = -1e18;
@@ -423,6 +431,7 @@ struct Session::Impl {
 
     // --- the reliable channel (per link) ---------------------------------------------------------------------------
 
+    static_assert(static_cast<uint8_t>(GiveOp::Done) == 4 && static_cast<uint8_t>(GiveOp::Failed) == 5);
     static bool world_change(const uint8_t* data, size_t size) {
         if (size < 7) return false;
         switch (static_cast<Msg>(data[6])) {
@@ -435,6 +444,9 @@ struct Session::Impl {
             case Msg::SprayMark:
             case Msg::Harvest:     // a carcass harvest (the host counts each once: net::HarvestLedger)
             case Msg::Quartered: return true;
+            // TLDCoop_DLC: a handover's end (Done carries the item: it's out of the giver's pack already). The op is the
+            // body's first byte (GiveOp::Done 4, Failed 5); offers and acceptances aren't kept.
+            case Msg::Give: return size > 7 && (data[7] == 4 || data[7] == 5);
             default: return false;  // questions (ItemWant, ContainerWant) are asked again once the link is back
         }
     }
@@ -568,8 +580,20 @@ struct Session::Impl {
 
     // A message type the game thread parses itself (Hit, Carcasses, Harvest...).
     void keep_packet(Link& l, Msg type, const uint8_t* data, size_t size, double now) {
-        if (packets_in.size() >= 1024 * kMaxFriends) packets_in.erase(packets_in.begin());
+        if (packets_in.size() >= kPacketsInSoft) {
+            const auto unreliable = std::find_if(packets_in.begin(), packets_in.end(), [](const Packet& q) { return !q.reliable; });
+            if (unreliable != packets_in.end()) {
+                packets_in.erase(unreliable);
+            } else if (packets_in.size() >= kPacketsInHard) {
+                if (dropped_in++ % 256 == 0)
+                    logf("the game isn't taking our received messages: dropped the oldest (type %u; %zu dropped so far)",
+                         static_cast<unsigned>(packets_in.front().type), dropped_in);
+                packets_in.erase(packets_in.begin());
+            }
+        }
         Packet p;
+        p.reliable = reliable_depth > 0;
+        p.received_ms = now;
         p.type = type;
         p.from = hosting() ? l.id : 0;
         p.link = l.serial;
@@ -848,7 +872,9 @@ struct Session::Impl {
                     l->reliable_seen[l->reliable_seen_next++ % kReliableSeen] = seq;
                 const auto* bytes = reinterpret_cast<const uint8_t*>(inner.data());
                 if (static_cast<Msg>(bytes[6]) == Msg::Reliable) return;  // no nesting
+                ++reliable_depth;
                 handle(from, bytes, inner.size(), now);
+                --reliable_depth;
                 break;
             }
             case Msg::Ack: {
@@ -925,7 +951,7 @@ struct Session::Impl {
     void receive_all(double now) {
         PeerId from = 0;
         std::vector<uint8_t> data;
-        while (link->receive(from, data))
+        for (size_t n = 0; n < kReceivePerUpdate && link->receive(from, data); ++n)  // TLDCoop_DLC: bounded per update
             if (now >= cut_until) handle(from, data.data(), data.size(), now);
     }
 

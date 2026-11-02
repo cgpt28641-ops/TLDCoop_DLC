@@ -49,7 +49,8 @@ bool offline();
 std::optional<net::StateMsg> remote_state();  // client: the host's; host: the first friend's
 std::optional<net::StateMsg> remote_state(uint8_t player);
 std::vector<net::StateMsg> remote_states();    // everyone else's newest (state.player: whose)
-net::Status status();
+net::Status status();  // TLDCoop_DLC: read from the session once per frame (new_frame), and after our own changes
+void new_frame();      // main thread, at the start of each game frame
 void drain_remote_states(std::vector<net::TimedState>& out);
 
 // Host: friends with us in our scene, ready for our lists of it (linked, in game there, their changes from while the

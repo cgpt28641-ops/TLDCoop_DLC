@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
+#include <array>
+#include <optional>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -444,6 +446,18 @@ struct Change {
     bool waited_room = false;  // TLDCoop_DLC: it waited for a Seamless Interiors room of ours (host)
 };
 std::unordered_map<std::string, std::unordered_map<std::string, Change>> g_pending;
+// TLDCoop_DLC: host: the loose items of each scene we've been in (hashes of their ids, as send_list sends them), as
+// we last saw them there, kept up with the friends' changes there since. A friend in a scene we aren't in gets it as
+// our list (ItemList): items we took there earlier go from their game too (they were copies), and what they lack
+// they ask for (answered from the changes kept for that scene). Kept with our save (world_keep).
+std::unordered_map<std::string, std::unordered_set<uint64_t>> g_scene_items;
+bool g_scan_left_at_once = false;  // the last scan saw items leave with the scene (a door): not a list to keep
+struct AwaySent {
+    uint32_t link = 0;
+    std::string scene;
+};
+std::array<AwaySent, net::kMaxPlayers> g_away_sent{};  // host: the kept list last sent to each friend (scene, link)
+double g_last_away = 0;
 netrt::Together g_together;          // host: friends in our scene (our list went to each as they came)
 bool g_have_list = false;            // client: a host list for our scene waits for our first scan
 net::ItemHashesMsg g_list;
@@ -509,6 +523,10 @@ void reset(const char* why) {
 void forget_world() {
     g_claims.clear();
     g_took.clear();
+    g_alias_in.clear();
+    g_alias_out.clear();
+    g_scene_items.clear();
+    g_away_sent.fill(AwaySent{});
     if (g_pending.empty()) return;
     logx::info("items: back at the main menu; forgetting changes kept for %zu scene(s)", g_pending.size());
     g_pending.clear();
@@ -759,17 +777,33 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
     std::string text = json_string(gear, "m_CookingPotItemSerialized");
     if (!pot || !api.pot_load || text.empty()) return;
     const std::string food_wire = json_string(text, "m_GearItemBeingCookedGUID");
-    const std::string food_ours = food_wire.empty() ? std::string() : our_id(food_wire);
+    std::string food_ours = food_wire.empty() ? std::string() : our_id(food_wire);
     if (food_ours != food_wire) replace_all(text, food_wire, food_ours);
+    // TLDCoop_DLC: their record names food that's in our pack now (we took it out; theirs is older): the pot mustn't
+    // take it back from the pack (the next record would destroy it there), so it's loaded as not cooking it
+    if (!food_ours.empty()) {
+        if (Il2CppObject* f = gear_on(object_by_pdid(food_ours)); f && in_pack(f)) {
+            logx::info("items: the other player's %s (%s) still cooks %s, which is in our pack now; not put back",
+                       name_of(gi).c_str(), short_id(wire).c_str(), name_of(f).c_str());
+            const std::string was = text;
+            replace_all(text, "\"m_GearItemBeingCookedGUID\":\"" + food_ours + "\"", "\"m_GearItemBeingCookedGUID\":\"\"");
+            if (text == was) replace_all(text, food_ours, "");
+            food_ours.clear();
+        }
+    }
     const std::string before = describe_pot(pot);
     // TLDCoop_DLC: the host's regular word on a pot we're looking into right now (same contents, its progress) waits.
     const PotSig had = pot_sig(pot);
     const bool same_contents = food_ours.empty() ? had.kind != 1 : had.food == food_ours;
     if (same_contents && api.pot_inspected >= 0 && get<bool>(pot, api.pot_inspected)) return;
     if (Il2CppObject* food = food_in(pot); food && pdid_of(food) != food_ours) {
-        const std::string id = pdid_of(food);
-        g_known.erase(id);  // taken out there (the other game tells us): not gone here by our doing
-        il2::invoke(api.pot_drop_food, pot);
+        if (in_pack(food)) {  // TLDCoop_DLC: ours now (in the pack): only the pot lets go of it, never destroyed
+            put<Il2CppObject*>(pot, api.pot_food, nullptr);
+        } else {
+            const std::string id = pdid_of(food);
+            g_known.erase(id);  // taken out there (the other game tells us): not gone here by our doing
+            il2::invoke(api.pot_drop_food, pot);
+        }
     }
     void* args[] = {il2::il2cpp_string_new(text.c_str())};
     il2::invoke(api.pot_load, pot, args);
@@ -864,6 +898,8 @@ void send_put(Il2CppObject* gi, const std::string& pdid, Known& k, double now, u
     else
         netrt::send_packet(w, true);
     if (hosting()) g_claims.lies_again(g_scene, m.pdid);  // whoever took it before, it's lying here now
+    if (hosting() && !k.unique)  // TLDCoop_DLC: (also when a door's scan doesn't keep the list)
+        if (const auto kept = g_scene_items.find(g_scene); kept != g_scene_items.end()) kept->second.insert(net::pdid_hash(m.pdid));
     const bool was_shared = k.shared;
     k.told = pos;
     k.shared = true;
@@ -894,10 +930,45 @@ void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) 
     netrt::send_packet(w, true);
     if (taken) g_took[m.pdid] = Took{pdid, k.prefab, k.units};  // it may go to someone's take at the same moment
     if (taken && hosting()) g_claims.taken_by_host(g_scene, m.pdid, now_ms());
+    if (hosting())  // TLDCoop_DLC: (also when a door's scan doesn't keep the list)
+        if (const auto kept = g_scene_items.find(g_scene); kept != g_scene_items.end()) kept->second.erase(net::pdid_hash(m.pdid));
     logx::info("items: %s (%s) %s; told the other player%s", k.prefab.c_str(), short_id(m.pdid).c_str(),
                m.reason == net::ItemGoneReason::Taken ? "went into our pack" : "is gone from the world",
                taken ? light_state(gi).c_str() : "");
     forget_alias(pdid);
+}
+
+// TLDCoop_DLC: host: a friend (linked, caught up) in a scene we aren't in, that we have a kept list of, gets it once
+// per arrival there (per link).
+void send_away_lists() {
+    const net::Status st = netrt::status();
+    for (const net::PlayerInfo& p : st.players) {
+        if (p.id == 0 || p.id >= net::kMaxPlayers) continue;
+        AwaySent& sent = g_away_sent[p.id];
+        const auto r = p.linked && p.caught_up ? netrt::remote_state(p.id) : std::nullopt;
+        if (!r) {
+            sent = AwaySent{};
+            continue;
+        }
+        if (!r->valid || r->scene.empty()) continue;  // loading: where they arrive counts
+        if (r->scene == g_scene) {  // with us: our live list (g_together)
+            sent = AwaySent{};
+            continue;
+        }
+        if (sent.link == p.link && sent.scene == r->scene) continue;
+        sent = AwaySent{p.link, r->scene};
+        const auto kept = g_scene_items.find(r->scene);
+        if (kept == g_scene_items.end()) continue;
+        net::ItemHashesMsg m;
+        m.scene = r->scene;
+        m.hashes.assign(kept->second.begin(), kept->second.end());
+        net::Writer w(net::Msg::ItemList, net::kMaxMessage);
+        net::write_item_hashes(w, m);
+        if (!w.ok()) continue;
+        netrt::send_packet_to(p.id, w, true);
+        logx::info("items: player %u is in %s, where we aren't; sent the %zu loose item(s) we know there", p.id,
+                   m.scene.c_str(), m.hashes.size());
+    }
 }
 
 void send_list(uint8_t to) {
@@ -1386,7 +1457,23 @@ void apply_list(const net::ItemHashesMsg& m, double now) {
 // Host: friend `from` asks for these.
 void answer_want(const net::ItemHashesMsg& m, double now, uint8_t from) {
     if (m.scene != g_scene) {
-        logx::info("items: the other player asked for items in %s; we're in %s now", m.scene.c_str(), g_scene.c_str());
+        // TLDCoop_DLC: answered from the changes kept for that scene (what a friend put there while we were away)
+        int sent = 0;
+        if (const auto pend = g_pending.find(m.scene); pend != g_pending.end()) {
+            const std::unordered_set<uint64_t> asked(m.hashes.begin(), m.hashes.end());
+            for (const auto& [pdid, c] : pend->second) {
+                if (!c.put || !asked.count(net::pdid_hash(c.put_msg.pdid))) continue;
+                net::ItemPutMsg put = c.put_msg;
+                put.seq = ++g_seq;
+                put.flags |= net::kItemAnswer;
+                net::Writer w(net::Msg::ItemPut, net::kMaxMessage);
+                net::write_item_put(w, put);
+                netrt::send_packet_to(from, w, true);
+                ++sent;
+            }
+        }
+        logx::info("items: the other player asked for %zu item(s) in %s; we're in %s now: sent %d kept from the friends' "
+                   "changes there", m.hashes.size(), m.scene.c_str(), g_scene.c_str(), sent);
         return;
     }
     std::unordered_map<uint64_t, std::string> by_hash;
@@ -1450,6 +1537,14 @@ void receive(double now) {
                 else
                     apply_gone(c.gone_msg, now);
             } else {
+                // TLDCoop_DLC: the list kept for that scene follows it
+                if (hosting() && scene != g_scene)
+                    if (const auto kept = g_scene_items.find(scene); kept != g_scene_items.end()) {
+                        if (c.put)
+                            kept->second.insert(net::pdid_hash(pdid));
+                        else
+                            kept->second.erase(net::pdid_hash(pdid));
+                    }
                 logx::info("items: the other player's change to %s in %s waits until we get there", short_id(pdid).c_str(),
                            scene.c_str());
                 g_pending[scene][pdid] = std::move(c);
@@ -1562,9 +1657,13 @@ void scan(double now) {
                     tell = true;
             }
             last = sig;
-            const bool regular = !tell && hosting() && sig.kind > 0 && sig.state == 0 && now - k.changed_ms >= kPotSyncMs;
-            if ((tell || regular) && k.shared) {
-                if (Il2CppObject* food = food_in(pot); food && tell) {  // the food first: the pot finds it by id
+            // TLDCoop_DLC: never while the food it names is in our pack (a stale record would bind it there)
+            Il2CppObject* cooking = food_in(pot);
+            const bool food_packed = cooking && in_pack(cooking);
+            const bool regular = !tell && hosting() && sig.kind > 0 && sig.state == 0 && now - k.changed_ms >= kPotSyncMs &&
+                                 !food_packed;
+            if ((tell || regular) && k.shared && !food_packed) {
+                if (Il2CppObject* food = cooking; food && tell) {  // the food first: the pot finds it by id
                     const std::string id = pdid_of(food);
                     Known& fk = g_known[id];
                     fk.prefab = name_of(food);
@@ -1618,7 +1717,10 @@ void scan(double now) {
         if (!present.count(id) && id != inspected && id != placing) ++shared_gone;
     }
     const bool through_door = now < g_door_until;
-    const bool all_at_once = shared_gone >= 4 && shared_gone * 2 >= shared_known;
+    g_scan_left_at_once = false;
+    // (TLDCoop_DLC: every one of them at once is the scene going too, however few)
+    const bool all_at_once = (shared_gone >= 4 && shared_gone * 2 >= shared_known) || (shared_gone > 0 && shared_gone == shared_known);
+    if ((through_door || all_at_once) && shared_gone > 0) g_scan_left_at_once = true;
     if ((through_door || all_at_once) && shared_gone > 0)
         logx::info("items: %zu of our %zu item(s) here left our view at once (%s); not told as destroyed", shared_gone,
                    shared_known, through_door ? "a door is being used" : "the scene is going");
@@ -1980,6 +2082,20 @@ bool drop(const std::string& name, int units) {
 // TLDCoop_DLC: a door (LoadScene.Activate) was used: what leaves our view now goes with the scene.
 void door_used() { g_door_until = now_ms() + 6000; }
 
+namespace {
+// TLDCoop_DLC: quitting to the main menu takes the scene's items away too (not destroyed): as a door.
+using StaticVoidFn = void (*)(const MethodInfo* method);
+StaticVoidFn g_load_menu = nullptr, g_async_load_menu = nullptr;
+void load_menu_detour(const MethodInfo* method) {
+    door_used();
+    g_load_menu(method);
+}
+void async_load_menu_detour(const MethodInfo* method) {
+    door_used();
+    g_async_load_menu(method);
+}
+}  // namespace
+
 bool init() {
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
     Il2CppClass* transform = il2::find_class(kCore, "UnityEngine", "Transform");
@@ -2122,6 +2238,18 @@ bool init() {
                               reinterpret_cast<void**>(&g_pot_boil)) &&
         hooks::install_method("CookingPotItem.StartMeltingSnow", api.pot_melt, reinterpret_cast<void*>(&pot_melt_detour),
                               reinterpret_cast<void**>(&g_pot_melt));
+    if (g_ready) {
+        Il2CppClass* gm = il2::find_class(kGame, "", "GameManager");
+        const MethodInfo* load_menu = il2::find_method(gm, "LoadMainMenu", 0);
+        const MethodInfo* async_load_menu = il2::find_method(gm, "AsyncLoadMainMenu", 0);
+        const bool menu = load_menu && async_load_menu &&
+                          hooks::install_method("GameManager.LoadMainMenu", load_menu, reinterpret_cast<void*>(&load_menu_detour),
+                                                reinterpret_cast<void**>(&g_load_menu)) &&
+                          hooks::install_method("GameManager.AsyncLoadMainMenu", async_load_menu,
+                                                reinterpret_cast<void*>(&async_load_menu_detour),
+                                                reinterpret_cast<void**>(&g_async_load_menu));
+        if (!menu) logx::warn("world items: quitting to the main menu isn't seen (items leaving then count as destroyed if many don't)");
+    }
     logx::info("world items: %s%s%s", g_ready ? "ready (loose items are shared)" : "UNAVAILABLE (TLD API missing)",
                g_ready && !snares ? "; snares roll in each game (not shared)" : "",
                g_ready && !pots ? "; what goes in a pot isn't shared" : "");
@@ -2147,8 +2275,8 @@ void on_frame(bool in_game) {
         if (!g_scene.empty()) logx::info("items: left %s", g_scene.c_str());
         g_known.clear();
         g_pot_sig.clear();
-        g_alias_in.clear();
-        g_alias_out.clear();
+        // TLDCoop_DLC: the aliases stay (ids are the game's own, one per item in every scene): cleared here, coming
+        // back made the other player's item again beside ours (a copy on the floor)
         g_scene = settled;
         g_baseline = false;
         g_together.clear();
@@ -2171,6 +2299,17 @@ void on_frame(bool in_game) {
     if (now - g_last_scan >= (now < g_fast_until ? kFastScanMs : kScanMs)) {
         g_last_scan = now;
         scan(now);
+        // TLDCoop_DLC: host: what lies here now, kept for while we're elsewhere (not from a scan that saw the scene go)
+        if (hosting() && g_baseline && !g_scan_left_at_once) {
+            std::unordered_set<uint64_t>& kept = g_scene_items[g_scene];
+            kept.clear();
+            for (const auto& [pdid, k] : g_known)
+                if (!k.unique) kept.insert(net::pdid_hash(wire_id(pdid)));
+        }
+    }
+    if (hosting() && now - g_last_away >= 500) {
+        g_last_away = now;
+        send_away_lists();
     }
     // Host: once a friend's changes from while the link was down are in, our list has them.
     if (hosting())
@@ -2203,11 +2342,26 @@ void save_kept(std::vector<world_keep::Record>& out) {
             if (w.ok()) out.push_back(world_keep::record(world_keep::Tag::ItemChange, w));
         }
     }
+    // TLDCoop_DLC: the loose items kept per scene (as our ItemList)
+    for (const auto& [scene, hashes] : g_scene_items) {
+        net::ItemHashesMsg m;
+        m.scene = scene;
+        m.hashes.assign(hashes.begin(), hashes.end());
+        net::Writer w(net::Msg::ItemList, net::kMaxMessage);
+        net::write_item_hashes(w, m);
+        if (w.ok()) out.push_back(world_keep::record(world_keep::Tag::ItemList, w));
+    }
 }
 
 bool load_kept(const world_keep::Record& r) {
     const net::Packet p = world_keep::packet(r);
     net::Reader body = net::packet_body(p);
+    if (r.tag == world_keep::Tag::ItemList) {
+        net::ItemHashesMsg m;
+        if (p.type != net::Msg::ItemList || !net::read_item_hashes(body, m)) return false;
+        if (m.scene != g_scene || !g_baseline) g_scene_items[m.scene] = std::unordered_set<uint64_t>(m.hashes.begin(), m.hashes.end());
+        return true;
+    }
     Change c;
     c.put = p.type == net::Msg::ItemPut;
     if (c.put ? !net::read_item_put(body, c.put_msg) : p.type != net::Msg::ItemGone || !net::read_item_gone(body, c.gone_msg))

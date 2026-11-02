@@ -126,7 +126,7 @@ void report_steam_once() {
 
 constexpr ULONGLONG kSceneCheckMs = 250;
 constexpr ULONGLONG kTelemetryMs = 2000;
-constexpr int kSnapshotKey = VK_F8;
+constexpr int kSnapshotKey = VK_F8;  // TLDCoop_DLC: with Ctrl (F8 alone is the [emotes] stop default)
 
 bool game_window_focused() {
     DWORD pid = 0;
@@ -525,6 +525,7 @@ void on_frame() {
 
     const ULONGLONG now = GetTickCount64();
     ++frames;
+    netrt::new_frame();  // TLDCoop_DLC: status() read from the session once per frame
     if (first) {
         first = false;
         last_telemetry = now;
@@ -592,12 +593,12 @@ void on_frame() {
 
     report_frame_costs();  // TLDCoop_DLC
 
-    const bool key_down = (GetAsyncKeyState(kSnapshotKey) & 0x8000) != 0;
+    const bool key_down = (GetAsyncKeyState(kSnapshotKey) & 0x8000) != 0 && (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     if (key_down && !key_was_down && game_window_focused()) {
         if (in_game)
-            log_telemetry("F8 snapshot", 0);
+            log_telemetry("Ctrl+F8 snapshot", 0);
         else
-            logx::info("F8 snapshot: scene '%s' has no player", scene.c_str());
+            logx::info("Ctrl+F8 snapshot: scene '%s' has no player", scene.c_str());
     }
     key_was_down = key_down;
 

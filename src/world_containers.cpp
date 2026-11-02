@@ -86,6 +86,7 @@ struct Api {
     // TLDCoop_DLC: is the player busy with a container (one at a time in it)?
     ptrdiff_t searching = -1, opening = -1, closing = -1;  // Container.m_SearchInProgress, m_OpenInProgress, m_PendingClose
     ptrdiff_t pm_container = -1;                   // PlayerManager.m_Container (looking at what a search found)
+    ptrdiff_t narrative = -1;                      // GearItem.m_NarrativeCollectibleItem (TLDCoop_DLC)
 } api;
 
 bool g_ready = false;
@@ -230,7 +231,28 @@ std::string contents_of(Il2CppObject* c) {
 std::string serialize(Il2CppObject* c) { return text(reinterpret_cast<Il2CppString*>(il2::invoke(api.serialize, c))); }
 
 // What the other games get: our one-of-a-kind items (net/uniques.h) stay in our copy only.
-std::string shared_text(Il2CppObject* c) { return net::strip_uniques(serialize(c)); }
+// TLDCoop_DLC: gear the game marks as a narrative collectible (GearItem.m_NarrativeCollectibleItem) counts too, also
+// when it isn't on the list: its names, learnt from the items in our containers (the prefabs are the same in every game).
+std::unordered_set<std::string> g_narrative;
+
+void learn_narrative(Il2CppObject* c) {
+    if (api.narrative < 0 || g_narrative.size() > 4096) return;
+    for (Il2CppObject* gi : gear_in(c))
+        if (alive(get<Il2CppObject*>(gi, api.narrative))) g_narrative.insert(std::string(net::gear_base_name(name_of(gi))));
+}
+
+bool narrative_name(std::string_view base) { return !g_narrative.empty() && g_narrative.count(std::string(base)); }
+
+std::string merge_ours(const std::string& theirs, const std::string& ours) {
+    return net::merge_uniques_also(theirs, ours, narrative_name);
+}
+
+std::string strip_ours(const std::string& text) { return merge_ours(text, std::string()); }
+
+std::string shared_text(Il2CppObject* c) {
+    learn_narrative(c);
+    return strip_ours(serialize(c));
+}
 
 // What's in it and how much it all weighs: changes when an item (or part of a stack, or some water) goes in or out, not
 // when food slowly spoils (Serialize's text changes all the time while the game runs).
@@ -268,6 +290,12 @@ struct Stored {
     bool from_peer = false;
 };
 std::unordered_map<std::string, std::unordered_map<std::string, Stored>> g_store;
+// Host (TLDCoop_DLC): every container of the scene we walk into is read into g_last (a few per frame), so what we
+// keep for it when we leave covers all of them, not only the ones touched this visit: a friend opening one while we're
+// elsewhere gets our copy, and never one where only their stale copy is known (it came back as "the friend's change"
+// and wiped ours). g_snapshot_at: the next one of all_containers() to read; -1: done.
+int g_snapshot_at = -1;
+constexpr int kSnapshotPerFrame = 24;
 // Dev open: the panel shows after the search.
 Il2CppObject* g_opening = nullptr;
 double g_open_at = 0;
@@ -414,7 +442,8 @@ void apply(Il2CppObject* c, const std::string& id, const std::string& theirs, co
     const bool on_screen = shown_container() == c;
     const Opened before = opened(c);
     // Theirs, without their one-of-a-kind items and with ours (each game keeps its own in its copy).
-    const std::string contents = net::merge_uniques(theirs, serialize(c));
+    learn_narrative(c);
+    const std::string contents = merge_ours(theirs, serialize(c));
     g_applying = true;
     il2::invoke(api.destroy_all, c);
     void* args[] = {il2::il2cpp_string_new(contents.c_str()), nullptr};
@@ -444,8 +473,8 @@ void apply_stored() {
     for (auto e = it->second.begin(); e != it->second.end();) {
         const std::string& id = e->first;
         const Stored& s = e->second;
-        if (!s.from_peer) {
-            e = it->second.erase(e);
+        if (!s.from_peer) {  // TLDCoop_DLC: ours stays (the live container replaces it once read: snapshot_step, or
+            ++e;             // when we leave); one we don't read this visit (its room not up) keeps what we had
             continue;
         }
         if (Il2CppObject* c = find(id)) {
@@ -460,10 +489,34 @@ void apply_stored() {
         }
         e = it->second.erase(e);
     }
-    if (it->second.empty()) g_store.erase(it);  // our containers here are what counts now
+    if (it->second.empty()) g_store.erase(it);
     if (applied) logx::info("containers: %d container(s) the other player changed in %s while we were elsewhere", applied, g_scene.c_str());
     if (waiting)
         logx::info("containers: %d change(s) to Seamless Interiors rooms' containers wait for their rooms here", waiting);
+}
+
+// Host (TLDCoop_DLC): a few more of this scene's containers read into g_last (only ones not known yet: a change sent or
+// applied since is newer). Each frame until all are read.
+void snapshot_step() {
+    if (g_snapshot_at < 0 || !hosting()) return;
+    const std::vector<Il2CppObject*> all = all_containers();
+    int done = 0;
+    while (g_snapshot_at < static_cast<int>(all.size()) && done < kSnapshotPerFrame) {
+        Il2CppObject* c = all[static_cast<size_t>(g_snapshot_at++)];
+        if (!alive(c)) continue;
+        ++done;
+        const std::string id = id_of(c);
+        if (g_last.count(id) || g_dirty.count(id)) continue;
+        std::string contents = shared_text(c);
+        if (contents.empty()) continue;
+        g_sig[id] = signature(c);
+        g_last[id] = std::move(contents);
+    }
+    if (g_snapshot_at >= static_cast<int>(all.size())) {
+        logx::info("containers: read %zu container(s) of %s (kept for the others while we're elsewhere)", g_last.size(),
+                   g_scene.c_str());
+        g_snapshot_at = -1;
+    }
 }
 
 // Host: friend `from` is opening this container.
@@ -480,7 +533,7 @@ void answer(const net::ContainerWantMsg& m, uint8_t from) {
         }
     } else if (const auto s = g_store.find(m.scene); s != g_store.end()) {
         if (const auto it = s->second.find(m.id); it != s->second.end()) {
-            contents = net::strip_uniques(it->second.text);  // (kept from before, or a body's whole pack)
+            contents = strip_ours(it->second.text);  // (kept from before, or a body's whole pack)
             source = "what we last knew";
         }
     }
@@ -514,13 +567,17 @@ void receive_put(const net::Packet& p, const net::ContainerPutMsg& m) {
     }
     if (answer) {
         g_waiting.erase(m.id);
-        if (m.flags & net::kContainerUnknown) {  // the host has nothing for it: ours stands, and the host gets it
-            g_sig.erase(m.id);
-            g_dirty[m.id] = c;
+        if (m.flags & net::kContainerUnknown) {
+            // The host has nothing for it: ours stands. TLDCoop_DLC: as the baseline only; what we change in it from
+            // now on goes up (sending our copy as a change made the host load it over its own later: base chests
+            // wiped or doubled from a friend's stale copy)
+            g_sig[m.id] = signature(c);
+            g_last[m.id] = shared_text(c);
             logx::info("containers: the host has nothing for %s (%s); ours stands", name_of(c).c_str(), short_id(m.id).c_str());
             return;
         }
-        if (const std::string ours = serialize(c); ours == net::merge_uniques(m.text, ours)) {
+        learn_narrative(c);
+        if (const std::string ours = serialize(c); ours == merge_ours(m.text, ours)) {
             g_last[m.id] = m.text;
             g_sig[m.id] = signature(c);
             logx::info("containers: the host's %s (%s) is what we have: %s", name_of(c).c_str(), short_id(m.id).c_str(),
@@ -1117,6 +1174,7 @@ bool init() {
     api.closing = il2::field_offset_quiet(container, "m_PendingClose");
     api.pm_container = il2::field_offset_quiet(player_manager, "m_Container");
     api.total_weight = il2::find_method(container, "GetTotalWeightKG", 0);
+    api.narrative = il2::field_offset_quiet(il2::find_class(kGame, "", "GearItem"), "m_NarrativeCollectibleItem");
     g_ready = api.component_go && api.component_transform && api.get_position && api.object_name && api.containers &&
               api.items >= 0 && api.to_make >= 0 && api.inspected >= 0 && api.not_populated >= 0 && api.no_save >= 0 &&
               api.serialize && api.total_weight && api.deserialize && api.destroy_all && api.make_contents && api.add_gear && api.remove_gear &&
@@ -1173,6 +1231,7 @@ void on_frame(bool in_game) {
             g_asked.clear();
             g_waiting.clear();
             g_newest.clear();
+            g_snapshot_at = -1;
         }
         lock_reset();
         g_connected = false;
@@ -1181,6 +1240,7 @@ void on_frame(bool in_game) {
     // Offline (a friend's link dropped mid-game, or we host with nobody linked): we go on. The friend's changes go to
     // the host once it's back; the host applies what it kept for a scene it walks into (kept with its save, too).
     if (!connected) g_newest.clear();  // the host's change counters may start over meanwhile (its game restarted)
+    if (!g_connected && !g_scene.empty()) g_snapshot_at = 0;  // TLDCoop_DLC: g_last was cleared: read them again
     g_connected = true;
     const std::string& settled = in_game ? core::settled_scene() : std::string();
     if (settled != g_scene) {
@@ -1199,7 +1259,11 @@ void on_frame(bool in_game) {
         g_by_id.clear();
         g_shown = nullptr;
         g_scene = settled;
-        if (hosting() && !g_scene.empty()) apply_stored();
+        g_snapshot_at = -1;
+        if (hosting() && !g_scene.empty()) {
+            apply_stored();
+            g_snapshot_at = 0;  // TLDCoop_DLC: then every container here read (snapshot_step)
+        }
     }
     receive();
     lock_receive();
@@ -1208,8 +1272,13 @@ void on_frame(bool in_game) {
     static uint32_t rooms_seen = 0;
     if (const uint32_t rooms_now = seamless_interiors::rooms_generation(); rooms_now != rooms_seen) {
         rooms_seen = rooms_now;
-        if (hosting()) apply_stored();
+        if (hosting()) {
+            apply_stored();
+            g_by_id.clear();
+            g_snapshot_at = 0;  // the room's containers read too
+        }
     }
+    snapshot_step();
     lock_tick();
     if (now - g_last_watch >= kWatchMs) {
         g_last_watch = now;
@@ -1222,7 +1291,18 @@ void on_frame(bool in_game) {
 }
 
 void save_kept(std::vector<world_keep::Record>& out) {
-    for (const auto& [scene, containers] : g_store) {
+    // TLDCoop_DLC: the scene we're in too (as ours): what we have there now, for a friend opening one there after the
+    // next load if we start elsewhere (a friend's change kept for a room not up yet stays theirs)
+    std::unordered_map<std::string, std::unordered_map<std::string, Stored>> all = g_store;
+    if (hosting() && !g_scene.empty()) {
+        auto& here = all[g_scene];
+        for (const auto& [id, contents] : g_last) {
+            if (contents.empty()) continue;
+            if (const auto it = here.find(id); it != here.end() && it->second.from_peer) continue;
+            here[id] = Stored{contents, false};
+        }
+    }
+    for (const auto& [scene, containers] : all) {
         for (const auto& [id, s] : containers) {
             net::ContainerPutMsg m;
             m.scene = scene;

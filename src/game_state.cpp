@@ -290,9 +290,14 @@ HeldState read_held() {
 
     // The prefab name, from the item's GameObject name ("GEAR_Torch(Clone)" -> "GEAR_Torch"). Asked again only when
     // another item comes into the hands.
+    // TLDCoop_DLC: the item is held (a GC handle) while it's the one named, so another item can't come to its address
+    // and be taken for it.
     static Il2CppObject* last_item = nullptr;
+    static uintptr_t last_handle = 0;
     static std::string last_name;
-    if (gi != last_item) {
+    if (gi != last_item || !last_handle || il2::il2cpp_gchandle_get_target(last_handle) != gi) {
+        if (last_handle) il2::il2cpp_gchandle_free(last_handle);
+        last_handle = il2::il2cpp_gchandle_new(gi, false);
         last_item = gi;
         Il2CppObject* name = il2::invoke(h.object_name, gi);
         void* args[] = {name};

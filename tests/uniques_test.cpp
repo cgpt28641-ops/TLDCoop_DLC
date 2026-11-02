@@ -92,6 +92,16 @@ int main() {
                                                        container(R"("GEAR_Tinder")", item("GEAR_Hatchet")));
         expect("merging twice changes nothing more", net::merge_uniques(net::merge_uniques(theirs, ours), ours) == want);
     }
+    {  // More names (the game's own narrative collectibles not on the list) count as one of a kind too.
+        const std::string theirs = container("", item("GEAR_Stick") + "," + item("GEAR_OddNote"));
+        const std::string ours = container("", item("GEAR_OddNote(Clone)"));
+        auto odd = [](std::string_view n) { return n == "GEAR_OddNote"; };
+        const std::string merged = net::merge_uniques_also(theirs, ours, odd);
+        expect("an extra name is stripped from theirs and kept from ours",
+               merged.find("GEAR_Stick") != std::string::npos && merged.find("GEAR_OddNote(Clone)") != std::string::npos &&
+                   merged.find("\"GEAR_OddNote\",") == std::string::npos);
+        expect("without the extra name it is shared as before", net::strip_uniques(theirs) == theirs);
+    }
     std::printf("%s\n", g_failed ? "SOME CHECKS FAILED" : "ALL PASS");
     return g_failed ? 1 : 0;
 }

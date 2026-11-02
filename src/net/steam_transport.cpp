@@ -76,7 +76,8 @@ constexpr const char* kCodeKey = "tldcoop_code";
 constexpr const char* kVersionKey = "tldcoop_version";
 constexpr const char* kHostKey = "tldcoop_host";  // TLDCoop_DLC: the host's Steam id (the lobby may pass to someone else)
 constexpr int kChannel = 0;
-constexpr int kSendFlags = 32;  // k_nSteamNetworkingSend_Unreliable | AutoRestartBrokenSession
+// k_nSteamNetworkingSend_Unreliable (0) | NoNagle (1: our own loop batches; no extra wait) | AutoRestartBrokenSession (32)
+constexpr int kSendFlags = 1 | 32;
 constexpr double kSearchRetryMs = 4000;  // the host may not be up yet: keep looking
 constexpr double kMemberPollMs = 1000;
 constexpr double kReknockMs = 3000;  // every member is knocked again this often (TLDCoop_DLC)

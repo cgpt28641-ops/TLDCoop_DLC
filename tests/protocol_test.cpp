@@ -240,6 +240,31 @@ int main() {
     sleep.who = 2;
     sleep.why = SleepWhy::Cold;
     round_trip("Sleep", Msg::Sleep, sleep, write_sleep, read_sleep);
+    {  // TLDCoop_DLC: a Sleep the game can't act on is refused (a Start of no real span, an unknown op or choice)
+        auto refused = [](const SleepMsg& m) {
+            Writer w(Msg::Sleep);
+            write_sleep(w, m);
+            const Packet p{Msg::Sleep, 0, 0, std::vector<uint8_t>(w.data(), w.data() + w.size())};
+            Reader r = packet_body(p);
+            SleepMsg back;
+            return !read_sleep(r, back);
+        };
+        SleepMsg start;
+        start.op = SleepOp::Start;
+        start.choice = 2;
+        start.hours = 8;
+        if (refused(start)) fail("Sleep", "a good Start refused");
+        for (float h : {0.0f, -1.0f, 25.0f, std::nanf("")}) {
+            start.hours = h;
+            if (!refused(start)) fail("Sleep", "a Start of " + std::to_string(h) + " hours accepted");
+        }
+        start.hours = 8;
+        start.choice = 200;
+        if (!refused(start)) fail("Sleep", "an unknown choice accepted");
+        SleepMsg odd = sleep;
+        odd.op = static_cast<SleepOp>(9);
+        if (!refused(odd)) fail("Sleep", "an unknown op accepted");
+    }
 
     GiveMsg give;
     give.op = GiveOp::Done;

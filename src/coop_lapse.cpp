@@ -10,6 +10,7 @@
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "scoped.h"
 #include "net/lapse.h"
 #include "net_runtime.h"
 
@@ -241,27 +242,23 @@ void hud_accel_detour(Il2CppObject* hud, bool enable, const MethodInfo* method) 
 }
 
 void reapply_detour(Il2CppObject* self, const MethodInfo* method) {
-    ++g_reapplying;
+    ScopedCount in(g_reapplying);  // TLDCoop_DLC: (put back on a game exception too)
     g_reapply(self, method);
-    --g_reapplying;
 }
 
 void sleep_accelerate_detour(Il2CppObject* self, int32_t minutes, float fade, bool use_fade, const MethodInfo* method) {
-    ++g_sleeping;
+    ScopedCount in(g_sleeping);
     g_sleep_accelerate(self, minutes, fade, use_fade, method);
-    --g_sleeping;
 }
 
 void pass_begin_detour(Il2CppObject* self, float hours, Il2CppObject* bed, const MethodInfo* method) {
-    ++g_passing;
+    ScopedCount in(g_passing);
     g_pass_begin(self, hours, bed, method);
-    --g_passing;
 }
 
 void pass_accelerate_detour(Il2CppObject* self, float hours, const MethodInfo* method) {
-    ++g_passing;
+    ScopedCount in(g_passing);
     g_pass_accelerate(self, hours, method);
-    --g_passing;
 }
 
 void hunger_detour(Il2CppObject* self, const MethodInfo* method) {

@@ -105,9 +105,9 @@ void remember_joined(const std::string& key) {
 }
 
 void set_text(Il2CppObject* obj, ptrdiff_t off, const std::string& value) {
-    Il2CppString* s = il2::il2cpp_string_new(value.c_str());
-    il2::il2cpp_gchandle_new(reinterpret_cast<Il2CppObject*>(s), false);  // kept alive (no write barrier here)
-    memcpy(reinterpret_cast<char*>(obj) + off, &s, sizeof(s));
+    if (!obj || off < 0) return;
+    // TLDCoop_DLC: through the GC's write barrier (the field keeps it alive; no handle leaked per call)
+    il2::store_ref(obj, off, il2::il2cpp_string_new(value.c_str()));
 }
 
 // A point near `want` on the walkable mesh, or `want` itself if there's none within 15 m.

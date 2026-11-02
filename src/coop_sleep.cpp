@@ -16,6 +16,7 @@
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "scoped.h"
 #include "net/protocol.h"
 #include "net/sleep_vote.h"
 #include "net_runtime.h"
@@ -811,8 +812,11 @@ void begin_shared(uint32_t id, net::SleepChoice choice, float hours, float real_
 
 // Everyone sleeps or passes time `hours` from now, over the same real seconds: our real-time rest becomes TLD's sleep
 // with the skip, or our waiting TLD's passing time.
+static_assert(net::kSleepChoiceWire == net::kSleepChoices, "read_sleep's check of the choice");
+
 bool start_shared(uint32_t id, net::SleepChoice choice, float hours) {
-    if (g_mode != Mode::RealTime || hours <= 0) return false;
+    // TLDCoop_DLC: a real span (not NaN, a day at most)
+    if (g_mode != Mode::RealTime || !(hours > 0 && hours <= 24)) return false;
     const float real_s = skip_seconds();
     if (g_kind == Kind::Bed) {
         Il2CppObject* r = rest();
@@ -1026,9 +1030,10 @@ void do_rest_detour(Il2CppObject* self, int32_t hours, bool wake_at_full, const 
     const int idx = std::clamp(get<int32_t>(self, api.panel_hours), kFirstChoice, last_choice(g_screen_kind));
     g_choice = choice_at(g_screen_kind, idx);
     const int whole = std::max(1, static_cast<int>(std::ceil(net::sleep_hours(g_choice, sleep_clock()))));
-    ++g_in_do_rest;
-    g_do_rest(self, whole, false, method);  // TLD's checks, then BeginSleeping: ours
-    --g_in_do_rest;
+    {
+        ScopedCount in(g_in_do_rest);
+        g_do_rest(self, whole, false, method);  // TLD's checks, then BeginSleeping: ours
+    }
     put<int32_t>(self, api.panel_hours, idx);
 }
 
@@ -1055,11 +1060,14 @@ void begin_detour(Il2CppObject* self, Il2CppObject* bed, int32_t hours, int32_t 
                   Il2CppObject* on_end, const MethodInfo* method) {
     const bool ours = g_in_do_rest > 0;
     if (ours) options &= ~kCancelButton;  // it would sit on GET UP (it cancels click-holds, not sleep)
-    coop_lapse::world_lapse(true);
-    if (ours) ++g_hold_skip;
-    g_begin(self, bed, hours, max_hours, fade, options, on_end, method);
-    if (ours) --g_hold_skip;
-    coop_lapse::world_lapse(false);
+    {  // TLDCoop_DLC: both put back on a game exception too
+        struct WorldLapse {
+            WorldLapse() { coop_lapse::world_lapse(true); }
+            ~WorldLapse() { coop_lapse::world_lapse(false); }
+        } lapse;
+        ScopedCount skip(g_hold_skip, ours);
+        g_begin(self, bed, hours, max_hours, fade, options, on_end, method);
+    }
     if (ours && get<bool>(self, api.sleeping)) went_in(Kind::Bed, self);
 }
 
@@ -1069,9 +1077,10 @@ void end_detour(Il2CppObject* self, bool interrupted, const MethodInfo* method) 
     const uint32_t id = g_shared_id;
     const net::SleepWhy why = ours && interrupted && !g_ours ? wake_reason(self) : net::SleepWhy::None;
     const float slept_h = get<float>(self, api.slept_s) / 3600.0f;
-    ++g_ending;
-    g_end(self, interrupted, method);
-    --g_ending;
+    {
+        ScopedCount in(g_ending);
+        g_end(self, interrupted, method);
+    }
     if (!ours) return;
     const std::string how = g_ours ? "got up" : interrupted ? "woken" : !g_cut_short.empty() ? g_cut_short : "its hours are up";
     const bool cut_short = !g_cut_short.empty();

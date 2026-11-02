@@ -25,6 +25,8 @@ enum class Tag : uint8_t {
     FireChange = 4,       // FirePut (world_fires g_store)
     ContainerTheirs = 5,  // ContainerPut: the friend's change (world_containers g_store, from_peer)
     ContainerOurs = 6,    // ContainerPut: what we had there when we left
+    WaterChange = 7,      // WaterPut (world_water g_store) (TLDCoop_DLC)
+    ItemList = 8,         // ItemList: the loose items of a scene as we last saw them there (world_items) (TLDCoop_DLC)
 };
 
 struct Record {

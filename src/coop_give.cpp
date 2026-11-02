@@ -124,6 +124,24 @@ struct Incoming {
     double done_ms = 0;
 };
 std::vector<Incoming> g_incoming;
+// TLDCoop_DLC: the handovers given to us (by id), so a Done that comes again (a late one after we gave up waiting, or
+// the host's resend after our link dropped) makes the item once. Oldest first; bounded.
+std::vector<uint32_t> g_received;
+constexpr size_t kReceivedMax = 1024;
+bool received_before(uint32_t id) { return std::find(g_received.begin(), g_received.end(), id) != g_received.end(); }
+void note_received(uint32_t id) {
+    if (g_received.size() >= kReceivedMax) g_received.erase(g_received.begin());
+    g_received.push_back(id);
+}
+// TLDCoop_DLC: host: Done (with the item's record) for a friend, kept so it reaches them even when their link was down
+// when it went out (or dropped before it was in): sent again each time they link again; they make it once.
+struct Owed {
+    net::GiveMsg msg;
+    uint32_t link = 0;  // the friend's link it last went out on (0: not yet)
+    double since_ms = 0;
+};
+std::vector<Owed> g_owed;
+constexpr double kOwedKeepMs = 30 * 60 * 1000.0;
 
 using FindFn = void (*)(Il2CppObject* self, float range, const MethodInfo* method);
 using BoolFn = bool (*)(Il2CppObject* self, const MethodInfo* method);
@@ -241,6 +259,10 @@ void route(const net::GiveMsg& m, int from = -1) {
         return;
     }
     const net::Status st = netrt::status();
+    // TLDCoop_DLC: the receiver's Done is kept (a friend's), whether they're linked now or not (owe_tick sends it again)
+    const bool owe = m.op == net::GiveOp::Done && m.receiver != st.self_id && !m.record.empty() &&
+                     std::none_of(g_owed.begin(), g_owed.end(), [&](const Owed& o) { return o.msg.id == m.id; });
+    if (owe) g_owed.push_back(Owed{m, 0, net::now_ms()});
     for (const net::PlayerInfo& p : st.players) {
         if (!p.linked || p.id == st.self_id || static_cast<int>(p.id) == from) continue;
         net::GiveMsg c = m;
@@ -248,6 +270,35 @@ void route(const net::GiveMsg& m, int from = -1) {
         net::Writer w(net::Msg::Give, net::kMaxMessage);
         net::write_give(w, c);
         netrt::send_packet_to(p.id, w, true);
+        if (owe && p.id == m.receiver) g_owed.back().link = p.link;
+    }
+    if (owe && !g_owed.back().link)
+        logx::warn("give: #%08x: %s isn't linked; it goes to them once they are", m.id, player_name(m.receiver).c_str());
+}
+
+// Host: each owed Done goes again on the receiver's new link (they drop the copy they already made).
+void owe_tick(double now) {
+    if (g_owed.empty()) return;
+    if (!hosting()) {
+        g_owed.clear();
+        return;
+    }
+    const net::Status st = netrt::status();
+    for (auto it = g_owed.begin(); it != g_owed.end();) {
+        if (now - it->since_ms > kOwedKeepMs) {
+            logx::info("give: #%08x: stopped keeping its record for %s", it->msg.id, player_name(it->msg.receiver).c_str());
+            it = g_owed.erase(it);
+            continue;
+        }
+        for (const net::PlayerInfo& p : st.players) {
+            if (p.id != it->msg.receiver || !p.linked || p.link == it->link) continue;
+            net::Writer w(net::Msg::Give, net::kMaxMessage);
+            net::write_give(w, it->msg);
+            netrt::send_packet_to(p.id, w, true);
+            it->link = p.link;
+            logx::info("give: #%08x: sent %s its record again (linked again)", it->msg.id, player_name(p.id).c_str());
+        }
+        ++it;
     }
 }
 
@@ -390,7 +441,7 @@ void put_in_pack(const Incoming& in) {
 void take_incoming(double now) {
     for (auto it = g_incoming.begin(); it != g_incoming.end();) {
         const net::Handover* h = g_ledger.find(it->id);
-        bool due = !h || now - it->done_ms >= kTakeFallbackMs;
+        bool due = !h || !h->done || now - it->done_ms >= kTakeFallbackMs;  // (late: no hands to wait for)
         if (!due) due = net::handover_view(h->offered_ms, h->accepted_ms, h->ended_ms, h->done, now).in_receiver;
         if (!due) {
             ++it;
@@ -464,7 +515,7 @@ Il2CppObject* interaction() {
         Il2CppObject* text = il2::il2cpp_object_new(api.localized_class);
         drop(g_localized);
         g_localized = hold(text);
-        put(it, api.default_hover, text);
+        il2::store_ref(it, api.default_hover, text);
     }
     g_interaction = hold(it);
     g_hover.clear();
@@ -478,7 +529,7 @@ void set_hover(Il2CppObject* it, const std::string& text) {
     Il2CppString* s = il2::il2cpp_string_new(text.c_str());
     const uintptr_t old = g_hover_text;
     g_hover_text = hold(reinterpret_cast<Il2CppObject*>(s));
-    put<Il2CppString*>(get<Il2CppObject*>(it, api.default_hover), api.localization_id, s);  // InitializeInteraction's
+    il2::store_ref(get<Il2CppObject*>(it, api.default_hover), api.localization_id, s);  // InitializeInteraction's
     void* args[] = {s};
     il2::invoke(api.set_hover, it, args);  // and now, if it's TLD's current one already
     if (old) il2::il2cpp_gchandle_free(old);
@@ -647,16 +698,27 @@ void apply(const net::GiveMsg& m) {
             if (m.giver == self)
                 if (const net::Handover* h = g_ledger.find(m.id)) give_now(*h);
             break;
-        case net::GiveOp::Done:
-            if (!g_ledger.end(m.id, now, true)) break;
-            logx::info("give: #%08x: given", m.id);
-            if (m.receiver != self) break;
-            if (m.prefab.empty() || m.record.empty()) {
-                logx::warn("give: #%08x: given to us without its record", m.id);
+        case net::GiveOp::Done: {
+            const bool fresh = g_ledger.end(m.id, now, true);
+            if (m.receiver != self) {
+                if (fresh) logx::info("give: #%08x: given", m.id);
                 break;
             }
+            // TLDCoop_DLC: ours whenever its record comes, also after we stopped waiting (the giver has let go of it):
+            // made once (by id)
+            if (m.prefab.empty() || m.record.empty()) {
+                if (fresh) logx::warn("give: #%08x: given to us without its record", m.id);
+                break;
+            }
+            if (received_before(m.id)) {
+                logx::info("give: #%08x: its record again; made already", m.id);
+                break;
+            }
+            note_received(m.id);
+            logx::info("give: #%08x: given%s", m.id, fresh ? "" : " (late: after we stopped waiting)");
             g_incoming.push_back({m.id, m.giver, m.gear, m.prefab, m.record, m.units, now});
             break;
+        }
         case net::GiveOp::Withdraw:
         case net::GiveOp::Failed:
             if (!g_ledger.end(m.id, now, false)) break;
@@ -714,9 +776,10 @@ void watch(double now) {
                 withdraw(h.id, h.giver == self ? "Too far from " + name + ": you keep " + what + "."
                                                : "Too far from " + name + " to take " + what + ".");
         } else if (h.receiver == self && now - h.accepted_ms > kDoneWaitMs) {
-            g_ledger.end(h.id, now, false);
+            // TLDCoop_DLC: the giver hears it's off (it keeps the item if it hadn't given it yet); a Done that comes
+            // later still makes it here (apply)
+            withdraw(h.id, name + " couldn't give " + what + ".");
             logx::warn("give: #%08x: accepted, but nothing came", h.id);
-            tell(name + " couldn't give " + what + ".");
         }
     }
     const net::Status st = netrt::status();
@@ -778,6 +841,7 @@ void show_bodies(double now) {
 
 void reset() {
     g_ledger.clear();
+    g_owed.clear();
     drop(g_offered);
     g_give_to = g_looked_at = -1;
     g_close_inventory = false;
@@ -820,6 +884,7 @@ void on_frame(bool in_game) {
         g_give_to = -1;
     }
     watch(now);
+    owe_tick(now);
     show_bodies(now);
 }
 
