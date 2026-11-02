@@ -2,10 +2,12 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -188,6 +190,7 @@ int g_switches_logged = 0;
 std::unordered_map<uintptr_t, uint8_t> g_holds_ground;  // BaseAi -> the friend it holds ground before (logged once
                                                         // each time it starts)
 std::unordered_map<std::string, bool> g_hands_seen;     // "<player> <question>" -> the last answer (for the log)
+std::unordered_map<uintptr_t, double> g_last_switch;    // TLDCoop_DLC: BaseAi -> when it last turned to another player
 
 bool hosting() {
     const auto role = netrt::role();
@@ -213,6 +216,48 @@ const char* kind_of(Il2CppObject* ai) {
     return k >= 0 && k < static_cast<int32_t>(std::size(kKinds)) ? kKinds[k] : "?";
 }
 
+// TLDCoop_DLC: what every animal's Update / LateUpdate asks about the players, worked out once a frame (it was read
+// again for each animal, twice a frame: the host's player, the avatars shown, where each stands).
+struct FriendSpot {
+    uint8_t player = 0;
+    Vector3 pos{};
+};
+struct FrameView {
+    uint64_t frame = ~0ull;
+    bool host_here = false;      // the host is in the game, outdoors (not in a Seamless Interiors room)
+    bool host_inside = false;    // the host is in a Seamless Interiors room
+    Vector3 host{};
+    std::vector<uint8_t> shown;     // avatars shown here
+    std::vector<uint8_t> in_room;   // ...of those, the ones inside a Seamless Interiors room
+    std::vector<FriendSpot> friends;  // shown, outdoors, with where their avatar stands
+};
+FrameView g_view;
+uint64_t g_frame = 0;  // on_frame counts frames
+
+// Built at the first ask of a frame, before any animal swaps its player (GetPlayerTransform answers for the host then).
+const FrameView& view() {
+    if (g_view.frame == g_frame || g_stand_in.go) return g_view;  // (mid-swap: the last frame's)
+    FrameView v;
+    v.frame = g_frame;
+    const game::PlayerState p = game::read_player();
+    v.host_inside = seamless_interiors::player_inside();
+    v.host_here = p.valid && !v.host_inside;
+    v.host = Vector3{p.position.x, p.position.y, p.position.z};
+    v.shown = avatar::shown();
+    for (uint8_t id : v.shown) {
+        if (const auto st = netrt::remote_state(id); st && !st->place.empty()) {
+            v.in_room.push_back(id);
+            continue;
+        }
+        Il2CppObject *go = nullptr, *transform = nullptr, *target = nullptr;
+        FriendSpot f;
+        f.player = id;
+        if (avatar::stand_in(id, go, transform, target) && position_of(transform, true, f.pos)) v.friends.push_back(f);
+    }
+    g_view = std::move(v);
+    return g_view;
+}
+
 // Someone the animal could deal with: the host (player 0, TLD's own player) or a friend whose avatar is shown here.
 struct Candidate {
     uint8_t player = 0;
@@ -224,21 +269,19 @@ struct Candidate {
 
 std::vector<Candidate> candidates(Il2CppObject* ai, const Vector3& at) {
     std::vector<Candidate> out;
-    const game::PlayerState p = game::read_player();
+    const FrameView& v = view();
     // TLDCoop_DLC: a player inside a Seamless Interiors room (80 m above its building) isn't here for the animals
-    if (p.valid && !seamless_interiors::player_inside()) {
+    if (v.host_here) {
         Candidate host;
         host.target = il2::read_field<Il2CppObject*>(ai, api.player_target);
-        host.metres = distance(at, Vector3{p.position.x, p.position.y, p.position.z});
+        host.metres = distance(at, v.host);
         out.push_back(host);
     }
-    for (uint8_t id : avatar::shown()) {
-        if (const auto st = netrt::remote_state(id); st && !st->place.empty()) continue;  // TLDCoop_DLC: (as above)
+    for (const FriendSpot& f : v.friends) {  // TLDCoop_DLC: (as above: friends in a room aren't in the list)
         Candidate c;
-        c.player = id;
-        Vector3 there{};
-        if (!avatar::stand_in(id, c.go, c.transform, c.target) || !position_of(c.transform, true, there)) continue;
-        c.metres = distance(at, there);
+        c.player = f.player;
+        if (!avatar::stand_in(f.player, c.go, c.transform, c.target)) continue;
+        c.metres = distance(at, f.pos);
         out.push_back(c);
     }
     return out;
@@ -274,17 +317,16 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
     const bool busy = after != nullptr;
     const Candidate* was = after ? after : memo != g_hunts_friend.end() ? find(memo->second) : nullptr;
     if (!was) was = find(0);
-    if (!was && seamless_interiors::player_inside() && !all.empty()) was = &all.front();  // TLDCoop_DLC: the host is in a room
+    if (!was && view().host_inside && !all.empty()) was = &all.front();  // TLDCoop_DLC: the host is in a room
     if (!was) return 0;  // the host isn't in the game (loading): leave TLD alone
     const Candidate* nearest = was;
     for (const Candidate& c : all)
         if (c.metres < nearest->metres) nearest = &c;
 
     const Candidate* now = was;
-    static std::unordered_map<uintptr_t, double> last_switch;  // TLDCoop_DLC
-    const double t = GetTickCount64();
-    const auto held = last_switch.find(key);
-    const bool may_switch = held == last_switch.end() || t - held->second >= kSwitchHoldMs;
+    const double t = static_cast<double>(GetTickCount64());
+    const auto held = g_last_switch.find(key);
+    const bool may_switch = held == g_last_switch.end() || t - held->second >= kSwitchHoldMs;
     if (nearest != was && may_switch && was->metres - nearest->metres >= kSwitchMinMetres) {
         if (!busy) {
             // Not after anyone yet: the nearest one, with a little stickiness so it doesn't flip between them.
@@ -296,11 +338,11 @@ uint8_t pick_player(Il2CppObject* ai, Candidate& out) {
                 now = nearest;
                 // Hand it the new target directly: it keeps stalking / charging, at the closer player now.
                 Il2CppObject* new_target = now->player ? now->target : host_target;
-                memcpy(reinterpret_cast<char*>(ai) + api.current_target, &new_target, sizeof(new_target));
+                il2::store_ref(ai, api.current_target, new_target);
             }
         }
     }
-    if (now->player != was->player) last_switch[key] = t;
+    if (now->player != was->player) g_last_switch[key] = t;
     if (now->player != was->player && g_switches_logged < 200) {
         ++g_switches_logged;
         char from[32];
@@ -319,11 +361,10 @@ void forget_gone_friend(Il2CppObject* ai) {
     const auto memo = g_hunts_friend.find(reinterpret_cast<uintptr_t>(ai));
     if (memo == g_hunts_friend.end() || memo->second == 0) return;
     const uint8_t player = memo->second;
-    const std::vector<uint8_t> ids = avatar::shown();
+    const FrameView& v = view();
     // TLDCoop_DLC: in a Seamless Interiors room (80 m above its building) they're gone for an animal outside too
-    const auto st = netrt::remote_state(player);
-    const bool in_room = st && !st->place.empty();
-    if (!in_room && std::find(ids.begin(), ids.end(), player) != ids.end()) return;
+    const bool in_room = std::find(v.in_room.begin(), v.in_room.end(), player) != v.in_room.end();
+    if (!in_room && std::find(v.shown.begin(), v.shown.end(), player) != v.shown.end()) return;
     if (il2::read_field<int32_t>(ai, api.mode) == kAiModeStruggle) return;  // a fight: its end (or time-out) sorts it out
     g_hunts_friend.erase(memo);
     Il2CppObject* current = il2::read_field<Il2CppObject*>(ai, api.current_target);
@@ -403,27 +444,54 @@ Vector3* eye_pos_detour(Vector3* out, Il2CppObject* self, const MethodInfo* meth
     return g_eye_pos(out, self, method);
 }
 
+// TLDCoop_DLC: the friend made TLD's player for one call, and put back however the call ends: a managed exception
+// thrown through it (C++ unwinding) left the host's own player a friend's avatar for good.
+struct PlayerSwap {
+    Il2CppObject* ai = nullptr;           // its m_PlayerTarget (when set)
+    Il2CppObject* pm = nullptr;           // PlayerManager: its m_AiTarget (when set)
+    Il2CppObject* friend_target = nullptr;
+    Il2CppObject* host_target = nullptr, *host_ai_target = nullptr;
+    StandIn outer;
+    PlayerSwap(Il2CppObject* animal, Il2CppObject* manager, Il2CppObject* target, const StandIn& who, bool swap_player)
+        : friend_target(target), outer(g_stand_in) {
+        if (swap_player && animal && api.player_target >= 0) {
+            ai = animal;
+            host_target = il2::read_field<Il2CppObject*>(ai, api.player_target);
+            il2::store_ref(ai, api.player_target, target);
+        }
+        if (manager && api.pm_ai_target >= 0) {
+            pm = manager;
+            host_ai_target = il2::read_field<Il2CppObject*>(pm, api.pm_ai_target);
+            il2::store_ref(pm, api.pm_ai_target, target);
+        }
+        g_stand_in = who;
+    }
+    ~PlayerSwap() {
+        g_stand_in = outer;
+        if (ai && il2::read_field<Il2CppObject*>(ai, api.player_target) == friend_target)
+            il2::store_ref(ai, api.player_target, host_target);
+        if (pm && il2::read_field<Il2CppObject*>(pm, api.pm_ai_target) == friend_target)
+            il2::store_ref(pm, api.pm_ai_target, host_ai_target);
+    }
+    PlayerSwap(const PlayerSwap&) = delete;
+    PlayerSwap& operator=(const PlayerSwap&) = delete;
+};
+
 template <typename Original>
 void think(Il2CppObject* self, const MethodInfo* method, Original original) {
     Candidate who;
     if (hosting() && !g_stand_in.animal) forget_gone_friend(self);
-    if (g_stand_in.animal || !hosting() || avatar::shown().empty() || !pick_player(self, who)) {
+    if (g_stand_in.animal || !hosting() || view().shown.empty() || !pick_player(self, who)) {
         original(self, method);
         return;
     }
-    Il2CppObject* host_target = il2::read_field<Il2CppObject*>(self, api.player_target);
-    auto* slot = reinterpret_cast<Il2CppObject**>(reinterpret_cast<char*>(self) + api.player_target);
-    *slot = who.target;
-    // PlayerManager.m_AiTarget too: TLD points the animal at it in places (EnterHoldGround sets m_CurrentTarget to it).
-    Il2CppObject* pm = api.pm_ai_target >= 0 ? il2::invoke(api.player_manager, nullptr) : nullptr;
-    auto* pm_slot = pm ? reinterpret_cast<Il2CppObject**>(reinterpret_cast<char*>(pm) + api.pm_ai_target) : nullptr;
-    Il2CppObject* host_ai_target = pm_slot ? *pm_slot : nullptr;
-    if (pm_slot) *pm_slot = who.target;
-    g_stand_in = {who.go, who.transform, self, who.player};
-    original(self, method);
-    g_stand_in = {};
-    if (*slot == who.target) *slot = host_target;
-    if (pm_slot && *pm_slot == who.target) *pm_slot = host_ai_target;
+    {
+        // m_PlayerTarget, and PlayerManager.m_AiTarget too: TLD points the animal at it in places (EnterHoldGround
+        // sets m_CurrentTarget to it).
+        Il2CppObject* pm = api.pm_ai_target >= 0 ? il2::invoke(api.player_manager, nullptr) : nullptr;
+        PlayerSwap swap(self, pm, who.target, StandIn{who.go, who.transform, self, who.player}, true);
+        original(self, method);
+    }
     note_holding_ground(self, who.player);
 }
 
@@ -576,18 +644,26 @@ void target_damage_detour(Il2CppObject* self, float damage, int32_t source, Il2C
 
 // The animal's wound events (bleeding, sprains, clothing) while it deals with a friend: theirs, not ours.
 Il2CppObject* wounds_detour(Il2CppObject* self, Il2CppObject* instigator, int32_t options, const MethodInfo* method) {
+    std::optional<uint8_t> player;
     if (g_stand_in.animal && instigator == g_stand_in.animal) {
-        net::AttackMsg a = attack_from(instigator, net::AttackType::Wounds, g_stand_in.player);
+        player = g_stand_in.player;
+    } else if (instigator && hosting() && api.current_target >= 0) {
+        // TLDCoop_DLC: outside its Update too (a cougar's passing attack bites on an animation event): an animal after a
+        // friend wounds them, not the host.
+        player = avatar::player_of(il2::read_field<Il2CppObject*>(instigator, api.current_target));
+    }
+    if (player) {
+        net::AttackMsg a = attack_from(instigator, net::AttackType::Wounds, *player);
         a.options = options;
         netrt::send_attack(a);
-        logx::info("wildlife: a %s's wound events for the other player, sent to them", kind_of(instigator));
+        logx::info("wildlife: a %s's wound events for the other player, sent to them (player %u)", kind_of(instigator), *player);
         return nullptr;
     }
     return g_wounds(self, instigator, options, method);
 }
 
 void pin_on_friend(Il2CppObject* ai, Il2CppObject* target, uint8_t player) {
-    memcpy(reinterpret_cast<char*>(ai) + api.current_target, &target, sizeof(target));
+    il2::store_ref(ai, api.current_target, target);
     g_hunts_friend[reinterpret_cast<uintptr_t>(ai)] = player;
 }
 
@@ -607,16 +683,14 @@ bool as_friends_doing(Il2CppObject* ai, uint8_t player, const std::function<void
     Il2CppObject* pm = il2::invoke(api.player_manager, nullptr);
     if (!pm || api.pm_ai_target < 0) return false;
     // PlayerManager.m_AiTarget: what TLD's reactions aim at (MaybeFleeOrAttackFromProjectileHit sets m_CurrentTarget
-    // to it, and Flee runs from it). GetPlayerObject / GetPlayerTransform answer with the avatar meanwhile.
-    Il2CppObject* saved = il2::read_field<Il2CppObject*>(pm, api.pm_ai_target);
-    memcpy(reinterpret_cast<char*>(pm) + api.pm_ai_target, &target, sizeof(target));
-    const StandIn outer = g_stand_in;
-    g_stand_in = {go, transform, ai, player};
+    // to it, and Flee runs from it). GetPlayerObject / GetPlayerTransform answer with the avatar meanwhile; all put
+    // back however the action ends (PlayerSwap).
     FriendStandIn who{go, transform, target, {}, player};
     position_of(transform, true, reinterpret_cast<Vector3&>(who.position));
-    action(who);
-    g_stand_in = outer;
-    memcpy(reinterpret_cast<char*>(pm) + api.pm_ai_target, &saved, sizeof(saved));
+    {
+        PlayerSwap swap(ai, pm, target, StandIn{go, transform, ai, player}, false);
+        action(who);
+    }
     if (il2::read_field<Il2CppObject*>(ai, api.current_target) == target) g_hunts_friend[reinterpret_cast<uintptr_t>(ai)] = player;
     return true;
 }
@@ -657,9 +731,10 @@ bool test_fight(Il2CppObject* ai) {
     void* args[] = {&mode};
     il2::invoke(api.set_mode, ai, args);
     logx::info("wildlife: test: the %s jumps the other player", kind_of(ai));
+    const StandIn outer = g_stand_in;
     g_stand_in = {go, transform, ai, player};
     struggle_begin_detour(nullptr, go_of_component(ai), nullptr);
-    g_stand_in = {};
+    g_stand_in = outer;
     return true;
 }
 
@@ -849,6 +924,7 @@ void finish_fight(uint32_t id, Fight& f, const net::AttackResultMsg* result) {
 }
 
 void on_frame() {
+    ++g_frame;  // TLDCoop_DLC: the players' view (view()) is worked out again
     // How their fights ended.
     std::vector<net::AttackResultMsg> results;
     netrt::drain_attack_results(results);
@@ -901,6 +977,11 @@ void on_frame() {
         it = g_fights.erase(it);
     }
     if (g_hunts_friend.size() > 512) g_hunts_friend.clear();
+    {  // TLDCoop_DLC: switches long past hold nothing back any more
+        const double t = static_cast<double>(GetTickCount64());
+        for (auto it = g_last_switch.begin(); it != g_last_switch.end();)
+            it = t - it->second >= kSwitchHoldMs ? g_last_switch.erase(it) : std::next(it);
+    }
 }
 
 }  // namespace wildlife_targets

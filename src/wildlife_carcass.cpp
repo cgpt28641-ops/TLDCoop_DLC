@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -202,6 +203,26 @@ std::string describe_amounts(const Amounts& a) {
     return text;
 }
 
+// TLDCoop_DLC: a carcass by where it lies, not by its animal's id. Ids are the host's for the animals it shares, and
+// a scene it loads again (the host back from a house) shares its dead animals under new ones: a carcass a friend
+// harvested or quartered meanwhile came back whole. Its prefab (without Unity's "(Clone)") and its place (a corpse
+// doesn't move; a save puts it back where it was) name it in both games, in that scene.
+constexpr float kSameSpotMetres = 1.0f;
+
+std::string base_prefab(std::string name) {
+    if (const size_t clone = name.find("(Clone)"); clone != std::string::npos) name.erase(clone);
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    return name;
+}
+
+struct Spot {
+    std::string scene, prefab;
+    Vector3 pos{};
+    bool same(const std::string& other_scene, const std::string& other_prefab, const Vector3& other_pos) const {
+        return scene == other_scene && prefab == base_prefab(other_prefab) && distance(pos, other_pos) <= kSameSpotMetres;
+    }
+};
+
 // --- small game: rabbits and ptarmigan become items -----------------------------------------------------------------
 // A dead rabbit or ptarmigan is an animal (BaseAi with a WildlifeItem) until a player picks it up; then it's a carcass
 // item (WildlifeItemInteraction: WildlifeItem.SpawnCarcass, the pickup, BaseAi.Despawn). The game that runs the scene
@@ -285,6 +306,26 @@ std::array<std::unordered_map<uint32_t, uint32_t>, net::kMaxPlayers> g_acks;
 std::array<uint32_t, net::kMaxPlayers> g_ack_link{};  // which connection of theirs g_acks counts (a new one starts over)
 net::HarvestLedger g_counted;  // the friends' harvests counted (one may come again after the link drops and is back)
 
+// TLDCoop_DLC: where each carcass we listed lies (kept after its id is forgotten), and the friends' harvests and
+// quarterings of carcasses whose ids we no longer know (we were in another scene): done to the carcass at that spot
+// when it's ours again.
+struct Listed {
+    Spot spot;
+    double seen_ms = 0;
+};
+std::unordered_map<uint32_t, Listed> g_listed;
+struct Owed {
+    Spot spot;
+    bool quartered = false;
+    net::HarvestMsg harvest;  // (a harvest)
+    uint8_t from = 0;
+    uint32_t link = 0;
+    double since_ms = 0;
+};
+std::vector<Owed> g_owed;
+constexpr double kOwedMs = 3 * 3600 * 1000.0;   // given up after this long
+constexpr double kListedMs = 3 * 3600 * 1000.0;
+
 std::unordered_map<uint32_t, uint32_t>& acks_of(uint8_t id, uint32_t link) {
     if (g_ack_link[id] != link) {
         g_acks[id].clear();
@@ -293,9 +334,17 @@ std::unordered_map<uint32_t, uint32_t>& acks_of(uint8_t id, uint32_t link) {
     return g_acks[id];
 }
 
+bool pay_owed(Il2CppObject* bh, uint32_t id, const std::string& scene, const std::string& prefab, const Vector3& pos);
+
 void send_carcasses(double now) {
     if (now - g_last_send < kSendMs) return;
     g_last_send = now;
+    const std::string scene = game::active_scene();
+    for (auto it = g_owed.begin(); it != g_owed.end();)
+        it = now - it->since_ms > kOwedMs ? g_owed.erase(it) : std::next(it);
+    if (g_listed.size() > 512)
+        for (auto it = g_listed.begin(); it != g_listed.end();)
+            it = now - it->second.seen_ms > kListedMs ? g_listed.erase(it) : std::next(it);
     std::vector<net::CarcassRec> list;
     for (Il2CppObject* ai : all_animals()) {
         if (get<int32_t>(ai, api.ai_mode) != kAiModeDead) continue;
@@ -308,10 +357,13 @@ void send_carcasses(double now) {
         Quaternion rot{};
         il2::invoke_value(api.get_position, tf, pos);
         il2::invoke_value(api.get_rotation, tf, rot);
+        const std::string prefab = name_of(il2::invoke(api.component_go, ai));
+        if (!g_owed.empty() && pay_owed(bh, id, scene, prefab, pos)) continue;  // TLDCoop_DLC
+        g_listed[id] = Listed{Spot{scene, base_prefab(prefab), pos}, now};
         const Amounts a = read_amounts(bh);
         net::CarcassRec c;
         c.animal = id;
-        c.prefab = name_of(il2::invoke(api.component_go, ai));
+        c.prefab = prefab;
         c.pos[0] = pos.x, c.pos[1] = pos.y, c.pos[2] = pos.z;
         c.rot[0] = rot.x, c.rot[1] = rot.y, c.rot[2] = rot.z, c.rot[3] = rot.w;
         c.damage_side = static_cast<int8_t>(get<int32_t>(ai, api.ai_side));
@@ -349,20 +401,7 @@ Il2CppObject* host_carcass(uint32_t id) {
     return get<Il2CppObject*>(ai, api.ai_body);
 }
 
-// Friend `from` took meat / hide / guts at their copy (and TLD gave them the items there): the same comes off ours.
-void apply_harvest(const net::HarvestMsg& h, uint8_t from, uint32_t link) {
-    Il2CppObject* bh = host_carcass(h.animal);
-    if (!bh) {
-        logx::info("wildlife: the other player harvested #%u, which isn't a carcass here any more", h.animal);
-        return;
-    }
-    uint32_t& ack = acks_of(from < net::kMaxPlayers ? from : 0, link)[h.animal];
-    if (static_cast<int32_t>(h.seq - ack) > 0 || !ack) ack = h.seq;
-    if (!g_counted.first_time(h.seq)) {
-        logx::info("wildlife: the other player's harvest #%u of #%u came again (sent before the link dropped); "
-                   "counted already", h.seq, h.animal);
-        return;
-    }
+void take_harvest(Il2CppObject* bh, const net::HarvestMsg& h, uint32_t id) {
     Amounts a = read_amounts(bh);
     const Amounts before = a;
     a.meat = a.meat > h.meat_units ? a.meat - h.meat_units : 0;
@@ -372,14 +411,78 @@ void apply_harvest(const net::HarvestMsg& h, uint8_t from, uint32_t link) {
     if (h.flags & net::kHarvestBonusTaken) a.flags |= net::kCarcassBonusTaken;
     write_amounts(bh, a);
     logx::info("wildlife: the other player took %.2f kg meat, %d hide, %d gut from #%u: %s -> %s", h.meat_units / kUnits,
-               h.hide, h.gut, h.animal, describe_amounts(before).c_str(), describe_amounts(read_amounts(bh)).c_str());
+               h.hide, h.gut, id, describe_amounts(before).c_str(), describe_amounts(read_amounts(bh)).c_str());
 }
 
-void apply_quartered(uint32_t id) {
+void note_ack(uint8_t from, uint32_t link, uint32_t id, uint32_t seq) {
+    uint32_t& ack = acks_of(from < net::kMaxPlayers ? from : 0, link)[id];
+    if (static_cast<int32_t>(seq - ack) > 0 || !ack) ack = seq;
+}
+
+// TLDCoop_DLC: owed to a carcass we listed once but don't know by that id now
+bool owe(const net::HarvestMsg* h, uint32_t id, uint8_t from, uint32_t link, double now) {
+    const auto listed = g_listed.find(id);
+    if (listed == g_listed.end()) return false;
+    Owed o;
+    o.spot = listed->second.spot;
+    o.quartered = h == nullptr;
+    if (h) o.harvest = *h;
+    o.from = from;
+    o.link = link;
+    o.since_ms = now;
+    g_owed.push_back(std::move(o));
+    logx::info("wildlife: the other player %s #%u, not here now (%s at (%.1f, %.1f, %.1f)): done to it when it's back",
+               h ? "harvested" : "quartered", id, listed->second.spot.prefab.c_str(), listed->second.spot.pos.x,
+               listed->second.spot.pos.y, listed->second.spot.pos.z);
+    return true;
+}
+
+// Friend `from` took meat / hide / guts at their copy (and TLD gave them the items there): the same comes off ours.
+void apply_harvest(const net::HarvestMsg& h, uint8_t from, uint32_t link, double now) {
+    Il2CppObject* bh = host_carcass(h.animal);
+    if (bh) note_ack(from, link, h.animal, h.seq);
+    if (!g_counted.first_time(h.seq)) {
+        logx::info("wildlife: the other player's harvest #%u of #%u came again (sent before the link dropped); "
+                   "counted already", h.seq, h.animal);
+        return;
+    }
+    if (!bh) {
+        if (!owe(&h, h.animal, from, link, now))
+            logx::info("wildlife: the other player harvested #%u, which isn't a carcass here any more", h.animal);
+        return;
+    }
+    take_harvest(bh, h, h.animal);
+}
+
+void apply_quartered(uint32_t id, uint8_t from, uint32_t link, double now) {
     Il2CppObject* bh = host_carcass(id);
+    if (!bh && owe(nullptr, id, from, link, now)) return;
     logx::info("wildlife: the other player quartered #%u; %s", id, bh ? "its carcass goes here too" : "it was gone here already");
     if (bh) il2::invoke(api.bh_destroy, bh);
     for (auto& acks : g_acks) acks.erase(id);
+}
+
+// What's owed to this carcass (it's back, under a new id): true if it was quartered (gone now).
+bool pay_owed(Il2CppObject* bh, uint32_t id, const std::string& scene, const std::string& prefab, const Vector3& pos) {
+    bool quartered = false;
+    for (auto it = g_owed.begin(); it != g_owed.end();) {
+        if (!it->spot.same(scene, prefab, pos)) {
+            ++it;
+            continue;
+        }
+        if (it->quartered) {
+            logx::info("wildlife: the carcass the other player quartered while we were away is back (#%u): it goes", id);
+            il2::invoke(api.bh_destroy, bh);
+            for (auto& acks : g_acks) acks.erase(id);
+            quartered = true;
+        } else if (!quartered) {
+            logx::info("wildlife: the carcass the other player harvested while we were away is back (#%u)", id);
+            note_ack(it->from, it->link, id, it->harvest.seq);
+            take_harvest(bh, it->harvest, id);
+        }
+        it = g_owed.erase(it);
+    }
+    return quartered;
 }
 
 // --- client ------------------------------------------------------------------------------------------------------
@@ -399,6 +502,9 @@ uint64_t g_states_seen = 0;  // the host's states received, when we last looked
 double g_heard_ms = -1e18;   // when they last went up
 bool g_holding = false;      // hold_locals: the link stalls
 std::unordered_set<uint32_t> g_quartered;  // the host's animals we quartered: never a carcass here again
+std::vector<Spot> g_quartered_spots;       // TLDCoop_DLC: ...and where they lay (the host's ids change: see Spot)
+double g_regrace_until = 0;                // TLDCoop_DLC: the host just came back: our carcasses wait for its ids
+constexpr double kRegraceMs = 15000;
 
 void remove_from_save(Il2CppObject* bh) {
     Il2CppObject* list = nullptr;
@@ -420,7 +526,7 @@ bool make_local(const net::CarcassRec& c, double now) {
     put<Vector3>(data, api.sd_position, pos);
     put<Quaternion>(data, api.sd_rotation, rot);
     Il2CppString* prefab = il2::il2cpp_string_new(c.prefab.c_str());
-    put<Il2CppString*>(data, api.sd_prefab, prefab);
+    il2::store_ref(data, api.sd_prefab, prefab);
     void* args[] = {data};
     Il2CppObject* bh = il2::invoke(api.instantiate, nullptr, args);
     if (!bh) {
@@ -429,7 +535,7 @@ bool make_local(const net::CarcassRec& c, double now) {
     }
     remove_from_save(bh);                    // the host's carcass, not ours: never in our save
     put<bool>(bh, api.rolled_spawn, true);   // it exists, no spawn-chance roll
-    put<Il2CppObject*>(bh, api.site_prefab, nullptr);  // no carrion-bird site of ours (the host's shows its own)
+    il2::store_ref(bh, api.site_prefab, nullptr);  // no carrion-bird site of ours (the host's shows its own)
     Il2CppObject* go = il2::invoke(api.component_go, bh);
     Il2CppObject* ai = nullptr;
     for (Il2CppObject* candidate : all_animals())
@@ -469,22 +575,63 @@ void clear_locals(const char* why) {
     g_locals.clear();
 }
 
+// TLDCoop_DLC: our carcass of a host's animal that the host lists under a new id now (it loaded the scene again):
+// the same carcass, kept (with what we took from it) under the new id. Not one the host still lists.
+bool rekey_local(const net::CarcassRec& c, const std::unordered_set<uint32_t>& listed, const std::string& scene) {
+    for (auto it = g_locals.begin(); it != g_locals.end(); ++it) {
+        if (listed.count(it->first)) continue;
+        const Spot was{scene, base_prefab(it->second.host.prefab), {it->second.host.pos[0], it->second.host.pos[1], it->second.host.pos[2]}};
+        if (!was.same(scene, c.prefab, Vector3{c.pos[0], c.pos[1], c.pos[2]})) continue;
+        const uint32_t old_id = it->first;
+        Local l = it->second;
+        g_locals.erase(it);
+        Il2CppObject* go = target(l.go);
+        wildlife_sync::carcass_gone(old_id, go);
+        wildlife_sync::carcass_made(c.animal, go);
+        const uint32_t pending = l.pending;
+        l.host = c;
+        l.pending = pending;
+        g_locals[c.animal] = l;
+        logx::info("wildlife: the host's carcass #%u is #%u now (it loaded the scene again); ours stays", old_id, c.animal);
+        return true;
+    }
+    return false;
+}
+
 void receive_carcasses(double now) {
     std::vector<net::Packet> packets;
     netrt::drain_packets(net::Msg::Carcasses, packets);
+    std::vector<net::CarcassRec> all;
     for (const net::Packet& p : packets) {
         net::Reader r = net::packet_body(p);
         std::vector<net::CarcassRec> list;
         if (!net::read_carcasses(r, list)) continue;
-        for (net::CarcassRec& c : list) {
-            auto it = g_locals.find(c.animal);
-            if (it == g_locals.end()) {
-                if (c.seconds_dead >= kDeathSeconds && !g_quartered.count(c.animal)) make_local(c, now);
+        for (net::CarcassRec& c : list) all.push_back(std::move(c));
+    }
+    if (all.empty()) return;
+    std::unordered_set<uint32_t> listed;
+    for (const net::CarcassRec& c : all) listed.insert(c.animal);
+    const std::string scene = game::active_scene();
+    for (net::CarcassRec& c : all) {
+        auto it = g_locals.find(c.animal);
+        if (it == g_locals.end()) {
+            if (g_quartered.count(c.animal) || rekey_local(c, listed, scene)) {
+                it = g_locals.find(c.animal);
+                if (it == g_locals.end()) continue;
+            } else {
+                const Vector3 at{c.pos[0], c.pos[1], c.pos[2]};
+                bool quartered = false;
+                for (const Spot& q : g_quartered_spots) quartered |= q.same(scene, c.prefab, at);
+                if (quartered) {
+                    g_quartered.insert(c.animal);  // (the host's game hears of it and removes it)
+                    continue;
+                }
+                if (c.seconds_dead >= kDeathSeconds) make_local(c, now);
                 continue;
             }
-            it->second.host = std::move(c);
-            it->second.seen_ms = now;
         }
+        it->second.host = std::move(c);
+        it->second.seen_ms = now;
     }
 }
 
@@ -526,7 +673,7 @@ void update_locals(double now) {
             it = g_locals.erase(it);
             continue;
         }
-        if (now - l.seen_ms > kGoneMs) {
+        if (now - l.seen_ms > kGoneMs && now >= g_regrace_until) {
             drop_local(it->first, l, "the host's is gone", true);
             it = g_locals.erase(it);
             continue;
@@ -605,9 +752,18 @@ void harvest_done_detour(Il2CppObject* self, const MethodInfo* method) {
 void quarter_done_detour(Il2CppObject* self, const MethodInfo* method) {
     Il2CppObject* bh = g_ready ? get<Il2CppObject*>(self, api.panel_bh) : nullptr;
     const uint32_t id = bh && joined() ? local_id_of(bh) : 0;
+    Spot spot;
+    if (id)
+        if (const auto l = g_locals.find(id); l != g_locals.end())
+            spot = Spot{game::active_scene(), base_prefab(l->second.host.prefab),
+                        {l->second.host.pos[0], l->second.host.pos[1], l->second.host.pos[2]}};
     g_quarter_done(self, method);
     if (!id) return;
     g_quartered.insert(id);
+    if (!spot.prefab.empty()) {
+        g_quartered_spots.push_back(std::move(spot));
+        if (g_quartered_spots.size() > 256) g_quartered_spots.erase(g_quartered_spots.begin());
+    }
     net::Writer w(net::Msg::Quartered);
     w.put(id);
     netrt::send_packet(w, true);
@@ -857,6 +1013,10 @@ void on_frame(bool in_game) {
     const double now = now_ms();
     run_test(now);
     if (in_game && runs_scene()) small_game_to_items(now);
+    if (!hosting() && (!g_owed.empty() || !g_listed.empty())) {  // TLDCoop_DLC: (a host's alone)
+        g_owed.clear();
+        g_listed.clear();
+    }
     if (hosting()) {
         if (in_game) send_carcasses(now);
         std::vector<net::Packet> packets;
@@ -864,14 +1024,14 @@ void on_frame(bool in_game) {
         for (const net::Packet& p : packets) {
             net::Reader r = net::packet_body(p);
             net::HarvestMsg h;
-            if (net::read_harvest(r, h)) apply_harvest(h, p.from, p.link);
+            if (net::read_harvest(r, h)) apply_harvest(h, p.from, p.link, now);
         }
         packets.clear();
         netrt::drain_packets(net::Msg::Quartered, packets);
         for (const net::Packet& p : packets) {
             net::Reader r = net::packet_body(p);
             const uint32_t id = r.get<uint32_t>();
-            if (r.ok()) apply_quartered(id);
+            if (r.ok()) apply_quartered(id, p.from, p.link, now);
         }
         return;
     }
@@ -886,7 +1046,10 @@ void on_frame(bool in_game) {
     }
     if (g_holding && hearing) logx::info("wildlife: the host is back; our carcasses follow its again");
     g_holding = false;
-    if (!joined()) g_quartered.clear();
+    if (!joined()) {
+        g_quartered.clear();
+        g_quartered_spots.clear();
+    }
     // TLDCoop_DLC: the host went into a house: the carcasses stay where they lay ("the carcasses vanished for the others
     // when the host went in"); the host's list of them follows again when it's back.
     if (joined() && in_game && wildlife_sync::host_away_here()) {
@@ -898,6 +1061,7 @@ void on_frame(bool in_game) {
         netrt::drain_packets(net::Msg::Carcasses, stale);
         return;
     }
+    if (g_away_logged) g_regrace_until = now + kRegraceMs;  // TLDCoop_DLC: (the host is back: see rekey_local)
     g_away_logged = false;
     if (!joined() || !in_game || !wildlife_sync::mirroring()) {
         if (!g_locals.empty()) clear_locals("not mirroring the host's animals");

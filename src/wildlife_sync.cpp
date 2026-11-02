@@ -433,14 +433,14 @@ double g_last_capture = 0;
 uint32_t g_frame = 0;
 uint32_t g_next_id = 1;
 std::unordered_map<uintptr_t, uint32_t> g_ids;             // BaseAi object -> our id
-std::unordered_map<uintptr_t, std::vector<Param>> g_schemas;  // Animator object -> its parameters
+std::unordered_map<uintptr_t, std::vector<Param>> g_schemas;  // BaseAi object -> its Animator's parameters
 std::unordered_map<uintptr_t, std::vector<uint64_t>> g_ai_emitters;  // BaseAi object -> its Wwise sound objects
 double g_emitters_refreshed = 0;
 size_t g_last_shared = static_cast<size_t>(-1);
 
-std::string read_params(Il2CppObject* animator) {
-    auto it = g_schemas.find(reinterpret_cast<uintptr_t>(animator));
-    if (it == g_schemas.end()) it = g_schemas.emplace(reinterpret_cast<uintptr_t>(animator), read_schema(animator)).first;
+std::string read_params(uintptr_t ai_key, Il2CppObject* animator) {
+    auto it = g_schemas.find(ai_key);
+    if (it == g_schemas.end()) it = g_schemas.emplace(ai_key, read_schema(animator)).first;
     std::string out;
     for (const Param& p : it->second) {
         int32_t hash = p.hash;
@@ -465,20 +465,23 @@ std::string read_params(Il2CppObject* animator) {
 // TLDCoop_DLC: friends' positions in our scene (host), as capture last saw them; read by can_update_detour.
 std::vector<Vector3> g_friend_spots;
 std::unordered_set<uintptr_t> g_always_animated;  // host animals whose Animator always animates now
+std::unordered_set<uintptr_t> g_near_friend;      // TLDCoop_DLC: host animals near a friend, as capture last saw them
 using CanUpdateFn = bool (*)(Il2CppObject* ai, const MethodInfo* method);
 CanUpdateFn g_can_update = nullptr;
 int g_updates_granted = 0;
 
-bool near_a_friend(Il2CppObject* ai) {
-    if (g_friend_spots.empty() || !ai) return false;
-    Il2CppObject* tf = transform_of(ai);
-    Vector3 p{};
-    if (!tf || !il2::invoke_value(api.get_position, tf, p)) return false;
+bool friend_near_spot(const Vector3& p) {
     for (const Vector3& f : g_friend_spots) {
         const float dx = p.x - f.x, dy = p.y - f.y, dz = p.z - f.z;
         if (dx * dx + dy * dy + dz * dz <= kFriendNearMetres * kFriendNearMetres) return true;
     }
     return false;
+}
+
+// Whether the animal was near a friend at the last capture (10 a second): a set lookup, as this runs for every far
+// animal every frame (it read each one's position there).
+bool near_a_friend(Il2CppObject* ai) {
+    return ai && !g_near_friend.empty() && g_near_friend.count(reinterpret_cast<uintptr_t>(ai)) != 0;
 }
 
 // BaseAiManager.CanUpdateAI: TLD skips far animals' updates; near a friend they run every frame, as near us.
@@ -615,12 +618,16 @@ void capture(const std::string& scene, double now) {
     struct Where { uint8_t kind = 0; Vector3 pos{}; uint32_t id = 0; };
     static std::unordered_map<uintptr_t, Where> where;
     std::unordered_map<uintptr_t, int> listed;  // 0 inactive, 1 out of range
+    std::unordered_set<uintptr_t> near_friend;
     for (Il2CppObject* ai : all_animals()) {
         const auto key0 = reinterpret_cast<uintptr_t>(ai);
         if (!active(go_of(ai))) { listed[key0] = 0; continue; }
         Il2CppObject* tf = transform_of(ai);
         Vector3 pos{}, euler{};
-        if (!tf || !il2::invoke_value(api.get_position, tf, pos) || !in_range(pos)) { listed[key0] = 1; continue; }
+        const bool placed = tf && il2::invoke_value(api.get_position, tf, pos);
+        const bool by_friend = placed && friend_near_spot(pos);
+        if (by_friend) near_friend.insert(key0);
+        if (!placed || !in_range(pos)) { listed[key0] = 1; continue; }
         il2::invoke_value(api.get_euler, tf, euler);
         const auto key = reinterpret_cast<uintptr_t>(ai);
         auto id = g_ids.find(key);
@@ -645,7 +652,7 @@ void capture(const std::string& scene, double now) {
             // time: far from our camera TLD makes it an "imposter" (BaseAi.m_Imposter*: its own culling mode, no
             // walking animation), and a friend away from us saw animals standing still. Its imposter distances made
             // too big to reach, so it stays a whole animal.
-            if (api.set_culling && near_a_friend(ai)) {
+            if (api.set_culling && by_friend) {
                 int32_t culling = kCullAlwaysAnimate;
                 void* cull_args[] = {&culling};
                 il2::invoke(api.set_culling, animator, cull_args);
@@ -668,7 +675,7 @@ void capture(const std::string& scene, double now) {
                 il2::invoke_value(api.state_info, animator, si, args);
                 a.layers.push_back({si.full_path, si.normalized_time});
             }
-            a.params = read_params(animator);
+            a.params = read_params(key, animator);
             if (a.params.size() > net::kMaxAnimalParams) a.params.clear();
         }
         if (a.kind < std::size(kKinds)) ++counts[a.kind];
@@ -705,10 +712,12 @@ void capture(const std::string& scene, double now) {
     }
     for (auto it = g_ai_emitters.begin(); it != g_ai_emitters.end();)
         it = seen.count(it->first) ? std::next(it) : g_ai_emitters.erase(it);
+    for (auto it = g_schemas.begin(); it != g_schemas.end();)  // TLDCoop_DLC: (keyed by the animal: forgotten with it)
+        it = seen.count(it->first) ? std::next(it) : g_schemas.erase(it);
     for (auto it = g_always_animated.begin(); it != g_always_animated.end();)  // TLDCoop_DLC: gone or out of range
         it = seen.count(*it) ? std::next(it) : g_always_animated.erase(it);
     g_ids.swap(seen);  // forget animals that are gone
-    if (g_schemas.size() > 256) g_schemas.clear();
+    g_near_friend.swap(near_friend);
 
     // One frame, split over as many parts as it takes.
     std::vector<net::AnimalsMsg> parts(1);
@@ -758,12 +767,15 @@ struct Puppet {
     std::unordered_map<uint32_t, uint32_t> playing;     // host playing ID -> ours
     bool carcass = false;                               // a real carcass (wildlife_carcass) has taken its place
     bool aurora = false;                                // TLDCoop_DLC: the aurora model
+    bool params_dirty = false;                          // TLDCoop_DLC: a new record came: its parameters to apply
 };
 
 std::map<uint32_t, Puppet> g_puppets;
 uintptr_t g_puppet_root = 0;    // scene object holding the copies
 uintptr_t g_loader = 0;         // inactive: copies are built here before they wake up
-std::vector<uintptr_t> g_hidden;  // our own animals we hid
+// Our own animals we hid: GameObject address -> its handle (TLDCoop_DLC: a map, so one TLD woke again and we hid
+// again isn't listed twice)
+std::unordered_map<uintptr_t, uintptr_t> g_hidden;
 std::vector<Il2CppObject*> g_carcasses;  // our carcasses of the host's dead animals (wildlife_carcass): not hidden
 std::unordered_set<uint32_t> g_carcass_ids;  // their animals: a copy made again (the link was back) stays hidden
 double g_last_hide_scan = 0;
@@ -868,7 +880,7 @@ Il2CppObject* template_for(int kind, bool aurora) {
             if (il2::read_field<int32_t>(ai, api.ai_kind) == kind)
                 if (Il2CppObject* prefab = prefab_from_ref(il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref)))
                     return keep(prefab, "an animal of that kind here (its addressable prefab)");
-    for (uintptr_t h : g_hidden)
+    for (const auto& [addr, h] : g_hidden)
         if (Il2CppObject* go = target(h))
             for (Il2CppObject* ai : all_animals())
                 if (go_of(ai) == go && il2::read_field<int32_t>(ai, api.ai_kind) == kind) return go;
@@ -927,9 +939,18 @@ int strip(Il2CppObject* copy) {
     return removed;
 }
 
-bool make_puppet(uint32_t id, const net::AnimalRec& rec, Puppet& p) {
+// TLDCoop_DLC: kinds (and aurora kinds) with no model in this scene, and when to look again: template_for scans every
+// spawn area and animal, and it was asked for every record of such an animal (ten times a second each).
+constexpr double kNoModelRetryMs = 4000;
+std::unordered_map<int, double> g_no_model;
+
+bool make_puppet(uint32_t id, const net::AnimalRec& rec, Puppet& p, double now) {
+    const int model_key = rec.kind + ((rec.flags & net::kAnimalAurora) ? 100 : 0);
+    if (const auto no = g_no_model.find(model_key); no != g_no_model.end() && now < no->second) return false;
     Il2CppObject* root = puppet_root();
     Il2CppObject* source = template_for(rec.kind, (rec.flags & net::kAnimalAurora) != 0);
+    if (source) g_no_model.erase(model_key);
+    else g_no_model[model_key] = now + kNoModelRetryMs;
     if (!root || !source) {
         if (!(g_failed_kinds & (1 << rec.kind)))
             logx::warn("wildlife: no %s to copy in this scene; the host's %s stays invisible here", kind_name(rec.kind),
@@ -999,6 +1020,8 @@ void remove_puppet(Puppet& p) {
 }
 
 void apply_params(Puppet& p, uint32_t id) {
+    if (!p.params_dirty) return;  // TLDCoop_DLC: they stay as set until the host's next record
+    p.params_dirty = false;
     Il2CppObject* animator = target(p.animator);
     const std::string& v = p.latest.params;
     if (!animator || v.empty()) return;
@@ -1134,7 +1157,9 @@ struct Quaternion {
 
 // No animal of that kind of our own (TLD's spawning is off while mirroring): make one for the fight with this
 // region's nearest spawn area for the kind, the way TLD spawns them, already in its fight mode.
-Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees) {
+// `mode`: the AiMode it starts in; `wake`: active (a fight) or not (only its damage tables are wanted).
+Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees, int32_t mode = 14 /* AiMode.Struggle */,
+                             bool wake = true) {
     if (!api.instantiate_spawn && !api.instantiate_spawn_legacy) return nullptr;
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
     Il2CppObject* best = nullptr;
@@ -1152,7 +1177,6 @@ Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees) {
     if (!best) return nullptr;
     const float half = yaw_degrees * 0.5f * 3.14159265f / 180.0f;
     Quaternion rot{0, std::sin(half), 0, std::cos(half)};
-    int32_t mode = 14;  // AiMode.Struggle
     int32_t wildlife = 0;
     Il2CppObject* ai = nullptr;
     if (api.instantiate_spawn && api.region_spawn_list >= 0) {
@@ -1166,7 +1190,7 @@ Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees) {
         void* args[] = {prefab, prefab_ref, &pos, &rot, &mode, &wildlife};
         ai = il2::invoke(api.instantiate_spawn_legacy, best, args);
     }
-    if (ai) set_active(go_of(ai), true);
+    if (ai) set_active(go_of(ai), wake);
     return ai;
 }
 
@@ -1178,7 +1202,7 @@ Il2CppObject* base_ai_of(Il2CppObject* go) {
 
 // One of our hidden animals of that kind (a living one: an earlier fight may have killed one).
 Il2CppObject* our_animal_of_kind(int kind) {
-    for (uintptr_t h : g_hidden) {
+    for (const auto& [addr, h] : g_hidden) {
         Il2CppObject* ai = base_ai_of(target(h));
         if (ai && alive(ai) && il2::read_field<int32_t>(ai, api.ai_kind) == kind &&
             il2::read_field<int32_t>(ai, api.ai_mode) != kAiModeDead)
@@ -1298,15 +1322,35 @@ bool start_fight(const net::AttackMsg& a, double now) {
 
 // The fight is over here too (TLD's struggle has ended, camera and all): the stand-in goes back, the host's animal
 // shows again. The host was told how it ended as soon as TLD decided (report_fight), or is told now.
+bool dead_animal(Il2CppObject* ai) {
+    return il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead || il2::read_field<float>(ai, api.ai_hp) <= 1e-4f;
+}
+
 void finish_fight(const char* why, bool report) {
     if (!g_fight.active) return;
     Il2CppObject* ai = target(g_fight.ai);
     if (report && !g_fight.reported) report_fight(ai, why);
     if (ai && alive(ai)) {
-        if (g_fight.made_for_it)
-            destroy(go_of(ai), false);  // only here for the fight
-        else
-            set_active(go_of(ai), false);  // back among our hidden animals
+        Il2CppObject* go = go_of(ai);
+        const auto addr = reinterpret_cast<uintptr_t>(go);
+        if (g_fight.made_for_it || dead_animal(ai)) {
+            // Only here for the fight; or (TLDCoop_DLC) one of ours that died in it: the host's animal died, and its
+            // carcass is the one that counts (shown again later, ours made a second one).
+            if (const auto h = g_hidden.find(addr); h != g_hidden.end()) {
+                drop(h->second);
+                g_hidden.erase(h);
+            }
+            destroy(go, false);
+        } else if (g_mirroring) {
+            set_active(go, false);  // back among our hidden animals
+            if (!g_hidden.count(addr)) g_hidden.emplace(addr, hold(go));
+        } else {
+            // TLDCoop_DLC: we stopped showing the host's animals meanwhile: ours are back in our game, this one too
+            if (const auto h = g_hidden.find(addr); h != g_hidden.end()) {
+                drop(h->second);
+                g_hidden.erase(h);
+            }
+        }
     }
     if (const auto puppet = g_puppets.find(g_fight.animal); puppet != g_puppets.end() && !puppet->second.carcass)
         set_active(target(puppet->second.go), true);
@@ -1325,13 +1369,22 @@ void watch_fight() {
     // fighting it"): our stand-in lets go at once, the way TLD ends a fight when a struggling animal is scared off.
     if (g_fight.saw_struggle) {
         const auto puppet = g_puppets.find(g_fight.animal);
-        const bool gone = puppet == g_puppets.end() || puppet->second.carcass ||
-                          (puppet->second.latest.flags & net::kAnimalDead) || puppet->second.latest.hp <= 0;
-        if (gone && api.make_partner_flee) {
+        const bool missing = puppet == g_puppets.end();
+        const bool dead = !missing && (puppet->second.carcass || (puppet->second.latest.flags & net::kAnimalDead) ||
+                                       puppet->second.latest.hp <= 0);
+        if (dead && api.make_partner_flee) {
             g_fight.reported = true;  // the host already knows how it ended
             Il2CppObject* struggle = il2::invoke(api.get_struggle, nullptr);
             if (struggle) il2::invoke(api.make_partner_flee, struggle, nullptr);
             logx::info("wildlife: the host's #%u died while fighting us (someone else killed it): letting go", g_fight.animal);
+            return;
+        }
+        if (missing && g_mirroring) {
+            // TLDCoop_DLC: its copy went (no word of it for a while), which isn't its death: the host hears how the
+            // fight stands now (it waited, frozen, and lost the fight's damage), and ours lets go.
+            report_fight(ai, "lost the host's animal");
+            Il2CppObject* struggle = api.make_partner_flee ? il2::invoke(api.get_struggle, nullptr) : nullptr;
+            if (struggle) il2::invoke(api.make_partner_flee, struggle, nullptr);
             return;
         }
     }
@@ -1372,6 +1425,14 @@ void unstick_fight(double now) {
     }
 }
 
+// The fight here, every frame: TLD's decision goes to the host, a stuck one is ended, an ended one tidied up.
+void tend_fight(double now) {
+    watch_fight();
+    unstick_fight(now);
+    if (g_fight.active && now - g_fight.started_ms > 1500 && !game::in_struggle()) finish_fight("struggle ended", true);
+    if (g_fight.active && now - g_fight.started_ms > kLocalFightTimeoutMs) finish_fight("took too long", true);
+}
+
 void handle_attacks(double now, bool can_fight) {
     std::vector<net::AttackMsg> attacks;
     netrt::drain_attacks(attacks);
@@ -1388,20 +1449,31 @@ void handle_attacks(double now, bool can_fight) {
             logx::info("wildlife: the host's %s #%u hurt us: %.1f damage", kind_name(a.kind), a.animal, a.damage);
         } else if (a.type == net::AttackType::Wounds && can_fight) {
             Il2CppObject* ai = our_animal_of_kind(a.kind);
+            const char* from = "";
+            if (!ai && g_fight.active) {  // TLDCoop_DLC: the one fighting us now, if it's that kind
+                Il2CppObject* fighter = target(g_fight.ai);
+                if (fighter && alive(fighter) && il2::read_field<int32_t>(fighter, api.ai_kind) == a.kind) ai = fighter;
+            }
+            Il2CppObject* made = nullptr;
+            if (!ai) {
+                // TLDCoop_DLC: none of ours of that kind: one made (asleep, out of the way) just for its damage tables
+                const game::PlayerState me = game::read_player();
+                Vector3 at{me.position.x, me.position.y - 50.0f, me.position.z};
+                made = ai = spawn_stand_in(a.kind, at, 0, kAiModeWander, false);
+                from = " (with one made for it)";
+            }
             Il2CppObject* table = ai ? il2::invoke(api.damage_table, ai) : nullptr;
             if (table) {
                 int32_t options = a.options;
                 void* args[] = {ai, &options};
                 il2::invoke(api.apply_wounds, table, args);
             }
+            if (made) destroy(go_of(made), false);
             logx::info("wildlife: the host's %s #%u wounded us%s", kind_name(a.kind), a.animal,
-                       table ? "" : " (no animal of that kind here to take the wounds from)");
+                       table ? from : " (no animal of that kind here to take the wounds from)");
         }
     }
-    watch_fight();
-    unstick_fight(now);
-    if (g_fight.active && now - g_fight.started_ms > 1500 && !game::in_struggle()) finish_fight("struggle ended", true);
-    if (g_fight.active && now - g_fight.started_ms > kLocalFightTimeoutMs) finish_fight("took too long", true);
+    tend_fight(now);
 }
 
 void hide_our_animals(double now) {
@@ -1413,8 +1485,11 @@ void hide_our_animals(double now) {
         Il2CppObject* go = go_of(ai);
         if (!active(go) || ai == fighter) continue;
         if (std::find(g_carcasses.begin(), g_carcasses.end(), go) != g_carcasses.end()) continue;
+        // TLDCoop_DLC: our own kills (made while the host was away) stay: hidden, their carcass was lost to us
+        if (il2::read_field<int32_t>(ai, api.ai_mode) == kAiModeDead) continue;
         set_active(go, false);
-        g_hidden.push_back(hold(go));
+        const auto addr = reinterpret_cast<uintptr_t>(go);
+        if (!g_hidden.count(addr)) g_hidden.emplace(addr, hold(go));
         ++hidden;
     }
     if (hidden) logx::info("wildlife: hid %d of our own animal(s); the host's are shown instead", hidden);
@@ -1422,7 +1497,21 @@ void hide_our_animals(double now) {
 
 void stop_mirroring(const char* why) {
     if (!g_mirroring) return;
-    finish_fight(why, true);
+    // TLDCoop_DLC: a fight here isn't cut off under TLD's struggle (its partner hidden or destroyed while it ran left
+    // us looking at the sky for good): the host hears how it stands, TLD ends it its own way, and the fight is tidied
+    // up once TLD's struggle is over (tend_fight).
+    Il2CppObject* fighter = nullptr;
+    if (g_fight.active) {
+        fighter = target(g_fight.ai);
+        if (!g_fight.reported) report_fight(fighter, why);
+        g_fight.reported = true;
+        if (game::in_struggle())
+            if (Il2CppObject* struggle = il2::invoke(api.get_struggle, nullptr)) {
+                if (api.make_partner_flee) il2::invoke(api.make_partner_flee, struggle, nullptr);
+                if (game::in_struggle() && api.break_struggle) il2::invoke(api.break_struggle, struggle, nullptr);
+                logx::info("wildlife: the fight with the host's #%u is let go (%s)", g_fight.animal, why);
+            }
+    }
     g_mirroring = false;
     // TLDCoop_DLC: the host went into another scene (a house) and its game no longer runs this one: the animals we
     // saw would all vanish and ours come back elsewhere ("the bear vanished when the host went into the cabin"). Ours
@@ -1442,10 +1531,16 @@ void stop_mirroring(const char* why) {
     for (auto& [id, p] : g_puppets) remove_puppet(p);
     g_puppets.clear();
     int restored = 0;
-    for (uintptr_t& h : g_hidden) {
-        if (Il2CppObject* go = target(h); alive(go)) {
-            set_active(go, true);
-            ++restored;
+    Il2CppObject* fighter_go = fighter && alive(fighter) ? go_of(fighter) : nullptr;
+    for (auto& [addr, h] : g_hidden) {
+        Il2CppObject* go = target(h);
+        // TLDCoop_DLC: not the one still in the fight (finish_fight sees to it), nor one that died (a second carcass)
+        if (go && go != fighter_go && alive(go)) {
+            Il2CppObject* ai = base_ai_of(go);
+            if (!ai || !dead_animal(ai)) {
+                set_active(go, true);
+                ++restored;
+            }
         }
         drop(h);
     }
@@ -1489,6 +1584,7 @@ void mirror(const std::string& scene, double now) {
         g_mirroring = true;
         g_mirror_scene = scene;
         g_failed_kinds = 0;
+        g_no_model.clear();
         logx::info("wildlife: mirroring the host's animals in '%s'", scene.c_str());
     }
     hide_our_animals(now);
@@ -1506,7 +1602,7 @@ void mirror(const std::string& scene, double now) {
             }
             if (it == g_puppets.end()) {
                 Puppet p;
-                if (!make_puppet(rec.id, rec, p)) continue;
+                if (!make_puppet(rec.id, rec, p, now)) continue;
                 if (g_carcass_ids.count(rec.id)) {  // our carcass kept while the link was down shows it
                     p.carcass = true;
                     free_stuck_arrows(target(p.go));
@@ -1531,6 +1627,7 @@ void mirror(const std::string& scene, double now) {
             s.roll = rec.roll;
             p.track.add(s, part.received_ms);
             p.latest = rec;
+            p.params_dirty = true;
             p.updated_ms = now;
         }
     }
@@ -1857,6 +1954,9 @@ void on_frame(const std::string& scene, bool in_game) {
     }
     if (!role) {
         stop_mirroring("co-op off");
+        tend_fight(now);  // TLDCoop_DLC: a fight still on here ends as TLD ends it
+        g_friend_spots.clear();
+        g_near_friend.clear();
         return;
     }
     if (*role == net::Role::Host) {
@@ -1871,6 +1971,13 @@ void on_frame(const std::string& scene, bool in_game) {
                 logx::info("wildlife: player %u ran '%s' while we were away: %zu animal(s) of theirs for ours to take over%s",
                            p.from, h.scene.c_str(), h.list.size(), h.scene == scene ? "" : " (not our scene: ignored)");
                 if (h.scene != scene || h.list.empty()) continue;
+                if (g_handover.scene == h.scene && !g_handover.list.empty() && now <= g_handover.until) {
+                    // TLDCoop_DLC: another friend's (or more of the same one's): added to what's still being placed
+                    g_handover.list.insert(g_handover.list.end(), h.list.begin(), h.list.end());
+                    g_handover.done.resize(g_handover.list.size(), false);
+                    g_handover.until = now + 15000;
+                    continue;
+                }
                 h.done.assign(h.list.size(), false);
                 h.until = now + 15000;
                 g_handover = std::move(h);
@@ -1881,6 +1988,8 @@ void on_frame(const std::string& scene, bool in_game) {
         capture(scene, now);
         return;
     }
+    g_friend_spots.clear();  // TLDCoop_DLC: (host only: the hooks that read these act on nothing here)
+    g_near_friend.clear();
     const auto host = netrt::remote_state();
     if (!g_took_over_scene.empty() && g_took_over_scene != scene) g_took_over_scene.clear();  // we left it too
     if (in_game && host && host->valid && host->scene == scene && !g_mirroring && g_took_over_scene == scene) {
