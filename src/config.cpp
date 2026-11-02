@@ -194,8 +194,10 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"interiors", L"enabled", s.seamless_interiors ? L"1" : L"0", ini.c_str());
+    // TLDCoop_DLC: the codes aren't written to the log (it goes into F11's bug reports): only whether one is set
     logx::info("settings saved: mode=%s transport=%s code=%s join_code=%s name=%s body=%s", s.mode.c_str(),
-               s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.name.c_str(), s.body.c_str());
+               s.transport.c_str(), s.code.empty() ? "(none)" : "(set)", s.join_code.empty() ? "(none)" : "(set)",
+               s.name.c_str(), s.body.c_str());
 }
 
 Settings load() {
@@ -257,7 +259,8 @@ Settings load() {
                    s.test_window.c_str());
     logx::info("settings: mode=%s transport=%s code=%s join_code=%s bind=%s host=%s port=%u name=%s body=%s "
                "hud names=%d radar=%d chart=%d",
-               s.mode.c_str(), s.transport.c_str(), s.code.c_str(), s.join_code.c_str(), s.bind_ip.c_str(),
+               s.mode.c_str(), s.transport.c_str(), s.code.empty() ? "(none)" : "(set)",
+               s.join_code.empty() ? "(none)" : "(set)", s.bind_ip.c_str(),
                s.host_ip.c_str(), s.port, s.name.c_str(), s.body.c_str(), s.hud_names ? 1 : 0, s.hud_radar ? 1 : 0,
                s.hud_chart ? 1 : 0);
     return s;

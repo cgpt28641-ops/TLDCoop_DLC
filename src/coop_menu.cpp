@@ -833,7 +833,7 @@ void start_hosting() {
     s.mode = "host";
     if (s.transport != "local") s.transport = "steam";  // local (LAN, testing): hosting by IP
     core::apply_settings(s);
-    logx::info("menu: CO-OP picked; opening the %s lobby for code %s", s.transport.c_str(), s.code.c_str());
+    logx::info("menu: CO-OP picked; opening the %s lobby (code %s)", s.transport.c_str(), s.code.empty() ? "none" : "set");
 }
 
 // --- TLDCoop_DLC: a friend joining with NEW doesn't choose a mode or a map --------------------------------------
@@ -1540,7 +1540,7 @@ void close_menu(bool confirmed) {
         g_voice = g.voice;  // answers TLD's Male / Female screen later (new games)
         logx::info("menu: confirmed (mode %s, character %s, voice %s, code %s); the lobby next",
                    g.settings.mode.c_str(), g.settings.body.c_str(), g.with_voice ? g.settings.voice.c_str() : "save's",
-                   g.mode == kHost ? g.settings.code.c_str() : g.join_code.c_str());
+                   (g.mode == kHost ? g.settings.code : g.join_code).empty() ? "none" : "set");
         open_lobby();
         return;
     }
