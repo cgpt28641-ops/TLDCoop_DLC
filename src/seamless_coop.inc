@@ -288,6 +288,7 @@ Instance* hosted_unready(Il2CppObject* door) {
 
 V3 door_of_unbuilt(const Config& c) {
     if (!is_zero(c.exit)) return c.exit;
+    if (!is_zero(c.door_spot)) return c.door_spot;  // B4: a found building's door
     if (c.doors_count > 0) return kDoors[c.doors_first].exit;
     return c.fallback;
 }
@@ -690,9 +691,7 @@ std::string place() {
 }
 
 bool door_position(const std::string& id, float& x, float& y, float& z) {
-    const Config* c = nullptr;
-    for (int i = 0; i < kConfigCount && !c; ++i)
-        if (id == kConfigs[i].id) c = &kConfigs[i];
+    const Config* c = config_by_id(id);  // (B4: a found building's too)
     for (int hops = 0; c && !*c->shell && hops < 4; ++hops) {  // a sub-interior: the building it's reached from
         const Config* parent = nullptr;
         for (int i = 0; i < kConfigCount && !parent; ++i)
@@ -711,9 +710,8 @@ bool door_position(const std::string& id, float& x, float& y, float& z) {
 }
 
 std::string place_scene(const std::string& id) {
-    for (int i = 0; i < kConfigCount; ++i)
-        if (id == kConfigs[i].id) return kConfigs[i].scene;
-    return {};
+    const Config* c = config_by_id(id);
+    return c ? std::string(c->scene) : std::string();
 }
 
 bool sync_skips(Il2CppObject* obj) {
@@ -796,6 +794,8 @@ bool rooms_pending_build(const std::string& scene) {
         if (!g_feature_on) return false;
         for (int i = 0; i < kConfigCount; ++i)
             if (scene == kConfigs[i].region) return true;
+        for (const Config& c : g_auto_cfgs)  // B4: found there on an earlier visit
+            if (scene == c.region) return true;
         return false;
     }
     if (!g_engaged) return false;
@@ -830,18 +830,17 @@ bool prepare_teleport(const std::string& where, float& x, float& y, float& z, bo
     if (!in) {
         if (where.empty()) return false;
         // no such room here (yet): at its building's door (K8), else beside it - not 80 m up where the room would stand
-        for (int i = 0; i < kConfigCount; ++i)
-            if (where == kConfigs[i].id) {
-                const V3 door = door_of_unbuilt(kConfigs[i]);
-                x = door.x;
-                y = door.y;
-                z = door.z;
-                indoors = false;
-                g_fall_guard_until = now_ms() + kFallGuardMs;
-                logx::info("interiors: the other player is inside %s, which we don't have; to its door (%.1f, %.1f, %.1f)",
-                           where.c_str(), door.x, door.y, door.z);
-                return true;
-            }
+        if (const Config* c = config_by_id(where)) {
+            const V3 door = door_of_unbuilt(*c);
+            x = door.x;
+            y = door.y;
+            z = door.z;
+            indoors = false;
+            g_fall_guard_until = now_ms() + kFallGuardMs;
+            logx::info("interiors: the other player is inside %s, which we don't have; to its door (%.1f, %.1f, %.1f)",
+                       where.c_str(), door.x, door.y, door.z);
+            return true;
+        }
         y -= kParkOffset.y;
         indoors = false;
         logx::info("interiors: the other player is inside %s, which we don't know; to below their spot instead", where.c_str());

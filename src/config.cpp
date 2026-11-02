@@ -242,6 +242,8 @@ Settings load() {
     s.seamless_interiors = GetPrivateProfileIntW(L"interiors", L"enabled", 0, ini.c_str()) != 0;
     s.seamless_import_old = GetPrivateProfileIntW(L"interiors", L"import_old", 1, ini.c_str()) != 0;
     s.seamless_keep_rooms = GetPrivateProfileIntW(L"interiors", L"keep_rooms", 1, ini.c_str()) != 0;
+    s.seamless_auto_buildings = GetPrivateProfileIntW(L"interiors", L"auto_buildings", 1, ini.c_str()) != 0;
+    s.seamless_fire_effects = GetPrivateProfileIntW(L"interiors", L"fire_effects", 1, ini.c_str()) != 0;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");

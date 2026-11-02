@@ -55,6 +55,13 @@ struct Settings {
     // [interiors] keep_rooms (A8): finished, saved rooms of the region just left are kept (at most 6) and put back on
     // the way back instead of being built again; 0: always built again.
     bool seamless_keep_rooms = true;
+    // [interiors] auto_buildings (B4): buildings with no SI config (Timberwolf Mountain, Forlorn Muskeg, the DLC's...)
+    // get their rooms too, found from their doors when a region loads; 0: only SI's 126 buildings. A friend in co-op
+    // follows the host (only the host's rooms are built).
+    bool seamless_auto_buildings = true;
+    // [interiors] fire_effects (B3): a fire burning in a room smokes from the building's chimney and lights its windows
+    // from outside at night; 0: off.
+    bool seamless_fire_effects = true;
     // TLDCoop_DLC: [death] lose_percent: how many of the ordinary items (not story, mission or undroppable ones) a death
     // takes, at random; the rest stay in the body.
     int death_lose_percent = 70;

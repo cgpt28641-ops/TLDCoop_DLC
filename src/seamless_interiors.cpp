@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <fstream>
@@ -67,9 +68,34 @@ struct Config {
     int destroy_first, destroy_count;  // ObjectsToDestroy (in kNames)
     int disable_first, disable_count;  // ObjectsToDisable, the painted window backdrops left out
     float bounds_radius;
+    // B4 (seamless_auto.inc): a building found at runtime (no SI config): its door's spot (for a co-op teleport or the
+    // map), and whether its interior scene is one of the game's instanced ones (each building its own copy)
+    bool auto_found = false;
+    V3 door_spot{};
+    bool instanced = false;
 };
 #include "seamless_configs.inc"
 constexpr int kConfigCount = static_cast<int>(sizeof(kConfigs) / sizeof(kConfigs[0]));
+constexpr int kNameCount = static_cast<int>(sizeof(kNames) / sizeof(kNames[0]));
+// B4: the found buildings' ObjectsToDestroy, after kNames (Config::destroy_first counts on from kNameCount); never freed
+// (a std::deque keeps every string where it is)
+std::deque<std::string> g_auto_names;
+const char* name_at(int i) {
+    if (i < kNameCount) return kNames[i];
+    const size_t k = static_cast<size_t>(i - kNameCount);
+    return k < g_auto_names.size() ? g_auto_names[k].c_str() : "";
+}
+// B4: a found building's shell, as discovery saw it (by building id; the region's objects: cleared with the region)
+std::unordered_map<std::string, uintptr_t> g_auto_shells;
+// B4: every building found this session, in every region (never freed: kept rooms and co-op lookups point at them)
+std::deque<Config> g_auto_cfgs;
+const Config* config_by_id(const std::string& id) {
+    for (int i = 0; i < kConfigCount; ++i)
+        if (id == kConfigs[i].id) return &kConfigs[i];
+    for (const Config& c : g_auto_cfgs)
+        if (id == c.id) return &c;
+    return nullptr;
+}
 
 // --- constants from SI -------------------------------------------------------------------------------------------------
 
@@ -722,6 +748,8 @@ struct Instance {
     uint64_t persist_print = 0;    // what it held then (room_print)
     double persist_hours = 0, persist_at = 0;
     double last_saved_ms = -1e18;  // the last save that wrote all of its files
+    // B3 (seamless_fx.inc): what its shell offers for the exterior fire effects (chimneys, window glass), built lazily
+    std::shared_ptr<struct FireFx> fx;
 };
 std::vector<Instance> g_instances;
 // A8: rooms kept from the region last left (their masters in DontDestroyOnLoad, switched off)
@@ -820,6 +848,12 @@ struct DeferredGear {
 };
 std::vector<DeferredGear> g_deferred_gear;
 
+// B4 / B3, in seamless_auto.inc and seamless_fx.inc (included further down).
+bool auto_room_ok(Instance& in, std::string& why);
+void discover_buildings();
+void forget_auto_region();
+void tick_exterior_fx();
+
 // Milestone 1b, in seamless_persist.inc (included further down).
 int adopt_strays(Instance& in, const char* why);
 void end_junk_view();
@@ -873,17 +907,12 @@ bool in_volume(const Instance& in, V3 world, float padding = 0) {
     return std::fabs(d.x) <= half.x && std::fabs(d.y) <= half.y && std::fabs(d.z) <= half.z;
 }
 
-// SI: TryGetShellMeshBounds: every mesh under the shell, through its transform (works while inactive).
-bool shell_mesh_box(Instance& in, Box& out) {
-    if (in.shell_box_cached) {
-        out = in.shell_box;
-        return in.shell_box.valid();
-    }
-    Il2CppObject* shell = live(in.shell);
-    if (!shell) return false;
-    in.shell_box_cached = true;
+// SI: TryGetShellMeshBounds: every mesh under a GameObject, through its transform (works while inactive).
+// (B4: a piece bigger than max_piece, or whose middle is farther than reach across from near, is left out: an interior's
+// painted backdrops and far set dressing)
+Box mesh_box_of(Il2CppObject* root_go, float max_piece = 0, V3 near = {}, float reach = 0) {
     Box box;
-    each_in(shell, api.t_mesh_filter, [&](Il2CppObject* filter) {
+    each_in(root_go, api.t_mesh_filter, [&](Il2CppObject* filter) {
         Il2CppObject* mesh = il2::invoke(api.mesh_filter_mesh, filter);
         if (!alive(mesh)) return;
         UBounds b;
@@ -893,14 +922,34 @@ bool shell_mesh_box(Instance& in, Box& out) {
         } mx;
         if (!il2::invoke_value(api.tf_to_world, tf_of(filter), mx)) return;
         const float* m = mx.m;
+        Box piece;
         for (int k = 0; k < 8; ++k) {
             const V3 c{b.center.x + ((k & 1) ? -b.extents.x : b.extents.x), b.center.y + ((k & 2) ? -b.extents.y : b.extents.y),
                        b.center.z + ((k & 4) ? -b.extents.z : b.extents.z)};
             // Matrix4x4 is column-major: m[0] m00, m[1] m10, m[2] m20, m[4] m01, ... m[12] m03
-            box.add({m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13],
-                     m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14]});
+            piece.add({m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12], m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13],
+                       m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14]});
         }
+        if (max_piece > 0) {
+            const V3 sz = piece.max - piece.min;
+            if (sz.x > max_piece || sz.y > max_piece || sz.z > max_piece) return;
+            if (name_of(go_of(filter)).find("Shadow_Caster") != std::string::npos) return;
+        }
+        if (reach > 0 && dist_xz((piece.min + piece.max) * 0.5f, near) > reach) return;
+        box.add(piece.min);
+        box.add(piece.max);
     });
+    return box;
+}
+bool shell_mesh_box(Instance& in, Box& out) {
+    if (in.shell_box_cached) {
+        out = in.shell_box;
+        return in.shell_box.valid();
+    }
+    Il2CppObject* shell = live(in.shell);
+    if (!shell) return false;
+    in.shell_box_cached = true;
+    const Box box = mesh_box_of(shell);
     in.shell_box = box;
     out = box;
     return box.valid();
@@ -1609,7 +1658,7 @@ bool listed(const char* const* names, size_t count, const std::string& n) {
 }
 bool in_names(int first, int count, const std::string& n) {
     for (int i = 0; i < count; ++i)
-        if (n == kNames[first + i]) return true;
+        if (n == name_at(first + i)) return true;
     return false;
 }
 
@@ -1619,13 +1668,17 @@ bool in_names(int first, int count, const std::string& n) {
 // holds the interior scene's name and "Prefab".
 Il2CppObject* find_shell(const Instance& in) {
     const Config& c = *in.cfg;
+    if (c.auto_found) {  // B4: the one discovery saw
+        auto it = g_auto_shells.find(c.id);
+        return it == g_auto_shells.end() ? nullptr : live(it->second);
+    }
     if (!*c.shell || !api.overlap_sphere) return nullptr;
     bool group = false;
     for (const char* g : kShellGroups) group = group || std::strcmp(g, c.shell) == 0;
     float limit = std::strcmp(c.shell, "STR_BarnSmallA_Exterior_Prefab") == 0 ? 15.0f : kShellMatchMax;  // SI: s_ShellMatchFarther
     std::unordered_set<Il2CppObject*> used;
-    for (const Instance& o : g_instances)
-        if (Il2CppObject* s = live(o.shell)) used.insert(s);
+    for (const Instance& o : g_instances)  // (a found building may share a configured one's shell: not counted)
+        if (Il2CppObject* s = o.cfg->auto_found ? nullptr : live(o.shell)) used.insert(s);
     V3 at = c.fallback;
     float radius = group ? c.bounds_radius : 25.0f;
     int32_t mask = -1, query = kQueryCollide;
@@ -1863,9 +1916,9 @@ bool merge_scenes(Instance& in) {
     if (region) set_active_scene(region);
     // SI: IsSceneSharedInRegion: an inactive snapshot for the region's other buildings of this scene, kept in the
     // emptied interior scene (it goes when the region does).
-    int sharing = 0;
-    for (int i = 0; i < kConfigCount; ++i)
-        if (g_region == kConfigs[i].region && base == kConfigs[i].scene) ++sharing;
+    int sharing = 0;  // (the region's buildings: its configured ones and those found in it, B4)
+    for (const Instance& o : g_instances)
+        if (base == o.cfg->scene) ++sharing;
     if (sharing > 1) {
         g_copying_template = true;
         void* a[] = {master};
@@ -2533,6 +2586,10 @@ void tick_build() {
         case Stage::Idle: {  // (a copied template arrives here straight from start_loading)
             prepare_room(*in);
             align_room(*in);
+            if (in->cfg->auto_found) {  // B4: a found building's room must be one that parks sensibly (never woken yet)
+                std::string why;
+                if (!auto_room_ok(*in, why)) return fail_build(*in, ("found building refused: " + why).c_str());
+            }
             set_placeables_invalidated(*in, true);
             set_stage(*in, Stage::PreRoll);
             return;
@@ -3525,6 +3582,8 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
 #include "seamless_persist.inc"
 #include "seamless_import.inc"
 #include "seamless_coop.inc"
+#include "seamless_auto.inc"
+#include "seamless_fx.inc"
 
 // --- hooks: inside (SI: WeatherPatches.cs, WindInstanceFix.cs, EvolvePatches.cs, SafehouseFixes.cs) -------------------
 
@@ -3777,6 +3836,7 @@ void forget_region(const char* why) {
         orphan_ops(in, "the region changed");
         for (Instance::Op& op : in.ops) drop(op.op);
     }
+    forget_auto_region();  // B4: the found buildings' shells (their configs stay: kept rooms point at them)
     const size_t had = g_instances.size();
     g_instances.clear();
     rooms_changed();
@@ -3813,6 +3873,9 @@ void forget_region(const char* why) {
 void enter_region(const std::string& region) {
     g_region = region;
     if (now_ms() - g_region_fires_at > 30000) g_region_fires.clear();  // the fire records kept belong to an earlier load
+    // B4: room for the buildings discovery adds a moment later (push_back must never move an instance: pointers to them
+    // are held - g_building, g_inside, a door's choice...)
+    g_instances.reserve(static_cast<size_t>(kConfigCount) + kMaxAutoPerRegion);
     for (int i = 0; i < kConfigCount; ++i) {
         if (region != kConfigs[i].region) continue;
         Instance in;
@@ -3887,8 +3950,12 @@ void set_settings(const config::Settings& s) {
     coop_features::set_own(net::kFeatureSeamlessInteriors, s.seamless_interiors);
     g_import_old = s.seamless_import_old;
     g_keep_rooms = s.seamless_keep_rooms;  // A8
-    logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s)", s.seamless_interiors ? "on" : "off",
-               g_import_old ? "imported" : "left to the game's doors");
+    g_auto_buildings = s.seamless_auto_buildings;  // B4
+    g_fire_fx = s.seamless_fire_effects;           // B3
+    logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s; buildings beyond SI's configs %s; "
+               "chimney smoke and window glow %s)",
+               s.seamless_interiors ? "on" : "off", g_import_old ? "imported" : "left to the game's doors",
+               g_auto_buildings ? "found" : "not looked for", g_fire_fx ? "on" : "off");
 }
 
 void on_frame(const std::string& scene, bool in_game) {
@@ -3922,6 +3989,7 @@ void on_frame(const std::string& scene, bool in_game) {
                                                 : "off (every door is the game's own)");
     }
     g_engaged = engaged_now;
+    if (g_feature_on && !g_region.empty()) discover_buildings();  // B4 (once per region, before any room is built)
     tick_coop_rooms();  // milestone 2: which rooms each game has (also with none here: the others are told so; K2)
     tick_room_places();  // A5: furniture moved in the rooms
     if (!g_engaged || g_instances.empty()) return;
@@ -3936,6 +4004,7 @@ void on_frame(const std::string& scene, bool in_game) {
     tick_carried_guard();
     tick_junk_view();  // A11
     tick_doorless_exit();
+    tick_exterior_fx();  // B3
     sync_indoor_space();
     tick_capsule();
     tick_flag_guard();
@@ -4449,6 +4518,8 @@ bool resolve() {
     }
     resolve_persist();
     resolve_import();
+    resolve_auto();  // B4
+    resolve_fx();    // B3 (after resolve_persist: the fire calls)
     return true;
 }
 
