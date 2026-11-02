@@ -95,6 +95,7 @@ constexpr WinQuality kQualities[] = {
     {8, 1.0f, 8, 3, 100.0f},   // 2 high
 };
 
+uint64_t g_win_frame_now = 0;  // frames counted by the reconciler's watch (GameManager.Update)
 bool g_windows = true;      // coop.ini [interiors] windows
 int g_window_quality = 1;   // coop.ini [interiors] window_quality
 const WinQuality& quality() { return kQualities[std::clamp(g_window_quality, 0, 2)]; }
@@ -1479,6 +1480,299 @@ void fire_post_render_detour(Il2CppObject* cam, const MethodInfo* m) {
     if (g_sheet_fog_off && cam && cam == g_main.raw) restore_sheet_fog();
 }
 
+// --- the views' fog and the player's shared buffers (SI: WindowViewFog.cs) ------------------------------------------------
+// The player's camera draws TLD's fog as a post-process (PostProcessLayer's deferred fog), which our cameras don't have:
+// each window camera gets a command buffer (BeforeImageEffectsOpaque) that copies its picture and draws the same fog
+// shader over it with this frame's RenderSettings fog (SI: UseWindowViewFogPass, the sky left out: pass 1). And the
+// player's camera's own command buffers that draw the aurora, blowing snow, snow patches, decals, distance field
+// shadows and AO are added to the window cameras too (SI: SharePlayerBuffersWith).
+
+struct FogPassApi {
+    bool ok = false, share_ok = false;
+    Il2CppClass* cb_class = nullptr;
+    const MethodInfo* cb_ctor = nullptr, *cb_get_temp = nullptr, *cb_blit = nullptr, *cb_set_global = nullptr,
+                      *cb_set_target = nullptr, *cb_draw_mesh = nullptr, *cb_release_temp = nullptr, *cb_name = nullptr;
+    const MethodInfo* rti_builtin = nullptr, *rti_id = nullptr;
+    const MethodInfo* cam_add = nullptr, *cam_remove = nullptr, *cam_get = nullptr;
+    const MethodInfo* fog_color = nullptr, *fog_density = nullptr, *fog_start = nullptr, *fog_end = nullptr;
+    const MethodInfo* mat_color = nullptr, *mat_vector = nullptr, *mat_float = nullptr;
+    const MethodInfo* triangle = nullptr;
+    ptrdiff_t pl_resources = -1, res_shaders = -1, shaders_fog = -1;
+    int32_t id_copy = -1, id_main = -1, id_fog_color = -1, id_fog_params = -1, id_viewport = -1;
+    int32_t ev_before_opaque_fx = 12, builtin_target = 2, filter_bilinear = 1, fmt_default_hdr = 9;
+    int32_t ev_shared[5] = {-1, -1, -1, -1, -1};
+    uintptr_t material = 0, mesh = 0;
+    bool failed = false;
+    uint32_t frame_set = 0;
+} fpa;
+
+struct Rti {  // UnityEngine.Rendering.RenderTargetIdentifier (40 bytes)
+    uint8_t b[40] = {};
+};
+bool make_rti(const MethodInfo* m, int32_t v, Rti& out) {
+    void* a[] = {&v};
+    Il2CppObject* boxed = m ? il2::invoke(m, nullptr, a) : nullptr;
+    if (!boxed) return false;
+    std::memcpy(out.b, il2::il2cpp_object_unbox(boxed), sizeof(out.b));
+    return true;
+}
+struct Rgba4 {
+    float r, g, b, a;
+};
+bool ensure_fog_material() {
+    if (live(fpa.material) && live(fpa.mesh)) return true;
+    if (fpa.failed || !fpa.ok) return false;
+    Il2CppObject* main = live(g_main.cam);
+    Il2CppObject* layer = main && api.t_post_layer ? component(go_of(main), api.t_post_layer) : nullptr;
+    Il2CppObject* res = layer ? get<Il2CppObject*>(layer, fpa.pl_resources) : nullptr;
+    Il2CppObject* shaders = alive(res) ? get<Il2CppObject*>(res, fpa.res_shaders) : nullptr;
+    Il2CppObject* shader = shaders ? get<Il2CppObject*>(shaders, fpa.shaders_fog) : nullptr;
+    Il2CppObject* tri = il2::invoke(fpa.triangle, nullptr);
+    if (!alive(shader) || !alive(tri)) {
+        fpa.failed = true;
+        logx::warn("interiors: windows: the player's fog shader wasn't found; the window views have no fog");
+        return false;
+    }
+    Il2CppObject* m = il2::il2cpp_object_new(wapi.mat_class);
+    void* a[] = {shader};
+    il2::invoke(wapi.mat_ctor, m, a);
+    if (!alive(m)) {
+        fpa.failed = true;
+        return false;
+    }
+    fpa.material = hold(m);
+    fpa.mesh = hold(tri);
+    logx::info("interiors: windows: the views get the player's fog (shader '%s')", name_of(shader).c_str());
+    return true;
+}
+struct SlotFx {
+    uintptr_t buffer = 0;  // the fog pass, on this slot's camera
+    int cam_id = 0;        // the camera it is on
+    int share_cam_id = 0;  // the camera the shared buffers are on
+    std::vector<uintptr_t> shared;  // the player's buffers added to it
+    std::vector<int32_t> shared_events;
+    int shared_version = -1;
+};
+std::vector<SlotFx> g_slot_fx;  // by inside-out slot
+void free_slot_fx() {
+    for (SlotFx& f : g_slot_fx) {
+        drop(f.buffer);
+        for (uintptr_t& h : f.shared) drop(h);
+    }
+    g_slot_fx.clear();
+}
+// SI: UseWindowViewFogPass (the buffer is built once per camera; only the fog values change)
+void use_fog_pass(int slot, Il2CppObject* cam) {
+    if (!ensure_fog_material()) return;
+    if (static_cast<int>(g_slot_fx.size()) <= slot) g_slot_fx.resize(static_cast<size_t>(slot) + 1);
+    SlotFx& f = g_slot_fx[static_cast<size_t>(slot)];
+    const int id = instance_id(cam);
+    if (f.cam_id != id || !live(f.buffer)) {
+        drop(f.buffer);
+        Il2CppObject* cb = il2::il2cpp_object_new(fpa.cb_class);
+        il2::invoke(fpa.cb_ctor, cb);
+        Rti target, copy;
+        if (!cb) return;
+        if (!make_rti(fpa.rti_builtin, fpa.builtin_target, target) || !make_rti(fpa.rti_id, fpa.id_copy, copy)) return;
+        {
+            int32_t nid = fpa.id_copy, w = -1, h = -1, depth = 0, filt = fpa.filter_bilinear, fmt = fpa.fmt_default_hdr;
+            void* a[] = {&nid, &w, &h, &depth, &filt, &fmt};
+            il2::invoke(fpa.cb_get_temp, cb, a);
+        }
+        {
+            void* a[] = {target.b, copy.b};
+            il2::invoke(fpa.cb_blit, cb, a);
+        }
+        {
+            int32_t nid = fpa.id_main;
+            void* a[] = {&nid, copy.b};
+            il2::invoke(fpa.cb_set_global, cb, a);
+        }
+        {
+            void* a[] = {target.b};
+            il2::invoke(fpa.cb_set_target, cb, a);
+        }
+        {
+            M4 ident;
+            ident.at(0, 0) = ident.at(1, 1) = ident.at(2, 2) = ident.at(3, 3) = 1;
+            int32_t sub = 0, pass = 1;  // SI: WINDOW_FOG_PASS_SKY_EXCLUDED
+            void* a[] = {live(fpa.mesh), &ident, live(fpa.material), &sub, &pass};
+            il2::invoke(fpa.cb_draw_mesh, cb, a);
+        }
+        {
+            int32_t nid = fpa.id_copy;
+            void* a[] = {&nid};
+            il2::invoke(fpa.cb_release_temp, cb, a);
+        }
+        int32_t ev = fpa.ev_before_opaque_fx;
+        void* a[] = {&ev, cb};
+        il2::invoke(fpa.cam_add, cam, a);
+        f.buffer = hold(cb);
+        f.cam_id = id;
+    }
+    if (fpa.frame_set != static_cast<uint32_t>(g_win_frame_now)) {  // the fog values, once a frame
+        fpa.frame_set = static_cast<uint32_t>(g_win_frame_now);
+        Il2CppObject* m = live(fpa.material);
+        Rgba4 c{0.5f, 0.5f, 0.5f, 1};
+        il2::invoke_value(fpa.fog_color, nullptr, c);
+        float dens = 0, fs = 0, fe = 0;
+        il2::invoke_value(fpa.fog_density, nullptr, dens);
+        il2::invoke_value(fpa.fog_start, nullptr, fs);
+        il2::invoke_value(fpa.fog_end, nullptr, fe);
+        int32_t idc = fpa.id_fog_color, idp = fpa.id_fog_params, idv = fpa.id_viewport;
+        Rgba4 params{dens, fs, fe, 0};
+        float one = 1;
+        void* a1[] = {&idc, &c};
+        il2::invoke(fpa.mat_color, m, a1);
+        void* a2[] = {&idp, &params};
+        il2::invoke(fpa.mat_vector, m, a2);
+        void* a3[] = {&idv, &one};
+        il2::invoke(fpa.mat_float, m, a3);
+    }
+}
+// SI: SharePlayerBuffersWith: the player's camera's buffers that draw the aurora, snow and decals, added to ours
+bool shared_buffer_name(const std::string& n) {
+    if (n == "SnowPatchHeightMapCommandBuffer") return false;
+    return n == "SCRIPT_EnvironmentSystems" || n == "Snow_Blowing" || n == "Distance Field Shadows" ||
+           n == "Deferred Ambient Occlusion" || starts_with(n, "SnowPatch") || starts_with(n, "ScreenSpaceDecal");
+}
+struct SharedBuffers {
+    std::vector<uintptr_t> buffers;
+    std::vector<int32_t> events;
+    int version = 0;
+    uint64_t scanned_frame = 0;
+} g_shared;
+void share_player_buffers(int slot, Il2CppObject* cam) {
+    if (!fpa.share_ok) return;
+    Il2CppObject* main = live(g_main.cam);
+    if (!main) return;
+    if (g_shared.scanned_frame == 0 || g_win_frame_now - g_shared.scanned_frame >= 30) {
+        g_shared.scanned_frame = g_win_frame_now;
+        std::vector<Il2CppObject*> found;
+        std::vector<int32_t> evs;
+        for (int32_t ev : fpa.ev_shared) {
+            if (ev < 0) continue;
+            int32_t e = ev;
+            void* a[] = {&e};
+            Il2CppObject* arr = il2::invoke(fpa.cam_get, main, a);
+            for (size_t i = 0, n = il2::array_length(arr); i < n; ++i) {
+                Il2CppObject* b = il2::array_object_at(arr, i);
+                if (b && shared_buffer_name(text(il2::invoke(fpa.cb_name, b)))) found.push_back(b), evs.push_back(ev);
+            }
+        }
+        bool changed = found.size() != g_shared.buffers.size();
+        for (size_t i = 0; !changed && i < found.size(); ++i)
+            changed = live(g_shared.buffers[i]) != found[i] || g_shared.events[i] != evs[i];
+        if (changed) {
+            for (uintptr_t& h : g_shared.buffers) drop(h);
+            g_shared.buffers.clear();
+            for (Il2CppObject* b : found) g_shared.buffers.push_back(hold(b));
+            g_shared.events = evs;
+            ++g_shared.version;
+            logx::info("interiors: windows: %zu of the player's camera's buffers (aurora, snow, decals) shared with the views",
+                       found.size());
+        }
+    }
+    if (static_cast<int>(g_slot_fx.size()) <= slot) g_slot_fx.resize(static_cast<size_t>(slot) + 1);
+    SlotFx& f = g_slot_fx[static_cast<size_t>(slot)];
+    const int id = instance_id(cam);
+    if (f.share_cam_id == id && f.shared_version == g_shared.version) return;
+    if (f.share_cam_id == id)
+        for (size_t i = 0; i < f.shared.size(); ++i)
+            if (Il2CppObject* b = live(f.shared[i])) {
+                int32_t e = f.shared_events[i];
+                void* a[] = {&e, b};
+                il2::invoke(fpa.cam_remove, cam, a);
+            }
+    for (uintptr_t& h : f.shared) drop(h);
+    f.shared.clear();
+    f.shared_events.clear();
+    for (size_t i = 0; i < g_shared.buffers.size(); ++i)
+        if (Il2CppObject* b = live(g_shared.buffers[i])) {
+            int32_t e = g_shared.events[i];
+            void* a[] = {&e, b};
+            il2::invoke(fpa.cam_add, cam, a);
+            f.shared.push_back(hold(b));
+            f.shared_events.push_back(e);
+        }
+    f.share_cam_id = id;
+    f.shared_version = g_shared.version;
+}
+void resolve_fog_pass() {
+    Il2CppClass* cb = il2::find_class(kCore, "UnityEngine.Rendering", "CommandBuffer");
+    Il2CppClass* rti = il2::find_class(kCore, "UnityEngine.Rendering", "RenderTargetIdentifier");
+    Il2CppClass* camera = il2::find_class(kCore, "UnityEngine", "Camera");
+    Il2CppClass* settings = il2::find_class(kCore, "UnityEngine", "RenderSettings");
+    Il2CppClass* shader = il2::find_class(kCore, "UnityEngine", "Shader");
+    Il2CppClass* ru = il2::find_class(kGame, "UnityEngine.Rendering.PostProcessing", "RuntimeUtilities");
+    Il2CppClass* pl = il2::find_class(kGame, "UnityEngine.Rendering.PostProcessing", "PostProcessLayer");
+    Il2CppClass* res = il2::find_class(kGame, "UnityEngine.Rendering.PostProcessing", "PostProcessResources");
+    Il2CppClass* sh = res ? il2::find_nested_class(res, "Shaders") : nullptr;
+    if (!cb || !rti || !camera || !settings || !shader || !wapi.mat_class) return;
+    fpa.cb_class = cb;
+    fpa.cb_ctor = il2::find_method(cb, ".ctor", 0);
+    fpa.cb_get_temp = il2::find_method_params(cb, "GetTemporaryRT",
+                                              {"System.Int32", "System.Int32", "System.Int32", "System.Int32",
+                                               "UnityEngine.FilterMode", "UnityEngine.RenderTextureFormat"});
+    fpa.cb_blit = il2::find_method_params(cb, "Blit", {"UnityEngine.Rendering.RenderTargetIdentifier",
+                                                       "UnityEngine.Rendering.RenderTargetIdentifier"});
+    fpa.cb_set_global = il2::find_method_params(cb, "SetGlobalTexture", {"System.Int32", "UnityEngine.Rendering.RenderTargetIdentifier"});
+    fpa.cb_set_target = il2::find_method_params(cb, "SetRenderTarget", {"UnityEngine.Rendering.RenderTargetIdentifier"});
+    fpa.cb_draw_mesh = il2::find_method_params(cb, "DrawMesh", {"UnityEngine.Mesh", "UnityEngine.Matrix4x4", "UnityEngine.Material",
+                                                                "System.Int32", "System.Int32"});
+    fpa.cb_release_temp = il2::find_method(cb, "ReleaseTemporaryRT", 1);
+    fpa.cb_name = il2::find_method(cb, "get_name", 0);
+    fpa.rti_builtin = il2::find_method_params(rti, "op_Implicit", {"UnityEngine.Rendering.BuiltinRenderTextureType"});
+    fpa.rti_id = il2::find_method_params(rti, "op_Implicit", {"System.Int32"});
+    fpa.cam_add = il2::find_method(camera, "AddCommandBuffer", 2);
+    fpa.cam_remove = il2::find_method(camera, "RemoveCommandBuffer", 2);
+    fpa.cam_get = il2::find_method(camera, "GetCommandBuffers", 1);
+    fpa.fog_color = il2::find_method(settings, "get_fogColor", 0);
+    fpa.fog_density = il2::find_method(settings, "get_fogDensity", 0);
+    fpa.fog_start = il2::find_method(settings, "get_fogStartDistance", 0);
+    fpa.fog_end = il2::find_method(settings, "get_fogEndDistance", 0);
+    fpa.mat_color = il2::find_method_params(wapi.mat_class, "SetColor", {"System.Int32", "UnityEngine.Color"});
+    fpa.mat_vector = il2::find_method_params(wapi.mat_class, "SetVector", {"System.Int32", "UnityEngine.Vector4"});
+    fpa.mat_float = il2::find_method_params(wapi.mat_class, "SetFloat", {"System.Int32", "System.Single"});
+    fpa.triangle = ru ? il2::find_method(ru, "get_fullscreenTriangle", 0) : nullptr;
+    fpa.pl_resources = pl ? il2::field_offset(pl, "m_Resources") : -1;
+    fpa.res_shaders = res ? il2::field_offset(res, "shaders") : -1;
+    fpa.shaders_fog = sh ? il2::field_offset(sh, "deferredFog") : -1;
+    if (const MethodInfo* to_id = il2::find_method_params(shader, "PropertyToID", {"System.String"})) {
+        auto id = [&](const char* n) {
+            int32_t v = -1;
+            void* a[] = {str(n)};
+            il2::invoke_value(to_id, nullptr, v, a);
+            return v;
+        };
+        fpa.id_copy = id("_SIWindowFogCopy");
+        fpa.id_main = id("_MainTex");
+        fpa.id_fog_color = id("_FogColor");
+        fpa.id_fog_params = id("_FogParams");
+        fpa.id_viewport = id("_RenderViewportScaleFactor");
+    }
+    int64_t v = 0;
+    if (Il2CppClass* e = il2::find_class(kCore, "UnityEngine.Rendering", "CameraEvent")) {
+        if (il2::enum_value(e, "BeforeImageEffectsOpaque", v)) fpa.ev_before_opaque_fx = static_cast<int32_t>(v);
+        const char* names[] = {"BeforeLighting", "BeforeReflections", "BeforeImageEffectsOpaque", "BeforeForwardAlpha",
+                               "AfterForwardAlpha"};
+        for (int i = 0; i < 5; ++i)
+            if (il2::enum_value(e, names[i], v)) fpa.ev_shared[i] = static_cast<int32_t>(v);
+    }
+    if (Il2CppClass* e = il2::find_class(kCore, "UnityEngine.Rendering", "BuiltinRenderTextureType"))
+        if (il2::enum_value(e, "CameraTarget", v)) fpa.builtin_target = static_cast<int32_t>(v);
+    if (Il2CppClass* e = il2::find_class(kCore, "UnityEngine", "FilterMode"))
+        if (il2::enum_value(e, "Bilinear", v)) fpa.filter_bilinear = static_cast<int32_t>(v);
+    if (Il2CppClass* e = il2::find_class(kCore, "UnityEngine", "RenderTextureFormat"))
+        if (il2::enum_value(e, "DefaultHDR", v)) fpa.fmt_default_hdr = static_cast<int32_t>(v);
+    fpa.ok = fpa.cb_ctor && fpa.cb_get_temp && fpa.cb_blit && fpa.cb_set_global && fpa.cb_set_target && fpa.cb_draw_mesh &&
+             fpa.cb_release_temp && fpa.rti_builtin && fpa.rti_id && fpa.cam_add && fpa.fog_color && fpa.fog_density &&
+             fpa.fog_start && fpa.fog_end && fpa.mat_color && fpa.mat_vector && fpa.mat_float && fpa.triangle &&
+             fpa.pl_resources >= 0 && fpa.res_shaders >= 0 && fpa.shaders_fog >= 0 && fpa.id_copy != -1 && api.t_post_layer;
+    fpa.share_ok = fpa.cam_add && fpa.cam_remove && fpa.cam_get && fpa.cb_name;
+    if (!fpa.ok) logx::warn("interiors: windows: the fog pass can't be built in this build; the window views have no fog");
+}
+
 // --- INSIDE-OUT (SI: WindowPortals.cs) -------------------------------------------------------------------------------------
 
 struct InsideOut {
@@ -1524,6 +1818,7 @@ void teardown_inside_out(const char* why) {
         drop(v.backdrop);
     }
     for (Slot& s : g_io.slots) free_slot(s);
+    free_slot_fx();
     logx::info("interiors: windows: views out of %s taken down (%s; %llu frame(s), %.2f views a frame on average)",
                g_io.cfg ? g_io.cfg->id : "?", why, static_cast<unsigned long long>(g_io.frames),
                g_io.frames ? static_cast<double>(g_io.drawn_total) / static_cast<double>(g_io.frames) : 0.0);
@@ -1677,6 +1972,8 @@ void render_inside_out() {
         std::snprintf(name, sizeof(name), "TLDCoop_SI_WindowCamera%d", used);
         if (!ensure_slot(s, name, -50 - used, kViewOutQueue, tw, th, mask)) continue;
         Il2CppObject* cam = live(s.cam);
+        share_player_buffers(used, cam);  // SI: SharePlayerBuffersWith
+        use_fog_pass(used, cam);          // SI: UseWindowViewFogPass
         // the eye stands to the building's pane as it stands to the room's; the view starts past the shell's frame
         const V3 cam_pos = eye + v.delta + v.o.out * v.view_start;
         if (!aim_camera(cam, cam_pos, v.o.out, v.o.up, v.o.right, eye, qa, qb, qc, g_main.zfar)) continue;
@@ -2189,16 +2486,18 @@ void tick_windows() {
             render_inside_out();
         }
     } else {
-        if (g_eye.in_force || g_eye.cam) release_cull_eye("the player is outside");
+        if (g_eye.in_force || g_eye.cam) release_cull_eye(g_inside ? "a room with no building of its own" : "the player is outside");
         g_sheet_fog_wanted = false;
         g_snow_push = 0;
-        if (!g_fade.busy) tick_outside_in(g_main.pos);
+        if (g_inside) teardown_outside_in("the player is in a room");  // (a sub-interior: no views either way)
+        else if (!g_fade.busy) tick_outside_in(g_main.pos);
     }
     g_win_active = true;
 }
 // From GameManager.Update: the reconciler must have run lately, or everything of ours is taken down.
 void watch_windows() {
     ++g_win_frame;
+    g_win_frame_now = g_win_frame;
     if (!g_win_active) return;
     if (g_win_frame - g_win_reconciled > static_cast<uint64_t>(kStaleFrames)) release_windows("the camera stopped updating");
 }
@@ -2373,6 +2672,7 @@ void resolve_windows() {
         hook("Camera.FireOnPostRender", il2::find_method(camera, "FireOnPostRender", 1), &fire_post_render_detour, &g_fire_post_render);
         wapi.fog_ok = g_fire_pre_cull && g_fire_post_render;
     }
+    resolve_fog_pass();
     logx::info("interiors: windows: ready (stand-in eye %s, snow box %s, sheet fog %s; %zu building(s) with offline window data, "
                "%zu hand row(s))",
                wapi.cull_ok && g_frustum_planes1 ? "yes" : "NO", wapi.snow_ok && g_falling_jobs ? "yes" : "NO",
