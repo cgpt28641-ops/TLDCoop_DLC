@@ -499,6 +499,14 @@ using CanUpdateFn = bool (*)(Il2CppObject* ai, const MethodInfo* method);
 CanUpdateFn g_can_update = nullptr;
 int g_updates_granted = 0;
 
+// TLDCoop_DLC: our player inside a Seamless Interiors room stands 80 m above its building: the animals by the building
+// are run (and animated) as if we stood at its door, else TLD runs them seldom (they jumped about in the door's view).
+void add_inside_spot() {
+    if (!seamless_interiors::player_inside()) return;
+    Vector3 d{};
+    if (seamless_interiors::door_position(seamless_interiors::place(), d.x, d.y, d.z)) g_friend_spots.push_back(d);
+}
+
 bool friend_near_spot(const Vector3& p) {
     for (const Vector3& f : g_friend_spots) {
         const float dx = p.x - f.x, dy = p.y - f.y, dz = p.z - f.z;
@@ -623,6 +631,7 @@ void capture(const std::string& scene, double now) {
                        friends_here.end());
     g_friend_spots.clear();
     for (const net::StateMsg& s : friends_here) g_friend_spots.push_back({s.x, s.y, s.z});
+    add_inside_spot();
     auto in_range = [&](const Vector3& p) {
         auto within = [&](float x, float y, float z) {
             const float dx = p.x - x, dy = p.y - y, dz = p.z - z;

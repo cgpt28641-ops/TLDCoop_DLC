@@ -69,6 +69,10 @@ struct DoorPair {
     bool exit_main = true;  // the pair a room door leaving takes (several building doors may land at one room door)
     double drawn_out = -1e18, drawn_in = -1e18;  // the last time each side's view was drawn
     bool was_out = false, was_in = false;        // drawn last frame (hysteresis)
+    // TLDCoop_DLC: the door stands closed (the game's own door, no view) until it's clicked open; open, the far side
+    // shows and walking in goes through; it closes on another click, or once the player is 3 m from it for a moment.
+    bool open = false;
+    double away_since = -1;
 };
 struct RoomDoors {
     const Config* cfg = nullptr;
@@ -345,6 +349,7 @@ void doors_pick(Instance* inside, V3 eye) {
         for (size_t j = 0; j < rd.pairs.size(); ++j) {
             const DoorPair& p = rd.pairs[j];
             if (here && !p.exit_main) continue;
+            if (!p.open) continue;  // (closed: the door itself shows)
             const DoorFace& a = here ? p.in : p.out;
             Il2CppObject* door = live(a.door);
             if (!door || !active_in_tree(go_of(door))) continue;
@@ -566,7 +571,9 @@ bool portal_door(Il2CppObject* door, const DoorChoice& c, bool walked) {
     t.door_mid = b.c;
     t.rot = mul(axis_angle(turn, kUp), alive(cam) ? rotation(tf_of(cam)) : rotation(ptf));
     g_last_portal = now;
-    door_sounds(false);
+    if (!p->open) door_sounds(false);
+    p->open = true;  // (it stays open behind the player, and closes once they've walked on)
+    p->away_since = -1;
     logx::info("interiors: doors: through '%s' %s %s (%s, %.2f m before it, turned %.1f deg)", name_of(go_of(door)).c_str(),
                entering ? "into" : "out of", c.in->cfg->id, walked ? "walked in" : "used", before, turn);
     if (entering) enter(*c.in, door, &t);
@@ -581,6 +588,48 @@ bool door_usable(Il2CppObject* door) {
     if (!il2::invoke_value(dapi.is_locked, door, locked) || locked) return false;
     return il2::invoke_value(dapi.can_interact, door, can) && can;
 }
+void door_sound(bool close) {
+    Il2CppObject* cam = il2::invoke(api.gm_main_camera, nullptr);
+    Il2CppObject* cam_go = cam ? go_of(cam) : nullptr;
+    if (!close && api.gui_click) il2::invoke(api.gui_click, nullptr);  // (wakes the sound pipeline up)
+    if (cam_go) play_sound(close ? "Play_SndMechDoorWoodClose1" : "Play_SndMechDoorWoodOpen1", cam_go);
+}
+
+// A click on a door with a pair: closed, it opens (the far side shows in it); open, it closes (or, with walking
+// through off, the click takes the player through as before). False: not one of ours (the fade, as before).
+bool door_click(Il2CppObject* door, const DoorChoice& c) {
+    if (!g_door_portals || !dapi.ok || !api.ok || !wapi.ok || !door) return false;
+    bool entering = false;
+    DoorPair* p = pair_of(c, door, entering);
+    if (!p) return false;
+    if (entering ? g_inside != nullptr : g_inside != c.in) return false;
+    if (p->open && !g_door_walk) return false;  // (portal_door: through it)
+    p->open = !p->open;
+    p->away_since = -1;
+    door_sound(!p->open);
+    logx::info("interiors: doors: '%s' (%s) %s", name_of(go_of(door)).c_str(), c.in->cfg->id,
+               p->open ? "opened: the far side shows in it; walk in to go through" : "closed");
+    return true;
+}
+
+// Open doors close by themselves once the player has been 3 m from both sides for 1.5 s.
+void tick_door_close(V3 pos, double now) {
+    for (RoomDoors& rd : g_doors.rooms)
+        for (DoorPair& p : rd.pairs) {
+            if (!p.open) continue;
+            const float d = std::min(w_len(pos - p.out.c), w_len(pos - p.in.c));
+            if (d < 3.0f) {
+                p.away_since = -1;
+                continue;
+            }
+            if (p.away_since < 0) p.away_since = now;
+            if (now - p.away_since < 1500) continue;
+            p.open = false;
+            p.away_since = -1;
+            if (d < 15.0f) door_sound(true);
+        }
+}
+
 void tick_door_walk() {
     const double now = now_ms();
     Il2CppObject* ptf = player_tf();
@@ -589,6 +638,7 @@ void tick_door_walk() {
         return;
     }
     const V3 pos = position(ptf);
+    tick_door_close(pos, now);
     const bool had = g_doors.have_last;
     const V3 last = g_doors.last_pos;
     const double dt = (now - g_doors.last_ms) / 1000.0;

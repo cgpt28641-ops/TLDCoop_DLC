@@ -1116,6 +1116,7 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
     g_friend_spots.clear();
     for (const Present& p : here)
         if (p.id != me && !p.inside) g_friend_spots.push_back(p.pos);
+    add_inside_spot();
     auto in_range = [&](const Vector3& pos) {
         for (const Present& p : here) {
             const float dx = pos.x - p.pos.x, dy = pos.y - p.pos.y, dz = pos.z - p.pos.z;

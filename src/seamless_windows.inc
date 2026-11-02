@@ -98,6 +98,7 @@ constexpr WinQuality kQualities[] = {
 uint64_t g_win_frame_now = 0;  // frames counted by the reconciler's watch (GameManager.Update)
 bool g_windows = true;      // coop.ini [interiors] windows
 int g_window_quality = 1;   // coop.ini [interiors] window_quality
+int g_indoor_light = 45;    // coop.ini [interiors] indoor_light (%)
 const WinQuality& quality() { return kQualities[std::clamp(g_window_quality, 0, 2)]; }
 // Door portals (seamless_doors.inc): coop.ini [interiors] door_portals / door_walk, and the building whose door view is
 // wanted this frame (held for it first, also with the window views off)
@@ -1465,7 +1466,83 @@ void blowing_jobs_detour(Il2CppObject* self, const MethodInfo* m) {
 bool g_sheet_fog_wanted = false, g_sheet_fog_off = false, g_sheet_fog_was = false;
 using CamFireFn = void (*)(Il2CppObject* cam, const MethodInfo* m);
 CamFireFn g_fire_pre_cull = nullptr, g_fire_post_render = nullptr;
+
+// TLDCoop_DLC: the indoor look. A room stands in the open and is lit like outdoors (sun, sky ambient: TLD's
+// Utils.SetAmbientLightScaled puts it in RenderSettings.ambientLight and ambientProbe); the game's own interiors are
+// much darker. While the player is in a room, the player's camera draws with the ambient (and the reflections) at
+// [interiors] indoor_light %, put back after it: the window and door views still see the outdoors as it is.
+struct Sh9 {
+    float c[27];
+};
+struct IlColor {
+    float r, g, b, a;
+};
+struct IndoorLookApi {
+    bool tried = false, ok = false;
+    const MethodInfo *get_probe = nullptr, *set_probe = nullptr, *get_light = nullptr, *set_light = nullptr,
+                     *get_refl = nullptr, *set_refl = nullptr;
+} ilapi;
+struct IndoorLookSaved {
+    bool on = false;
+    Sh9 probe{};
+    IlColor light{};
+    float refl = 1;
+} g_indoor_saved;
+int g_indoor_logged = 0;
+void resolve_indoor_look() {
+    if (ilapi.tried) return;
+    ilapi.tried = true;
+    Il2CppClass* rs = il2::find_class(kCore, "UnityEngine", "RenderSettings");
+    if (!rs) return;
+    ilapi.get_probe = il2::find_method_quiet(rs, "get_ambientProbe", 0);
+    ilapi.set_probe = il2::find_method_quiet(rs, "set_ambientProbe", 1);
+    ilapi.get_light = il2::find_method_quiet(rs, "get_ambientLight", 0);
+    ilapi.set_light = il2::find_method_quiet(rs, "set_ambientLight", 1);
+    ilapi.get_refl = il2::find_method_quiet(rs, "get_reflectionIntensity", 0);
+    ilapi.set_refl = il2::find_method_quiet(rs, "set_reflectionIntensity", 1);
+    ilapi.ok = ilapi.get_probe && ilapi.set_probe && ilapi.get_light && ilapi.set_light && ilapi.get_refl && ilapi.set_refl;
+    logx::info("interiors: indoor look %s", ilapi.ok ? "ready (the sky's light dimmed in rooms)" : "UNAVAILABLE (RenderSettings calls missing)");
+}
+void indoor_look_begin(Il2CppObject* cam) {
+    if (g_indoor_saved.on || !g_inside || g_indoor_light >= 100 || !cam || !api.ok) return;
+    resolve_indoor_look();
+    static const MethodInfo* weapon_cam = il2::find_method_quiet(il2::find_class(kGame, "", "GameManager"), "GetWeaponCamera", 0);
+    if (!ilapi.ok || (cam != il2::invoke(api.gm_main_camera, nullptr) && (!weapon_cam || cam != il2::invoke(weapon_cam, nullptr))))
+        return;
+    IndoorLookSaved s;
+    if (!il2::invoke_value(ilapi.get_probe, nullptr, s.probe) || !il2::invoke_value(ilapi.get_light, nullptr, s.light) ||
+        !il2::invoke_value(ilapi.get_refl, nullptr, s.refl))
+        return;
+    const float k = static_cast<float>(g_indoor_light) / 100.0f;
+    Sh9 probe = s.probe;
+    for (float& v : probe.c) v *= k;
+    IlColor light{s.light.r * k, s.light.g * k, s.light.b * k, s.light.a};
+    float refl = s.refl * k;
+    void* a1[] = {&probe};
+    void* a2[] = {&light};
+    void* a3[] = {&refl};
+    il2::invoke(ilapi.set_probe, nullptr, a1);
+    il2::invoke(ilapi.set_light, nullptr, a2);
+    il2::invoke(ilapi.set_refl, nullptr, a3);
+    s.on = true;
+    g_indoor_saved = s;
+    if (g_indoor_logged++ == 0)
+        logx::info("interiors: in a room: the player's camera draws with the sky's light at %d%% (ambient %.2f %.2f %.2f)",
+                   g_indoor_light, s.light.r, s.light.g, s.light.b);
+}
+void indoor_look_end() {
+    if (!g_indoor_saved.on) return;
+    g_indoor_saved.on = false;
+    void* a1[] = {&g_indoor_saved.probe};
+    void* a2[] = {&g_indoor_saved.light};
+    void* a3[] = {&g_indoor_saved.refl};
+    il2::invoke(ilapi.set_probe, nullptr, a1);
+    il2::invoke(ilapi.set_light, nullptr, a2);
+    il2::invoke(ilapi.set_refl, nullptr, a3);
+}
+
 void fire_pre_cull_detour(Il2CppObject* cam, const MethodInfo* m) {
+    indoor_look_begin(cam);
     if (g_sheet_fog_wanted && !g_sheet_fog_off && cam && cam == g_main.raw && wapi.fog_ok) {
         bool was = false;
         if (il2::invoke_value(wapi.fog_get, nullptr, was)) {
@@ -1483,6 +1560,7 @@ void restore_sheet_fog() {
 }
 void fire_post_render_detour(Il2CppObject* cam, const MethodInfo* m) {
     g_fire_post_render(cam, m);
+    indoor_look_end();
     if (g_sheet_fog_off && cam && cam == g_main.raw) restore_sheet_fog();
 }
 
@@ -1677,8 +1755,11 @@ void share_player_buffers(int slot, Il2CppObject* cam) {
             for (Il2CppObject* b : found) g_shared.buffers.push_back(hold(b));
             g_shared.events = evs;
             ++g_shared.version;
-            logx::info("interiors: windows: %zu of the player's camera's buffers (aurora, snow, decals) shared with the views",
-                       found.size());
+            static size_t told_count = ~size_t{0};  // (the game makes some anew now and then: told when the count changes)
+            if (found.size() != told_count)
+                logx::info("interiors: windows: %zu of the player's camera's buffers (aurora, snow, decals) shared with the views",
+                           found.size());
+            told_count = found.size();
         }
     }
     if (static_cast<int>(g_slot_fx.size()) <= slot) g_slot_fx.resize(static_cast<size_t>(slot) + 1);
@@ -2706,10 +2787,10 @@ void resolve_windows() {
         hook("WeatherParticleManager.ScheduleBlowingSnowParticleJobs", il2::find_method(wpm, "ScheduleBlowingSnowParticleJobs", 0),
              &blowing_jobs_detour, &g_blowing_jobs);
     }
-    if (wapi.fog_ok) {
+    {  // (also for the indoor look, TLDCoop_DLC)
         hook("Camera.FireOnPreCull", il2::find_method(camera, "FireOnPreCull", 1), &fire_pre_cull_detour, &g_fire_pre_cull);
         hook("Camera.FireOnPostRender", il2::find_method(camera, "FireOnPostRender", 1), &fire_post_render_detour, &g_fire_post_render);
-        wapi.fog_ok = g_fire_pre_cull && g_fire_post_render;
+        wapi.fog_ok = wapi.fog_ok && g_fire_pre_cull && g_fire_post_render;
     }
     resolve_fog_pass();
     resolve_doors();

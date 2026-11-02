@@ -874,6 +874,7 @@ void watch_windows();
 void resolve_windows();
 extern bool g_windows;
 extern int g_window_quality;
+extern int g_indoor_light;
 extern bool g_door_portals, g_door_walk;  // door portals (seamless_doors.inc)
 void tick_door_walk();
 
@@ -2776,6 +2777,7 @@ struct DoorChoice {
 
 // Stage 2 door portals (seamless_doors.inc): the door used through its view, with no fade (false: the fade as before)
 bool portal_door(Il2CppObject* door, const DoorChoice& c, bool walked);
+bool door_click(Il2CppObject* door, const DoorChoice& c);
 
 Il2CppObject* door_tf(Il2CppObject* door) { return tf_of(door); }
 std::string door_scene(Il2CppObject* door) { return text(get<Il2CppObject*>(door, api.door_scene)); }
@@ -3263,6 +3265,7 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
     // In the game a scene load ends a hold-to-use door's wait; with none, Update would use the door again every frame.
     put<bool>(self, api.door_touch_ground, false);
     if (Il2CppObject* pm = player_manager()) il2::invoke(api.reset_interaction, pm);
+    if (door_click(self, c)) return;           // TLDCoop_DLC: a paired door opens (or closes) on a click
     if (portal_door(self, c, false)) return;  // Stage 2: through the door's view, no fade (else the fade, as before)
     g_fade.busy = true;
     g_fade.step = 1;
@@ -3668,6 +3671,19 @@ void calc_temperature_detour(Il2CppObject* self, const MethodInfo* method) {
     if (engaged() && g_inside && self) put<float>(self, api.weather_chill, 0.0f);
 }
 using BoolFn = bool (*)(Il2CppObject* self, const MethodInfo* method);
+// TLDCoop_DLC: an interior's GenericIndoors.Start (Weather.ForceIndoorEnvironment: weather systems off, indoor colour
+// grading) ran while a room was being built near the player: for its ~4 s the game was indoors outdoors (darker screen,
+// -5 C, radar indoors) until update_global_environment put it back. A room's never runs (the room's own look comes
+// from indoor_look while the player is inside).
+VoidFn g_generic_indoors_start = nullptr;
+void generic_indoors_start_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (self && api.ok && (!g_loading_base.empty() || under_any_room(self))) {
+        static int told = 0;
+        if (told++ < 10) logx::info("interiors: an interior's GenericIndoors kept from turning the outdoors indoors (a room is built)");
+        return;
+    }
+    g_generic_indoors_start(self, method);
+}
 BoolFn g_indoor_environment = nullptr;
 bool indoor_environment_detour(Il2CppObject* self, const MethodInfo* method) {
     if (engaged() && g_inside) return true;
@@ -4019,6 +4035,8 @@ void set_settings(const config::Settings& s) {
     g_window_quality = std::clamp(s.seamless_window_quality, 0, 2);
     g_door_portals = s.seamless_door_portals;      // Stage 2 doors
     g_door_walk = s.seamless_door_walk;
+    g_indoor_light = std::clamp(s.seamless_indoor_light, 5, 100);
+    logx::info("interiors: in a room the sky's light is %d%% of the outdoors' ([interiors] indoor_light)", g_indoor_light);
     logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s; buildings beyond SI's configs %s; "
                "chimney smoke and window glow %s; window views %s, quality %d; door portals %s%s)",
                s.seamless_interiors ? "on" : "off", g_import_old ? "imported" : "left to the game's doors",
@@ -4571,6 +4589,8 @@ bool resolve() {
         hook("Weather.IsIndoorEnvironment", il2::find_method(w, "IsIndoorEnvironment", 0), &indoor_environment_detour,
              &g_indoor_environment);
     }
+    if (Il2CppClass* gi = il2::find_class(kGame, "", "GenericIndoors"))
+        hook("GenericIndoors.Start", il2::find_method(gi, "Start", 0), &generic_indoors_start_detour, &g_generic_indoors_start);
     if (Il2CppClass* ev = il2::find_class(kGame, "", "EvolveItem"))
         hook("EvolveItem.ObjectInIndoorTrigger", il2::find_method(ev, "ObjectInIndoorTrigger", 0), &evolve_indoor_detour,
              &g_evolve_indoor);
