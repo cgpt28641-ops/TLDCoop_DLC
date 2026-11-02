@@ -214,6 +214,8 @@ struct Api {
                       *scene_root_count = nullptr, *move_to_scene = nullptr, *set_active_scene = nullptr,
                       *load_scene = nullptr, *unload_scene = nullptr;
     bool scene_roots_boxed = false;  // Scene.GetRootGameObjects' compiled code wants a boxed Scene (adjustor thunk)
+    const MethodInfo* scene_roots_internal = nullptr, *go_list_ctor = nullptr;  // static GetRootGameObjectsInternal(int, object)
+    Il2CppClass* go_list_class = nullptr;                                         // List<GameObject>
     // physics
     const MethodInfo* raycast_all = nullptr, *overlap_sphere = nullptr, *collider_by_id = nullptr;
     const MethodInfo* col_trigger = nullptr, *col_set_trigger = nullptr, *col_enabled = nullptr, *col_set_enabled = nullptr;
@@ -293,6 +295,11 @@ void put(Il2CppObject* o, ptrdiff_t off, const T& v) {
 template <typename T>
 T get(Il2CppObject* o, ptrdiff_t off) {
     return il2::read_field<T>(o, off);
+}
+// A managed reference stored into a field: through the GC's write barrier (never put<> for one).
+void put_ref(Il2CppObject* o, ptrdiff_t off, void* v) { il2::store_ref(o, off, v); }
+void put_slot(Il2CppObject* arr, size_t i, void* v) {  // T[]'s element i (elements from 0x20)
+    if (arr && i < il2::array_length(arr)) il2::store_ref(arr, static_cast<ptrdiff_t>(0x20 + i * sizeof(void*)), v);
 }
 Il2CppString* str(const char* s) { return il2::il2cpp_string_new(s); }
 std::string name_of(Il2CppObject* o) {
@@ -435,6 +442,13 @@ void each_listed(Il2CppObject* list, F&& f) {
     for (int32_t i = 0; i < n && static_cast<size_t>(i) < len; ++i) f(il2::array_object_at(items, static_cast<size_t>(i)), i);
 }
 int list_count(Il2CppObject* list) { return list ? get<int32_t>(list, kListSize) : 0; }
+// List<T>[i], bounds-checked against both the list's size and its backing array (nullptr outside).
+Il2CppObject* list_at(Il2CppObject* list, int i) {
+    if (!list || i < 0 || i >= list_count(list)) return nullptr;
+    Il2CppObject* items = get<Il2CppObject*>(list, kListItems);
+    if (static_cast<size_t>(i) >= il2::array_length(items)) return nullptr;
+    return il2::array_object_at(items, static_cast<size_t>(i));
+}
 const MethodInfo* method_up(Il2CppObject* obj, const char* name, int args) {
     for (Il2CppClass* k = obj ? il2::il2cpp_object_get_class(obj) : nullptr; k; k = il2::il2cpp_class_get_parent(k))
         if (const MethodInfo* m = il2::il2cpp_class_get_method_from_name(k, name, args)) return m;
@@ -483,12 +497,42 @@ int32_t scene_of(Il2CppObject* go) {
     if (alive(go) && api.go_scene) il2::invoke_value(api.go_scene, go, h);
     return h;
 }
-// Scene.GetRootGameObjects() (an instance method on the Scene struct).
-Il2CppObject* scene_roots(int32_t h) {
-    if (!h || !api.scene_roots) return nullptr;
+// A scene's root objects: the static Scene.GetRootGameObjectsInternal(handle, List<GameObject>) (what the instance
+// method calls), so nothing depends on how a struct's instance method takes its Scene; the instance method
+// GetRootGameObjects() only when that can't be called.
+std::vector<Il2CppObject*> scene_roots(int32_t h) {
+    std::vector<Il2CppObject*> out;
+    if (!h) return out;
+    if (api.scene_roots_internal && api.go_list_class && api.go_list_ctor) {
+        int32_t count = 0;
+        if (api.scene_root_count) {
+            void* ca[] = {&h};
+            if (il2::invoke_value(api.scene_root_count, nullptr, count, ca) && count <= 0) return out;
+        }
+        Il2CppObject* list = il2::il2cpp_object_new(api.go_list_class);
+        if (list) {
+            il2::invoke(api.go_list_ctor, list);
+            if (count > 0)  // (as the instance method does first)
+                if (const MethodInfo* cap = method_up(list, "set_Capacity", 1)) {
+                    void* pa[] = {&count};
+                    il2::invoke(cap, list, pa);
+                }
+            void* a[] = {&h, list};
+            il2::invoke(api.scene_roots_internal, nullptr, a);
+            each_listed(list, [&](Il2CppObject* go, int) {
+                if (go) out.push_back(go);
+            });
+            return out;
+        }
+    }
+    if (!api.scene_roots) return out;
     alignas(16) unsigned char boxed[0x18] = {};
     std::memcpy(boxed + 0x10, &h, sizeof(h));
-    return il2::invoke(api.scene_roots, api.scene_roots_boxed ? static_cast<void*>(boxed) : static_cast<void*>(boxed + 0x10));
+    Il2CppObject* arr =
+        il2::invoke(api.scene_roots, api.scene_roots_boxed ? static_cast<void*>(boxed) : static_cast<void*>(boxed + 0x10));
+    for (size_t i = 0, n = il2::array_length(arr); i < n; ++i)
+        if (Il2CppObject* go = il2::array_object_at(arr, i)) out.push_back(go);
+    return out;
 }
 void move_to_scene(Il2CppObject* go, int32_t h) {
     if (!alive(go) || !h) return;
@@ -673,6 +717,17 @@ bool g_copying_template = false;    // SI: IsCopyingCloneTemplate
 std::vector<std::string> g_scene_keys;  // the save slot's scene keys (SI: LegacyImport), read once per region
 bool g_scene_keys_read = false, g_scene_keys_failed = false;
 std::unordered_map<int, uintptr_t> g_stripped_materials;  // SI: s_StrippedMaterialCache
+// Interior scene loads given up on (the region went, the 45 s timeout, a failed build) that are still coming in: the
+// scene that arrives must still be kept out of the game (its GameManager destroyed before it wakes, its objects out of
+// the save) and is unloaded once it's in. They outlive forget_region.
+struct OrphanLoad {
+    std::string scene;  // the exact scene name ("CampOffice_SANDBOX")
+    uintptr_t op = 0;   // AsyncOperationBase
+    double since = 0;
+};
+std::vector<OrphanLoad> g_orphan_loads;
+uintptr_t g_snow_planes = 0;     // SnowPlaneManager (tick_snow_planes)
+double g_snow_planes_next = 0;   // ... looked for again from then (FindObjectOfType, at most every 2 s)
 
 // inside state (SI: PlayerLocation.cs)
 Instance* g_inside = nullptr;       // SI: PlayerInteriorId
@@ -706,6 +761,25 @@ double g_close_sound_at = 0;  // SI: PlayDoorCloseDelayed
 
 bool in_room(const Instance* in) { return in && in->stage == Stage::Ready; }
 Il2CppObject* master_of(const Instance& in) { return live(in.master); }
+
+// The rooms' (and their untouched snapshots') root transforms, looked up once per frame or change instead of a
+// handle lookup per room for every object the world modules ask about.
+uint32_t g_roots_version = 1, g_roots_built = 0;
+std::vector<std::pair<Il2CppObject*, Instance*>> g_room_roots;  // root transform -> its room (nullptr: a snapshot)
+void rooms_changed() { ++g_roots_version; }
+const std::vector<std::pair<Il2CppObject*, Instance*>>& room_roots() {
+    if (g_roots_built == g_roots_version) return g_room_roots;
+    g_roots_built = g_roots_version;
+    g_room_roots.clear();
+    for (Instance& in : g_instances)
+        if (Il2CppObject* t = in.master_tf ? target(in.master_tf) : nullptr) g_room_roots.emplace_back(t, &in);
+    for (auto& [base, h] : g_pristine)
+        if (Il2CppObject* p = live(h))
+            if (Il2CppObject* t = go_tf(p)) g_room_roots.emplace_back(t, nullptr);
+    return g_room_roots;
+}
+// Nothing of ours stands in the scene or is coming in: every "is it a room's?" question is a cheap no.
+bool no_room_objects();
 
 // The deferred GearManager.Deserialize (SI: PreventGearManagerDuplicationPatch).
 struct DeferredGear {
@@ -1003,18 +1077,11 @@ void drop_inactive_indoor_triggers() {
     if (!pm || api.pm_indoors < 0) return;
     Il2CppObject* list = get<Il2CppObject*>(pm, api.pm_indoors);
     for (int i = list_count(list) - 1; i >= 0; --i) {
-        Il2CppObject* entry = nullptr;
-        each_listed(list, [&](Il2CppObject* o, int k) {
-            if (k == i) entry = o;
-        });
+        Il2CppObject* entry = list_at(list, i);
         if (!alive(entry) || !active_in_tree(go_of(entry))) list_remove_at(list, i);
     }
     Il2CppObject* current = get<Il2CppObject*>(pm, api.pm_indoor);
-    if (!alive(current) || !active_in_tree(go_of(current))) {
-        Il2CppObject* last = nullptr;
-        each_listed(list, [&](Il2CppObject* o, int) { last = o; });
-        put<Il2CppObject*>(pm, api.pm_indoor, last);
-    }
+    if (!alive(current) || !active_in_tree(go_of(current))) put_ref(pm, api.pm_indoor, list_at(list, list_count(list) - 1));
 }
 
 // SI: ForgetSpaceOnPlayer
@@ -1023,18 +1090,11 @@ void forget_space_on_player(Il2CppObject* space) {
     if (!pm || api.pm_indoors < 0) return;
     Il2CppObject* list = get<Il2CppObject*>(pm, api.pm_indoors);
     for (int i = list_count(list) - 1; i >= 0; --i) {
-        Il2CppObject* entry = nullptr;
-        each_listed(list, [&](Il2CppObject* o, int k) {
-            if (k == i) entry = o;
-        });
+        Il2CppObject* entry = list_at(list, i);
         if (!alive(entry) || entry == space) list_remove_at(list, i);
     }
     Il2CppObject* current = get<Il2CppObject*>(pm, api.pm_indoor);
-    if (!alive(current) || current == space) {
-        Il2CppObject* last = nullptr;
-        each_listed(list, [&](Il2CppObject* o, int) { last = o; });
-        put<Il2CppObject*>(pm, api.pm_indoor, last);
-    }
+    if (!alive(current) || current == space) put_ref(pm, api.pm_indoor, list_at(list, list_count(list) - 1));
 }
 
 // SI: MakeSureSpaceTaken: the game may refuse the trigger (the player's tag); then it's put in by hand.
@@ -1052,7 +1112,7 @@ void make_sure_space_taken(Il2CppObject* space, const char* id) {
     warned = true;
     Il2CppObject* list = api.pm_indoors >= 0 ? get<Il2CppObject*>(pm, api.pm_indoors) : nullptr;
     if (list && !list_contains(list, space)) list_add(list, space);
-    put<Il2CppObject*>(pm, api.pm_indoor, space);
+    put_ref(pm, api.pm_indoor, space);
 }
 
 // SI: SyncVanillaIndoorSpace: the room's IndoorSpaceTrigger follows the inside flag.
@@ -1448,7 +1508,7 @@ void tick_snow_emitters() {
 
 // SI: TickParkedSnowPlanes: the snow planes (drawn around the camera) are off in a parked room.
 void tick_snow_planes() {
-    static uintptr_t planes = 0;
+    uintptr_t& planes = g_snow_planes;
     if (!g_inside) {
         if (!g_snow_planes_hidden) return;
         g_snow_planes_hidden = false;
@@ -1463,6 +1523,9 @@ void tick_snow_planes() {
     Il2CppObject* p = live(planes);
     if (!p) {
         drop(planes);
+        const double now = now_ms();
+        if (now < g_snow_planes_next) return;
+        g_snow_planes_next = now + 2000;
         void* a[] = {api.t_snow_planes};
         p = api.t_snow_planes ? il2::invoke(api.find_object, nullptr, a) : nullptr;
         if (!alive(p)) return;
@@ -1629,6 +1692,7 @@ bool start_loading(Instance& in) {
         set_active(copy, false);
         in.master = hold(copy);
         in.master_tf = hold(go_tf(copy));
+        rooms_changed();
         move_to_scene(copy, scene_by_name(g_region));
         each_in(copy, api.t_renderer, [&](Il2CppObject* r) {
             if (!renderer_on(r)) in.keep_off.push_back(hold(r));
@@ -1710,8 +1774,7 @@ bool merge_scenes(Instance& in) {
     Il2CppObject* now_maps = api.lightmaps ? il2::invoke(api.lightmaps, nullptr) : nullptr;
     const size_t n_out = il2::array_length(cached), n_now = il2::array_length(now_maps);
     if (cached && now_maps && n_now > n_out) {
-        Il2CppObject** dst = reinterpret_cast<Il2CppObject**>(reinterpret_cast<char*>(now_maps) + 0x20);
-        for (size_t i = 0; i < n_out; ++i) dst[i] = il2::array_object_at(cached, i);
+        for (size_t i = 0; i < n_out; ++i) put_slot(now_maps, i, il2::array_object_at(cached, i));
         void* a[] = {now_maps};
         il2::invoke(api.set_lightmaps, nullptr, a);
     } else if (cached) {
@@ -1735,6 +1798,7 @@ bool merge_scenes(Instance& in) {
     in.master = hold(master);
     Il2CppObject* mt = go_tf(master);
     in.master_tf = hold(mt);
+    rooms_changed();
     int roots = 0;
     int32_t main_scene = 0;
     for (const Instance::Op& op : in.ops) {
@@ -1742,9 +1806,7 @@ bool merge_scenes(Instance& in) {
         const int32_t h = scene_by_name(op.scene);
         if (!scene_loaded(h)) continue;
         if (op.scene == base) main_scene = h;
-        Il2CppObject* arr = scene_roots(h);
-        for (size_t i = 0, n = il2::array_length(arr); i < n; ++i) {
-            Il2CppObject* root = il2::array_object_at(arr, i);
+        for (Il2CppObject* root : scene_roots(h)) {
             if (!alive(root) || root == master) continue;
             bool keep_world = false;
             void* pa[] = {mt, &keep_world};
@@ -1779,6 +1841,7 @@ bool merge_scenes(Instance& in) {
             set_active(snap, false);
             if (main_scene) move_to_scene(snap, main_scene);
             g_pristine[base] = hold(snap);
+            rooms_changed();
         }
     }
     logx::info("interiors: %s: %d scene root(s) under %s, %.1f s after the request%s", in.cfg->id, roots, nm,
@@ -2187,7 +2250,7 @@ void setup_trigger_and_space(Instance& in, V3 center, V3 size) {
     put<bool>(space, api.indoor_valid_safehouse, false);
     if (api.indoor_trigger_id >= 0) {
         const std::string id = std::string("SI_") + in.cfg->id;
-        put<Il2CppString*>(space, api.indoor_trigger_id, str(id.c_str()));
+        put_ref(space, api.indoor_trigger_id, str(id.c_str()));
     }
     in.space = hold(space);
 }
@@ -2245,7 +2308,7 @@ void strip_lightmaps(Instance& in) {
                 g_stripped_materials[id] = hold(copy);
                 ++copies;
             }
-            reinterpret_cast<Il2CppObject**>(reinterpret_cast<char*>(mats) + 0x20)[i] = copy;
+            put_slot(mats, i, copy);
             swap = true;
         }
         if (swap) {
@@ -2325,8 +2388,68 @@ void register_fires(Instance& in) {
     if (added) logx::info("interiors: %s: %d fire(s) registered with the game", in.cfg->id, added);
 }
 
+// The building's scene loads still in flight become orphans (their handles move to g_orphan_loads).
+void orphan_ops(Instance& in, const char* why) {
+    for (Instance::Op& op : in.ops) {
+        if (op.done || !op.op) continue;
+        if (Il2CppObject* o = target(op.op)) {
+            bool done = false;
+            if (const MethodInfo* m = method_up(o, "get_IsDone", 0)) il2::invoke_value(m, o, done);
+            (void)done;  // done or not: poll_orphans unloads what came in
+            g_orphan_loads.push_back({op.scene, op.op, now_ms()});
+            op.op = 0;
+            logx::warn("interiors: %s: the load of %s is still coming in (%s); it is kept out of the game and unloaded once in",
+                       in.cfg->id, op.scene.c_str(), why);
+        } else {
+            drop(op.op);
+        }
+        op.done = true;
+        op.ok = false;
+    }
+}
+bool orphan_scene(const std::string& scene_name_now) {
+    if (scene_name_now.empty()) return false;
+    for (const OrphanLoad& o : g_orphan_loads)
+        if (o.scene == scene_name_now) return true;
+    return false;
+}
+bool orphan_loading(const std::string& base) {  // any orphan load of this interior's scenes
+    for (const OrphanLoad& o : g_orphan_loads)
+        if (interior_base(o.scene) == base) return true;
+    return false;
+}
+// Every frame, rooms or not: an orphan load that is over is unloaded (what came in goes with its scene).
+void poll_orphans() {
+    if (g_orphan_loads.empty()) return;
+    static double next = 0;
+    const double now = now_ms();
+    if (now < next) return;
+    next = now + 250;
+    for (auto it = g_orphan_loads.begin(); it != g_orphan_loads.end();) {
+        Il2CppObject* o = target(it->op);
+        bool done = !o;
+        if (o)
+            if (const MethodInfo* m = method_up(o, "get_IsDone", 0)) il2::invoke_value(m, o, done);
+        const int32_t h = scene_by_name(it->scene);
+        const bool loaded = scene_loaded(h);
+        if (!done && now - it->since < 300000) {  // (5 minutes: an operation that never ends is let go)
+            ++it;
+            continue;
+        }
+        if (loaded && api.unload_scene) {
+            void* a[] = {str(it->scene.c_str())};
+            il2::invoke(api.unload_scene, nullptr, a);
+        }
+        logx::info("interiors: the late load of %s is over%s", it->scene.c_str(),
+                   loaded ? "; unloaded again (none of it reached the game)" : " (nothing came in)");
+        drop(it->op);
+        it = g_orphan_loads.erase(it);
+    }
+}
+
 void fail_build(Instance& in, const char* why) {
     logx::warn("interiors: %s: %s; its door stays the game's", in.cfg->id, why);
+    orphan_ops(in, why);
     if (Il2CppObject* m = master_of(in)) destroy(m);
     for (const Instance::Op& op : in.ops)  // what came in mustn't stand in the region at the interior's own spot
         if (op.ok && scene_loaded(scene_by_name(op.scene)) && api.unload_scene) {
@@ -2336,6 +2459,7 @@ void fail_build(Instance& in, const char* why) {
         }
     drop(in.master);
     drop(in.master_tf);
+    rooms_changed();
     drop_import(in);
     set_stage(in, Stage::Vanilla);
     if (g_building == &in) g_building = nullptr;
@@ -2354,8 +2478,11 @@ void tick_build() {
         case Stage::Loading: {
             const bool done = loads_done(*in);
             if (!done && now - in->stage_since < kSceneLoadTimeoutMs) return;
-            if (!done) logx::warn("interiors: %s: the scene load took over %.0f s; going on with what came", in->cfg->id,
-                                  kSceneLoadTimeoutMs / 1000);
+            if (!done) {
+                logx::warn("interiors: %s: the scene load took over %.0f s; going on with what came", in->cfg->id,
+                           kSceneLoadTimeoutMs / 1000);
+                orphan_ops(*in, "the 45 s timeout");
+            }
             const bool merged = merge_scenes(*in);
             g_loading_base.clear();
             replay_deferred_gear();
@@ -2475,6 +2602,7 @@ void pick_building() {
     for (Instance& in : g_instances) {
         if (in.stage != Stage::Idle) continue;
         if (role == Coop::Friend && !host_has(in)) continue;
+        if (orphan_loading(in.cfg->scene)) continue;  // a late load of its scene is still coming in (poll_orphans)
         if (hold_targets(in) || &in == g_urgent || &in == wanted_by_friend) {
             best = &in;
             best_d = nearest(in);
@@ -2707,9 +2835,7 @@ V3 exit_point_raw(Instance& in, Il2CppObject* door, bool& vanilla_point) {
         for (const std::string& sn : {g_region, g_region + "_SANDBOX", g_region + "_DLC01"}) {
             const int32_t h = scene_by_name(sn);
             if (!scene_loaded(h)) continue;
-            Il2CppObject* roots = scene_roots(h);
-            for (size_t i = 0, n = il2::array_length(roots); i < n; ++i) {
-                Il2CppObject* root = il2::array_object_at(roots, i);
+            for (Il2CppObject* root : scene_roots(h)) {
                 if (!alive(root) || root == master_of(in)) continue;
                 if (Il2CppObject* t = find_named_nearest(root, point, outdoor)) {
                     const float d = dist(position(t), outdoor);
@@ -2865,9 +2991,51 @@ void tick_fade() {
 // door's OnTriggerEnter calls it too (read from the 2.58 code). SI patches the three callers; one hook here covers them.
 using ActivateFn = void (*)(Il2CppObject* self, bool immediately, const MethodInfo* method);
 ActivateFn g_activate = nullptr;
+// GameManager.LoadSceneWithLoadingScreen: where a scene change really starts (a door of the game's, a region's edge, a
+// co-op join, a respawn): TLD takes the scene's items away just before, which world_items mustn't tell as destroyed.
+using LoadScreenFn = void (*)(Il2CppString* scene, const MethodInfo* method);
+LoadScreenFn g_load_screen = nullptr;
+void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
+    world_items::door_used();
+    g_load_screen(scene, method);
+}
+// A vanilla door to an interior whose scene we are loading right now (for a room, or a late load given up on) or whose
+// building's room is being built: the game's own load of that scene would wake its GameManager while ours treats the
+// scene as a template (skip_game_manager_awake would destroy the real one). Blocked until it's over (SI: PORTAL-BLOCK).
+bool door_scene_busy(Il2CppObject* door, std::string& what) {
+    const std::string to = door_scene(door);
+    if (to.empty()) return false;
+    const std::string base = interior_base(to);
+    if (!g_loading_base.empty() && g_loading_base == base) {
+        what = g_loading_base + " (loading for a room)";
+        return true;
+    }
+    if (orphan_loading(base)) {
+        what = base + " (a late load still coming in)";
+        return true;
+    }
+    if (g_building && base == g_building->cfg->scene && g_building->stage != Stage::Ready &&
+        g_building->stage != Stage::Vanilla && g_building->stage != Stage::Idle) {
+        what = std::string(g_building->cfg->id) + " (its room is being built)";
+        return true;
+    }
+    return false;
+}
+
 void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* method) {
-    world_items::door_used();  // TLDCoop_DLC: (any door, this feature on or off)
-    if (!engaged() || !self) return g_activate(self, immediately, method);
+    if (!self) return g_activate(self, immediately, method);
+    std::string busy;
+    if (api.ok && door_scene_busy(self, busy)) {  // (also with the feature off: a late load may still be coming in)
+        static double told_at = -1e18;
+        if (now_ms() - told_at > 2000) logx::info("interiors: [PORTAL-BLOCK] %s isn't ready yet; the door waits", busy.c_str());
+        told_at = now_ms();
+        put<bool>(self, api.door_touch_ground, false);
+        return;
+    }
+    if (!engaged()) {
+        world_items::door_used();  // TLDCoop_DLC: a door of the game's own, which changes the scene
+        return g_activate(self, immediately, method);
+    }
     if (g_fade.busy) return;  // a door is already being used (SI: s_DoorFadeBusy)
     const DoorChoice c = choose(self);
     if (c.way == DoorWay::Vanilla) {
@@ -2888,6 +3056,7 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
         }
         static int logged = 0;
         if (logged++ < 20) logx::info("interiors: '%s' (to %s) is the game's own door", name_of(go_of(self)).c_str(), door_scene(self).c_str());
+        world_items::door_used();  // TLDCoop_DLC: the scene changes (a seamless door, or one that waits, doesn't)
         return g_activate(self, immediately, method);
     }
     // In the game a scene load ends a hold-to-use door's wait; with none, Update would use the door again every frame.
@@ -2905,14 +3074,15 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
 // Under one of our rooms (or a room's untouched snapshot): every room is a root object of its own, so one look at the
 // object's root answers it (Unity keeps one managed object per native one, so the pointers compare).
 bool root_is_room(Il2CppObject* t) {
+    const auto& roots = room_roots();
+    if (roots.empty()) return false;
     Il2CppObject* root = alive(t) ? il2::invoke(api.tf_root, t) : nullptr;
     if (!root) return false;
-    for (Instance& in : g_instances)
-        if (in.master_tf && target(in.master_tf) == root) return true;
-    for (auto& [base, h] : g_pristine)
-        if (Il2CppObject* p = live(h); p && go_tf(p) == root) return true;
+    for (const auto& [r, in] : roots)
+        if (r == root) return true;
     return false;
 }
+bool no_room_objects() { return room_roots().empty() && g_loading_base.empty() && g_orphan_loads.empty(); }
 bool under_any_room(Il2CppObject* comp) { return root_is_room(tf_of(comp)); }
 
 // SI: PreventFakeManagerPatch is skip_game_manager_awake below.
@@ -3017,60 +3187,76 @@ Il2CppObject* serialize_placements_detour(const MethodInfo* method) {
 // SI: KeepCloneGearOutOfGameSave / PutCloneGearBack / PruneDeadGearManagerEntries, and the same for containers (the
 // port's improvement over SI's lost-and-found clean-up): the rooms' items and containers are taken out of the game's
 // lists while it writes the region's save, and put back straight after.
+// The taking out is undone by a guard's destructor, so a managed exception thrown through the game's Serialize (IL2CPP
+// throws them as C++ exceptions, which run destructors on the way) can't leave the rooms' items out of the game's
+// lists for good. The list is read again on the way back (the game may have replaced it meanwhile).
 struct TakenOut {
-    Il2CppObject* list = nullptr;
+    FieldInfo* field = nullptr;
+    bool gear = false;
     std::vector<uintptr_t> items;
-};
-TakenOut take_out(FieldInfo* field, bool gear) {
-    TakenOut t;
-    t.list = static_object(field);
-    if (!t.list) return t;
-    int dead = 0;
-    for (int i = list_count(t.list) - 1; i >= 0; --i) {
-        Il2CppObject* o = nullptr;
-        each_listed(t.list, [&](Il2CppObject* x, int k) {
-            if (k == i) o = x;
-        });
-        if (!alive(o)) {
-            if (gear) {  // SI: PruneDeadGearManagerEntries
-                list_remove_at(t.list, i);
-                ++dead;
+    TakenOut(FieldInfo* f, bool g) : field(f), gear(g) {}
+    TakenOut(const TakenOut&) = delete;
+    TakenOut& operator=(const TakenOut&) = delete;
+    ~TakenOut() { put_back(); }
+    void take_out() {
+        Il2CppObject* list = static_object(field);
+        if (!list) return;
+        int dead = 0;
+        for (int i = list_count(list) - 1; i >= 0; --i) {
+            Il2CppObject* o = list_at(list, i);
+            if (!alive(o)) {
+                if (gear) {  // SI: PruneDeadGearManagerEntries
+                    list_remove_at(list, i);
+                    ++dead;
+                }
+                continue;
             }
-            continue;
+            if (gear && api.gear_in_inventory >= 0 && get<bool>(o, api.gear_in_inventory)) continue;
+            if (!is_clone_object(o)) continue;  // (an interior scene loading for a room counts too)
+            items.push_back(hold(o));
+            list_remove_at(list, i);
         }
-        if (gear && api.gear_in_inventory >= 0 && get<bool>(o, api.gear_in_inventory)) continue;
-        if (!is_clone_object(o)) continue;  // (an interior scene loading for a room counts too)
-        t.items.push_back(hold(o));
-        list_remove_at(t.list, i);
+        if (dead) logx::info("interiors: %d dead entr(ies) taken off GearManager's list before the save", dead);
     }
-    if (dead) logx::info("interiors: %d dead entr(ies) taken off GearManager's list before the save", dead);
-    return t;
-}
-void put_back(TakenOut& t, bool gear) {
-    for (uintptr_t& h : t.items) {
-        if (Il2CppObject* o = target(h)) list_add(t.list, o);
-        drop(h);
+    bool back = false;
+    void put_back() {
+        if (back) return;
+        back = true;
+        Il2CppObject* list = static_object(field);
+        int lost = 0;
+        for (uintptr_t& h : items) {
+            Il2CppObject* o = target(h);
+            if (o && list)
+                list_add(list, o);
+            else if (o)
+                ++lost;
+            drop(h);
+        }
+        items.clear();
+        if (lost) logx::warn("interiors: %d room object(s) couldn't go back on the game's list (the list is gone)", lost);
+        if (gear && api.gear_index) {
+            int32_t zero = 0;
+            il2::il2cpp_field_static_set_value(api.gear_index, &zero);
+        }
     }
-    if (gear && api.gear_index) {
-        int32_t zero = 0;
-        il2::il2cpp_field_static_set_value(api.gear_index, &zero);
-    }
-}
+};
 Il2CppObject* gear_serialize_detour(const MethodInfo* method) {
     if (!engaged()) return g_gear_serialize(method);
-    TakenOut t = take_out(api.gear_list, true);
-    Il2CppObject* r = g_gear_serialize(method);
+    TakenOut t(api.gear_list, true);
+    t.take_out();
     const size_t n = t.items.size();
-    put_back(t, true);
+    Il2CppObject* r = g_gear_serialize(method);
+    t.put_back();
     if (n) logx::info("interiors: %zu room item(s) kept out of the game's save", n);
     return r;
 }
 Il2CppObject* container_serialize_detour(const MethodInfo* method) {
     if (!engaged()) return g_container_serialize(method);
-    TakenOut t = take_out(api.container_list, false);
-    Il2CppObject* r = g_container_serialize(method);
+    TakenOut t(api.container_list, false);
+    t.take_out();
     const size_t n = t.items.size();
-    put_back(t, false);
+    Il2CppObject* r = g_container_serialize(method);
+    t.put_back();
     if (n) logx::info("interiors: %zu room container(s) kept out of the game's save", n);
     return r;
 }
@@ -3084,14 +3270,11 @@ Il2CppObject* fire_serialize_detour(const MethodInfo* method) {
         if (!heat_type)
             if (Il2CppClass* hs = il2::find_class(kGame, "", "HeatSource")) heat_type = il2::type_object(hs);
         for (int i = list_count(list) - 1; i >= 0; --i) {
-            Il2CppObject* f = nullptr;
-            each_listed(list, [&](Il2CppObject* x, int k) {
-                if (k == i) f = x;
-            });
+            Il2CppObject* f = list_at(list, i);
             if (alive(f) && !alive(get<Il2CppObject*>(f, api.fire_heat))) {
                 Il2CppObject* hs = component(go_of(f), heat_type);
                 if (hs) {
-                    put<Il2CppObject*>(f, api.fire_heat, hs);
+                    put_ref(f, api.fire_heat, hs);
                     ++woken;
                 }
             }
@@ -3223,21 +3406,28 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
     const V3 here = position(ptf);
     Instance* room = ptf ? parked_room_holding(here) : nullptr;
     V3 safe;
-    bool moved = false;
+    // The player goes back where they stood however the game's Serialize ends (a managed exception included).
+    struct MovedBack {
+        uintptr_t tf = 0;
+        V3 at;
+        ~MovedBack() {
+            if (Il2CppObject* t = live(tf)) set_position(t, at);
+            drop(tf);
+        }
+    } back;
     if (room) {
         const bool found = safe_door_point(*room, here, safe);
         if (found) {
             set_position(ptf, safe);
-            moved = true;
+            back.tf = hold(ptf);
+            back.at = here;
             logx::info("interiors: %s: the game's save holds the door point (%.1f, %.1f, %.1f), not the room", room->cfg->id,
                        safe.x, safe.y, safe.z);
         } else {
             logx::warn("interiors: %s: no door point found; the save keeps the room's position", room->cfg->id);
         }
     }
-    Il2CppObject* r = g_pm_serialize(self, method);
-    if (moved) set_position(ptf, here);
-    return r;
+    return g_pm_serialize(self, method);
 }
 
 // Milestone 1b: the rooms' own save files, the player's place, closed-room time, adoption (SI: SaveData.cs,
@@ -3488,15 +3678,18 @@ void forget_region(const char* why) {
         for (uintptr_t& h : in.keep_off) drop(h);
         for (uintptr_t& h : in.outsiders) drop(h);
         for (uintptr_t& h : in.colliders_off) drop(h);
+        orphan_ops(in, "the region changed");
         for (Instance::Op& op : in.ops) drop(op.op);
     }
     const size_t had = g_instances.size();
     g_instances.clear();
+    rooms_changed();
     g_building = nullptr;
     g_loading_base.clear();
     g_template_scenes.clear();
     for (auto& [k, h] : g_pristine) drop(h);
     g_pristine.clear();
+    rooms_changed();
     g_scene_keys.clear();
     g_scene_keys_read = g_scene_keys_failed = false;
     g_overlay.clear();  // an import not finished in this region (nothing of it was written)
@@ -3505,6 +3698,13 @@ void forget_region(const char* why) {
     g_state_corrections = 0;
     g_paused_outdoor_wind = 0;
     g_snow_moved = g_snow_planes_hidden = false;
+    drop(g_snow_planes);
+    g_snow_planes_next = 0;
+    for (auto& [id, h] : g_stripped_materials) {  // the rooms' material copies (SI: s_StrippedMaterialCache)
+        if (Il2CppObject* mat = live(h)) destroy(mat);
+        drop(h);
+    }
+    g_stripped_materials.clear();
     drop(g_fog_layer);
     g_capsule_applied = false;
     if (had) logx::info("interiors: %s left (%s); its %zu building(s) forgotten", g_region.c_str(), why, had);
@@ -3520,6 +3720,7 @@ void enter_region(const std::string& region) {
         in.cfg = &kConfigs[i];
         g_instances.push_back(in);
     }
+    rooms_changed();
     if (!g_instances.empty())
         logx::info("interiors: %s: %zu building(s) with seamless doors; rooms are built as the player comes within %.0f m",
                    region.c_str(), g_instances.size(), kBuildDistance);
@@ -3537,21 +3738,23 @@ bool loading_template() { return api.ok && !g_loading_base.empty(); }
 bool player_inside() { return api.ok && g_inside != nullptr; }
 
 bool is_clone_object(Il2CppObject* obj) {
-    if (!api.ok || !alive(obj) || (g_instances.empty() && g_pristine.empty() && g_loading_base.empty())) return false;
+    if (!api.ok || no_room_objects() || !alive(obj)) return false;
     Il2CppClass* k = il2::il2cpp_object_get_class(obj);
     const bool is_go = k == api.go_class;
     Il2CppObject* t = is_go ? go_tf(obj) : tf_of(obj);
     if (!t) return false;
     if (root_is_room(t)) return true;
-    if (!g_loading_base.empty()) {  // SI: IsInteriorLoadedAsCloneTemplate (by the scene's name: its handle may not be seen yet)
-        const int32_t sc = scene_of(is_go ? obj : go_of(obj));
-        if (g_template_scenes.count(sc) || interior_base(scene_name(sc)) == g_loading_base) return true;
+    if (!g_loading_base.empty() || !g_orphan_loads.empty()) {  // SI: IsInteriorLoadedAsCloneTemplate (by the scene's name:
+        const int32_t sc = scene_of(is_go ? obj : go_of(obj));  // its handle may not be seen yet), or a late load's scene
+        const std::string sn = scene_name(sc);
+        if (!g_loading_base.empty() && (g_template_scenes.count(sc) || interior_base(sn) == g_loading_base)) return true;
+        if (orphan_scene(sn)) return true;
     }
     return false;
 }
 
 bool skip_game_manager_awake(Il2CppObject* gm) {
-    if (!engaged() || !alive(gm)) return false;
+    if (!api.ok || !alive(gm) || (!engaged() && g_orphan_loads.empty())) return false;
     Il2CppObject* go = go_of(gm);
     if (under_any_room(gm)) {
         destroy(gm);
@@ -3561,6 +3764,11 @@ bool skip_game_manager_awake(Il2CppObject* gm) {
     if (!g_loading_base.empty() && interior_base(scene_name(scene_of(go))) == g_loading_base) {
         destroy(go);
         logx::info("interiors: the GameManager of %s (loading for a room) destroyed before it woke", g_loading_base.c_str());
+        return true;
+    }
+    if (const std::string sn = g_orphan_loads.empty() ? std::string() : scene_name(scene_of(go)); orphan_scene(sn)) {
+        destroy(go);
+        logx::info("interiors: the GameManager of %s (a late load for a room given up on) destroyed before it woke", sn.c_str());
         return true;
     }
     return false;
@@ -3575,6 +3783,8 @@ void set_settings(const config::Settings& s) {
 
 void on_frame(const std::string& scene, bool in_game) {
     if (!api.ok) return;
+    poll_orphans();  // (rooms or not: a late load given up on is unloaded once it's in)
+    rooms_changed();  // (the roots looked up again this frame)
     if (in_game) resolve_layers();
     g_feature_on = feature_active();
     const std::string region = in_game ? active_region() : std::string();
@@ -3807,6 +4017,17 @@ bool resolve() {
     api.scene_is_loaded = il2::find_method(scene, "GetIsLoadedInternal", 1);
     api.scene_name = il2::find_method(scene, "GetNameInternal", 1);
     api.scene_roots = il2::find_method(scene, "GetRootGameObjects", 0);
+    api.scene_roots_internal = il2::find_method_quiet(scene, "GetRootGameObjectsInternal", 2);
+    api.scene_root_count = il2::find_method_quiet(scene, "GetRootCountInternal", 1);
+    if (const MethodInfo* with_list = il2::find_method_params_quiet(scene, "GetRootGameObjects",
+                                                                    {"System.Collections.Generic.List<UnityEngine.GameObject>"});
+        with_list && il2::il2cpp_class_from_type)
+        if (const Il2CppType* t = il2::il2cpp_method_get_param(with_list, 0))
+            if ((api.go_list_class = il2::il2cpp_class_from_type(t)))
+                api.go_list_ctor = il2::find_method_quiet(api.go_list_class, ".ctor", 0);
+    logx::info("interiors: scene roots read %s", api.scene_roots_internal && api.go_list_ctor
+                                                     ? "with Scene.GetRootGameObjectsInternal"
+                                                     : "with Scene.GetRootGameObjects() (the static call isn't there)");
     api.move_to_scene = il2::find_method(scene_manager, "MoveGameObjectToScene", 2);
     api.set_active_scene = il2::find_method(scene_manager, "SetActiveScene", 1);
     api.unload_scene = il2::find_method_params(scene_manager, "UnloadSceneAsync", {"System.String"});
@@ -4026,7 +4247,7 @@ bool resolve() {
         {"renderer calls", api.r_enabled && api.r_set_enabled && api.r_bounds && api.r_lightmap && api.r_set_lightmap &&
                                api.r_materials && api.r_set_materials && api.r_material && api.mat_keyword_on &&
                                api.mat_disable_keyword && api.behaviour_set_enabled && api.behaviour_enabled},
-        {"scene calls", api.scene_by_name && api.scene_is_loaded && api.scene_roots && api.move_to_scene &&
+        {"scene calls", api.scene_by_name && api.scene_is_loaded && (api.scene_roots || api.scene_roots_internal) && api.move_to_scene &&
                             api.set_active_scene && api.load_scene && api.lightmaps && api.set_lightmaps},
         {"physics calls", api.raycast_all && api.overlap_sphere && api.collider_by_id && api.col_trigger &&
                               api.col_set_trigger && api.col_enabled && api.col_set_enabled && api.box_set_center &&
@@ -4049,6 +4270,8 @@ bool resolve() {
     // being told as items destroyed, is called from it for every door)
     hook("LoadScene.Activate", il2::find_method_params(load_scene, "Activate", {"System.Boolean"}), &activate_detour,
          &g_activate);
+    hook("GameManager.LoadSceneWithLoadingScreen", il2::find_method_params(gm, "LoadSceneWithLoadingScreen", {"System.String"}),
+         &load_screen_detour, &g_load_screen);
     if (!ok) return false;
     if (Il2CppClass* rso = il2::find_class(kGame, "", "RandomSpawnObject"))
         hook("RandomSpawnObject.Start", il2::find_method(rso, "Start", 0), &rso_start_detour, &g_rso_start);

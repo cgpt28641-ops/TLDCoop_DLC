@@ -72,10 +72,17 @@ struct Il2CppThread;
     X(il2cpp_object_new, Il2CppObject*, (const Il2CppClass*))                                          \
     X(il2cpp_object_get_virtual_method, const MethodInfo*, (Il2CppObject*, const MethodInfo*))
 
+// Exports used when the runtime has them (null otherwise; resolve() doesn't fail for these).
+#define TLDCOOP_IL2CPP_API_OPTIONAL(X)                                                                  \
+    X(il2cpp_gc_wbarrier_set_field, void, (Il2CppObject*, void**, void*))                              \
+    X(il2cpp_field_set_value, void, (Il2CppObject*, FieldInfo*, void*))                                \
+    X(il2cpp_class_from_type, Il2CppClass*, (const Il2CppType*))
+
 namespace il2 {
 
 #define TLDCOOP_DECLARE(name, ret, args) extern ret(*name) args;
 TLDCOOP_IL2CPP_API(TLDCOOP_DECLARE)
+TLDCOOP_IL2CPP_API_OPTIONAL(TLDCOOP_DECLARE)
 #undef TLDCOOP_DECLARE
 
 // Field / method attribute bits from ECMA-335 (as used by IL2CPP).
@@ -147,6 +154,18 @@ T read_field(Il2CppObject* obj, ptrdiff_t offset) {
     T value{};
     if (obj && offset >= 0) memcpy(&value, reinterpret_cast<const char*>(obj) + offset, sizeof(T));
     return value;
+}
+
+// Stores a managed reference into an object's field (or an array's slot: `obj` the array, `offset` the slot's) through
+// the GC's write barrier (il2cpp_gc_wbarrier_set_field), as the game's own code does: a raw store into a managed object
+// can be missed by an incremental collection. Without that export (an older runtime) a plain store.
+inline void store_ref(Il2CppObject* obj, ptrdiff_t offset, void* value) {
+    if (!obj || offset < 0) return;
+    void** slot = reinterpret_cast<void**>(reinterpret_cast<char*>(obj) + offset);
+    if (il2cpp_gc_wbarrier_set_field)
+        il2cpp_gc_wbarrier_set_field(obj, slot, value);
+    else
+        *slot = value;
 }
 
 // Managed arrays (T[]): object header (16 bytes), bounds pointer, length, then the elements.

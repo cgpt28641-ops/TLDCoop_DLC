@@ -11,6 +11,7 @@ namespace il2 {
 
 #define TLDCOOP_DEFINE(name, ret, args) ret(*name) args = nullptr;
 TLDCOOP_IL2CPP_API(TLDCOOP_DEFINE)
+TLDCOOP_IL2CPP_API_OPTIONAL(TLDCOOP_DEFINE)
 #undef TLDCOOP_DEFINE
 
 namespace {
@@ -49,6 +50,11 @@ bool resolve(HMODULE game_assembly) {
     }
     TLDCOOP_IL2CPP_API(TLDCOOP_RESOLVE)
 #undef TLDCOOP_RESOLVE
+#define TLDCOOP_RESOLVE_OPTIONAL(name, ret, args)                                              \
+    name = reinterpret_cast<ret(*) args>(GetProcAddress(game_assembly, #name));                \
+    if (!name) logx::info("GameAssembly.dll has no export %s (optional)", #name);
+    TLDCOOP_IL2CPP_API_OPTIONAL(TLDCOOP_RESOLVE_OPTIONAL)
+#undef TLDCOOP_RESOLVE_OPTIONAL
     return ok;
 }
 
