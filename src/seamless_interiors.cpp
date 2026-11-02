@@ -20,7 +20,9 @@
 #include <memory>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -750,6 +752,10 @@ struct Instance {
     double last_saved_ms = -1e18;  // the last save that wrote all of its files
     // B3 (seamless_fx.inc): what its shell offers for the exterior fire effects (chimneys, window glass), built lazily
     std::shared_ptr<struct FireFx> fx;
+    // Stage 2 (seamless_windows.inc): the turn that squares the parked room to its building (SI: ParkedYawCorrection),
+    // and its windows as read from the room (room-local, read once)
+    float yaw = 0;
+    std::shared_ptr<struct WinRoom> win;
 };
 std::vector<Instance> g_instances;
 // A8: rooms kept from the region last left (their masters in DontDestroyOnLoad, switched off)
@@ -853,6 +859,21 @@ bool auto_room_ok(Instance& in, std::string& why);
 void discover_buildings();
 void forget_auto_region();
 void tick_exterior_fx();
+
+// Stage 2: seeing through windows, in seamless_windows.inc (included further down).
+template <typename Fn>
+bool hook(const char* label, const MethodInfo* m, Fn detour, Fn* original);
+void turn_room_to_shell(Instance& in);
+void release_windows(const char* why);
+void forget_windows_region();
+void windows_before_open(Instance& in);
+bool shell_stays_on();
+bool windows_hold(const Instance& in);
+int held_layer(const std::string& place);
+void watch_windows();
+void resolve_windows();
+extern bool g_windows;
+extern int g_window_quality;
 
 // Milestone 1b, in seamless_persist.inc (included further down).
 int adopt_strays(Instance& in, const char* why);
@@ -975,20 +996,21 @@ float distance_from(const Instance& in, V3 pos) {
     return d;
 }
 
-// SI: ParkedRoomYaw.cs ParkedInteriorPoint (no yaw turn: no windows yet): a hand-typed point, authored against a room
-// standing on its shell (perhaps stretched by ScaleAdjustment), carried into the parked room.
+// SI: ParkedRoomYaw.cs ParkedInteriorPoint: a hand-typed point, authored against a room standing on its shell (perhaps
+// stretched by ScaleAdjustment, never turned), carried into the parked room (turned to its building: in.yaw).
 V3 parked_point(const Instance& in, V3 authored) {
     if (!master_of(in)) return authored + kParkOffset;
     const V3 pivot = in.master_pos - kParkOffset;
     V3 from_pivot = authored - pivot;
     const V3 s = in.cfg->scale;
     if ((s.x != 1 || s.y != 1 || s.z != 1) && s.x > 0.01f && s.y > 0.01f && s.z > 0.01f) {
-        const Quat as_authored = in.master_rot;
+        const Quat as_authored = mul(axis_angle(-in.yaw, {0, 1, 0}), in.master_rot);
         V3 local = rotate(conj(as_authored), from_pivot);
         local = {local.x / s.x, local.y / s.y, local.z / s.z};
         from_pivot = rotate(as_authored, local);
     }
-    return pivot + from_pivot + kParkOffset;
+    if (in.yaw == 0) return pivot + from_pivot + kParkOffset;
+    return pivot + rotate(axis_angle(in.yaw, {0, 1, 0}), from_pivot) + kParkOffset;
 }
 
 Instance* find_instance(const char* id) {
@@ -2113,6 +2135,7 @@ void align_room(Instance& in) {
     in.master_rot = rotation(mt);
     logx::info("interiors: %s: room parked at (%.1f, %.1f, %.1f), %s", c.id, in.master_pos.x, in.master_pos.y, in.master_pos.z,
                shell ? (c.force_exact ? "the config's spot (its shell found)" : "on its shell's spot") : "the config's spot (no shell)");
+    turn_room_to_shell(in);  // Stage 2 (SI: TurnParkedRoomToShell): always, so every game of a session turns it alike
 }
 
 // SI: HandleInitialPlaceables / DisableInteriorContainerSerialization / ApplySafehouseCustomizationFix: the room's
@@ -2978,9 +3001,11 @@ void teleport(V3 pos, Quat rot) {
 
 // The room comes up (SI: the entry half of PortalMagicPatch, and the sub-link's).
 void open_room(Instance& in) {
+    windows_before_open(in);  // Stage 2: rooms held for the views into them give their colliders back first
     if (Il2CppObject* m = master_of(in)) set_active(m, true);
     show_room_renderers(in);
-    if (Il2CppObject* s = live(in.shell)) set_active(s, false);
+    // (Stage 2: with the window views on the shell stays, as in SI's KeepParkedShellOn: the porch shows in the views)
+    if (Il2CppObject* s = live(in.shell); s && !shell_stays_on()) set_active(s, false);
 }
 
 void enter(Instance& in, Il2CppObject* door) {
@@ -3123,6 +3148,7 @@ void tick_waited() {
 
 void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
     world_items::door_used();
+    if (api.ok) release_windows("a scene load");  // Stage 2: nothing of the views may travel with a kept room
     if (api.ok && scene) persist_before_load(il2::to_utf8(scene));  // A8: the rooms to keep leave the region first
     // The game loads one of those interiors as its own scene now: a late load of it given up on is no longer told from
     // the real one (its GameManager must wake): not kept out any more.
@@ -3584,6 +3610,7 @@ Il2CppObject* pm_serialize_detour(Il2CppObject* self, const MethodInfo* method) 
 #include "seamless_coop.inc"
 #include "seamless_auto.inc"
 #include "seamless_fx.inc"
+#include "seamless_windows.inc"
 
 // --- hooks: inside (SI: WeatherPatches.cs, WindInstanceFix.cs, EvolvePatches.cs, SafehouseFixes.cs) -------------------
 
@@ -3758,7 +3785,7 @@ void tick_watchdog() {
     }
     Instance* stray = nullptr;
     for (Instance& in : g_instances)
-        if (in_room(&in) && &in != g_inside && active_self(master_of(in))) stray = &in;
+        if (in_room(&in) && &in != g_inside && active_self(master_of(in)) && !windows_hold(in)) stray = &in;
     if (!stray) {
         g_watch_confirm = 0;
         return;
@@ -3794,6 +3821,8 @@ void tick_sound() {
 // --- the region came or went -------------------------------------------------------------------------------------------
 
 void forget_region(const char* why) {
+    release_windows(why);  // Stage 2: the held rooms, the views and the stand-in eye go first
+    forget_windows_region();
     if (g_inside) {
         g_inside = nullptr;
         g_entered_space_of = nullptr;
@@ -3909,6 +3938,8 @@ bool loading_template() { return api.ok && !g_loading_base.empty(); }
 
 bool player_inside() { return api.ok && g_inside != nullptr; }
 
+int view_layer(const std::string& place) { return api.ok && !place.empty() ? held_layer(place) : -1; }
+
 bool is_clone_object(Il2CppObject* obj) {
     if (!api.ok || no_room_objects() || !alive(obj)) return false;
     Il2CppClass* k = il2::il2cpp_object_get_class(obj);
@@ -3952,14 +3983,18 @@ void set_settings(const config::Settings& s) {
     g_keep_rooms = s.seamless_keep_rooms;  // A8
     g_auto_buildings = s.seamless_auto_buildings;  // B4
     g_fire_fx = s.seamless_fire_effects;           // B3
+    g_windows = s.seamless_windows;                // Stage 2
+    g_window_quality = std::clamp(s.seamless_window_quality, 0, 2);
     logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s; buildings beyond SI's configs %s; "
-               "chimney smoke and window glow %s)",
+               "chimney smoke and window glow %s; window views %s, quality %d)",
                s.seamless_interiors ? "on" : "off", g_import_old ? "imported" : "left to the game's doors",
-               g_auto_buildings ? "found" : "not looked for", g_fire_fx ? "on" : "off");
+               g_auto_buildings ? "found" : "not looked for", g_fire_fx ? "on" : "off", g_windows ? "on" : "off",
+               g_window_quality);
 }
 
 void on_frame(const std::string& scene, bool in_game) {
     if (!api.ok) return;
+    watch_windows();  // Stage 2: the views' reconciler must have run lately, or everything of it is undone
     poll_orphans();  // (rooms or not: a late load given up on is unloaded once it's in)
     rooms_changed();  // (the roots looked up again this frame)
     if (in_game) resolve_layers();
@@ -4520,6 +4555,7 @@ bool resolve() {
     resolve_import();
     resolve_auto();  // B4
     resolve_fx();    // B3 (after resolve_persist: the fire calls)
+    resolve_windows();  // Stage 2
     return true;
 }
 

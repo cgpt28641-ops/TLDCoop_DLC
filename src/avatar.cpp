@@ -393,6 +393,11 @@ struct Avatar {
     float handover_blend = 0;  // 0: where they are; 1: at their place for the handover
     net::Spot spot;            // that place (kept while they ease back)
     float clip_hand[3] = {};   // dev `pose`: the right hand as the clips left it (from the root: right, up, forward)
+    // TLDCoop_DLC: Stage 2 of the rooms: the layer it is drawn on (0, or the layer of the room it stands in while that
+    // room is seen from outside through its windows), for which body, frames since it was last put on
+    int view_layer = 0;
+    std::string view_body;
+    int view_layer_frames = 0;
 };
 std::map<uint8_t, std::unique_ptr<Avatar>> g_avatars;  // by player id (host: the friends; a friend: the host, others)
 std::array<bool, net::kMaxPlayers> g_in_game{};  // the ids set_players last listed: states of anyone else are late
@@ -2367,6 +2372,8 @@ void drive_animation(Avatar& a, const net::StateMsg& s, double now) {
     }
 }
 
+void set_layer_everywhere(Il2CppObject* go, int layer);
+
 void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, double now) {
     net::StateMsg s;
     const char* hidden = nullptr;
@@ -2386,7 +2393,9 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
         hidden = (other_scene = "other scene (" + s.scene + ")").c_str();
     // TLDCoop_DLC: inside a Seamless Interiors room (80 m above its building) we aren't in. (One outdoors stays shown to
     // a player inside: the room's walls hide them, and the host's animals still see them; the HUD leaves them out.)
-    else if (!s.place.empty() && s.place != seamless_interiors::place())
+    // (Stage 2: unless that room is held for the views into it from outside: then it's drawn on the room's own layer, which
+    // only those views draw)
+    else if (!s.place.empty() && s.place != seamless_interiors::place() && seamless_interiors::view_layer(s.place) < 0)
         hidden = (other_scene = "inside " + s.place + " (a room we aren't in)").c_str();
     else if (s.flags & net::kStateDead)
         hidden = "dead (their body lies where they died)";
@@ -2406,6 +2415,18 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
     }
     show(a, true);
     sync_body(a);
+    {  // Stage 2: in a room seen from outside through its windows: on that room's layer (again when the body changes)
+        const int want = (!s.place.empty() && s.place != seamless_interiors::place()) ? seamless_interiors::view_layer(s.place) : -1;
+        const int layer = want < 0 ? 0 : want;
+        if (layer != a.view_layer || (want >= 0 && a.view_body != a.shown_body) || (want >= 0 && ++a.view_layer_frames >= 60)) {
+            if (Il2CppObject* root = target(a.root); root && pv.go_layer && pv.component_go) set_layer_everywhere(root, layer);
+            if (layer != a.view_layer)
+                say(a, "%s", want >= 0 ? "seen through the windows of the room they are in" : "drawn as usual again");
+            a.view_layer = layer;
+            a.view_body = a.shown_body;
+            a.view_layer_frames = 0;
+        }
+    }
     if (a.visibility != "shown") {
         // Where it appears matters: right after a load it must be where the other player really is.
         a.visibility = "shown";

@@ -53,6 +53,10 @@ bool is_clone_object(Il2CppObject* component_or_game_object);
 // The player stands in one of our rooms (the door took them in).
 bool player_inside();
 
+// Stage 2 (seamless_windows.inc): the private layer a building's room is drawn on while it is held for the views into
+// it from outside (-1: not held). A friend standing in that room is drawn on it too (avatar.cpp), so the views show them.
+int view_layer(const std::string& place);
+
 // --- co-op (milestone 2) ---------------------------------------------------------------------------------------------
 
 // The building the local player is inside ("" outdoors, or the feature off): State's place.

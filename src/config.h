@@ -62,6 +62,11 @@ struct Settings {
     // [interiors] fire_effects (B3): a fire burning in a room smokes from the building's chimney and lights its windows
     // from outside at night; 0: off.
     bool seamless_fire_effects = true;
+    // [interiors] windows (Stage 2): the rooms' windows show the real world outside (and, from outside, the buildings'
+    // windows show their rooms); 0: the painted windows. window_quality: 0 low, 1 medium, 2 high (views drawn at once,
+    // their resolution, rooms seen from outside and how far).
+    bool seamless_windows = true;
+    int seamless_window_quality = 1;
     // TLDCoop_DLC: [death] lose_percent: how many of the ordinary items (not story, mission or undroppable ones) a death
     // takes, at random; the rest stay in the body.
     int death_lose_percent = 70;

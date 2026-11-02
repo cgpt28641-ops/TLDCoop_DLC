@@ -109,6 +109,11 @@ constexpr const char* kDefaultIni =
     "; return, instead of being built again (at most 6, only the region you just left, only rooms saved on the way out).\n"
     "; 0 = every room is built again from its saved files, as before.\n"
     "keep_rooms=1\n"
+    "; Windows show the real world outside (weather, time of day, snow), and from outside a building's windows show its\n"
+    "; room. 0 = painted windows as before. window_quality: 0 low (2 views, low resolution, 1 room from outside up to\n"
+    "; 30 m), 1 medium (4 views, 1-2 rooms, 50 m), 2 high (8 views, full resolution, 3 rooms, 100 m).\n"
+    "windows=1\n"
+    "window_quality=1\n"
     "\n"
     "[death]\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
@@ -244,6 +249,9 @@ Settings load() {
     s.seamless_keep_rooms = GetPrivateProfileIntW(L"interiors", L"keep_rooms", 1, ini.c_str()) != 0;
     s.seamless_auto_buildings = GetPrivateProfileIntW(L"interiors", L"auto_buildings", 1, ini.c_str()) != 0;
     s.seamless_fire_effects = GetPrivateProfileIntW(L"interiors", L"fire_effects", 1, ini.c_str()) != 0;
+    s.seamless_windows = GetPrivateProfileIntW(L"interiors", L"windows", 1, ini.c_str()) != 0;
+    s.seamless_window_quality = GetPrivateProfileIntW(L"interiors", L"window_quality", 1, ini.c_str());
+    if (s.seamless_window_quality < 0 || s.seamless_window_quality > 2) s.seamless_window_quality = 1;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
