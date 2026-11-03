@@ -65,6 +65,11 @@ struct DoorFace {
     uintptr_t door = 0;  // the LoadScene
     V3 c, n, r;          // the view's plane (6 cm in front of the face), toward the player's side, right
     float w = 0, h = 0, thick = 0;
+    // TLDCoop_DLC: the door leaf swung open while the pair is open (it stood behind the view, so an open door looked
+    // like a hole: "drzwi znikają po otwarciu"); where it stood, to put it back
+    uintptr_t leaf = 0;
+    V3 leaf_pos;
+    Quat leaf_rot;
 };
 struct DoorPair {
     DoorFace out, in;    // out: the building's door (seen from outdoors); in: the room's (seen from the room)
@@ -105,10 +110,67 @@ struct Doors {
 
 // --- small things ----------------------------------------------------------------------------------------------------------
 
+// The door leaf of a face: the renderer under its LoadScene about as wide as the opening (0.4-1.1x), at least 60 % as
+// high, thin (< 25 cm across it). Swung ~85 degrees about its edge on the face's left, toward the player's side (in
+// front of the view, so it shows), or put back where it stood.
+int g_swing_logged = 0;
+void swing(DoorFace& f, bool open) {
+    if (!open) {
+        if (!f.leaf) return;
+        if (Il2CppObject* t = target(f.leaf); alive(t)) {
+            set_position(t, f.leaf_pos);
+            Quat q = f.leaf_rot;
+            void* a[] = {&q};
+            il2::invoke(api.tf_set_rotation, t, a);
+        }
+        drop(f.leaf);
+        return;
+    }
+    if (f.leaf || !api.tf_set_rotation || !api.r_bounds) return;
+    Il2CppObject* door = target(f.door);
+    Il2CppObject* go = alive(door) ? go_of(door) : nullptr;
+    if (!go) return;
+    Il2CppObject* best = nullptr;
+    float best_w = 0;
+    V3 best_c{};
+    each_in(go, api.t_renderer, [&](Il2CppObject* r) {
+        UBounds b;
+        if (!il2::invoke_value(api.r_bounds, r, b)) return;
+        const float w = 2 * (std::fabs(b.extents.x * f.r.x) + std::fabs(b.extents.z * f.r.z));
+        const float d = 2 * (std::fabs(b.extents.x * f.n.x) + std::fabs(b.extents.z * f.n.z));
+        const float h = 2 * b.extents.y;
+        if (w < 0.4f * f.w || w > 1.1f * f.w || h < 0.6f * f.h || d > 0.25f || w <= best_w) return;
+        best = r, best_w = w, best_c = b.center;
+    });
+    Il2CppObject* t = best ? tf_of(best) : nullptr;
+    if (!alive(t)) {
+        if (g_swing_logged++ < 5) logx::info("interiors: doors: no door leaf found to swing open (the view shows the far side)");
+        return;
+    }
+    f.leaf = hold(t);
+    f.leaf_pos = position(t);
+    f.leaf_rot = rotation(t);
+    const V3 hinge = best_c - f.r * (best_w * 0.5f);
+    Quat q = axis_angle(85.0f, kUp);
+    if (w_dot(rotate(q, f.r), f.n) < 0) q = axis_angle(-85.0f, kUp);
+    set_position(t, hinge + rotate(q, f.leaf_pos - hinge));
+    Quat nr = mul(q, f.leaf_rot);
+    void* a[] = {&nr};
+    il2::invoke(api.tf_set_rotation, t, a);
+    if (g_swing_logged++ < 5) logx::info("interiors: doors: %s swung open", name_of(go_of(best)).c_str());
+}
+void swing_pair(DoorPair& p) {
+    swing(p.out, p.open);
+    swing(p.in, p.open);
+}
+
 void drop_room_doors(RoomDoors& rd) {
     drop(rd.master);
     drop(rd.shell);
-    for (DoorPair& p : rd.pairs) drop(p.out.door), drop(p.in.door);
+    for (DoorPair& p : rd.pairs) {
+        swing(p.out, false), swing(p.in, false);
+        drop(p.out.door), drop(p.in.door);
+    }
     rd.pairs.clear();
 }
 V3 map_through(const DoorFace& a, const DoorFace& b, float turn, V3 p) { return b.c + rotate(axis_angle(turn, kUp), p - a.c); }
@@ -609,6 +671,7 @@ bool door_click(Il2CppObject* door, const DoorChoice& c) {
     if (p->open && !g_door_walk) return false;  // (portal_door: through it)
     p->open = !p->open;
     p->away_since = -1;
+    swing_pair(*p);
     door_sound(!p->open);
     logx::info("interiors: doors: '%s' (%s) %s", name_of(go_of(door)).c_str(), c.in->cfg->id,
                p->open ? "opened: the far side shows in it; walk in to go through" : "closed");
@@ -629,6 +692,7 @@ void tick_door_close(V3 pos, double now) {
             if (now - p.away_since < 1500) continue;
             p.open = false;
             p.away_since = -1;
+            swing_pair(p);
             if (d < 15.0f) door_sound(true);
         }
 }

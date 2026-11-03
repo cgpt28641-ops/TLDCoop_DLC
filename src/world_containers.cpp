@@ -724,6 +724,8 @@ void tell_owner(const std::string& key) {
     netrt::send_packet(w, true);
 }
 
+void release_mine(const char* why);
+
 // Before TLD searches or opens container `c`: true to go on now. False when someone else is in it (the player is
 // told), or (client) while we wait for the host to say it's ours (the call is made then: g_lock_wait).
 bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
@@ -739,6 +741,10 @@ bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
         return false;
     }
     const double now = now_ms();
+    // TLDCoop_DLC: searching one drawer straight after another (within the 1 s it takes to count one as closed) put
+    // the new one in g_mine over the old, which was never let go: the host's own locks don't time out, so drawer after
+    // drawer stayed "Shatsca is searching this right now" for everyone else (Karol 21:05, a whole house).
+    if (g_mine && g_mine->key != key) release_mine("another one opened");
     if (hosting()) {
         const bool was_free = owner == net::kNoOwner;
         g_locks.take(key, me, now);
@@ -865,6 +871,17 @@ void lock_tick() {
     for (const std::string& key : g_locks.expire(now, net::kLockStaleMs, self_player())) {
         tell_owner(key);
         logx::info("containers: %s: its player stopped saying they're in it; free again", key.c_str());
+    }
+    // TLDCoop_DLC: and ours (the host's) that we aren't in any more: never left held (see may_open)
+    {
+        std::vector<std::string> stale;
+        for (const auto& [key, e] : g_locks.entries())
+            if (e.owner == self_player() && (!g_mine || g_mine->key != key)) stale.push_back(key);
+        for (const std::string& key : stale)
+            if (g_locks.release(key, self_player())) {
+                tell_owner(key);
+                logx::info("containers: %s: we weren't in it any more; free for the others", key.c_str());
+            }
     }
     const net::Status st = netrt::status();
     std::vector<uint8_t> holders;
