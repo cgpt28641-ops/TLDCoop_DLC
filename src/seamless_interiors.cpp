@@ -3233,11 +3233,32 @@ void activate_detour(Il2CppObject* self, bool immediately, const MethodInfo* met
         put<bool>(self, api.door_touch_ground, false);
         return;
     }
+    {
+        static double last_told = -1e18;
+        static int told = 0;
+        if (now_ms() - last_told > 3000 && told++ < 200) {
+            last_told = now_ms();
+            logx::info("interiors: door used: '%s' (to %s)", name_of(go_of(self)).c_str(), door_scene(self).c_str());
+        }
+    }
     if (!engaged()) {
         world_items::door_used();  // TLDCoop_DLC: a door of the game's own, which changes the scene
         return g_activate(self, immediately, method);
     }
-    if (g_fade.busy) return;  // a door is already being used (SI: s_DoorFadeBusy)
+    if (g_fade.busy) {  // a door is already being used (SI: s_DoorFadeBusy)
+        // TLDCoop_DLC: never for long (Karol 22:41: "couldn't get back in", no door line in the log): a fade still
+        // "busy" 5 s after it should have ended is let go
+        if (now_ms() - g_fade.until > 5000) {
+            logx::warn("interiors: a door's fade was still marked busy %.0f s after its end; let go", (now_ms() - g_fade.until) / 1000);
+            fade(false, 0);
+            drop(g_fade.door);
+            g_fade = {};
+        } else {
+            static int told = 0;
+            if (told++ < 20) logx::info("interiors: '%s' used while a door's fade is under way; ignored", name_of(go_of(self)).c_str());
+            return;
+        }
+    }
     const DoorChoice c = choose(self);
     if (c.way == DoorWay::Vanilla) {
         if (Instance* wait = hosted_unready(self)) {  // milestone 2: the host has this room; ours is coming

@@ -367,6 +367,7 @@ void pass_on(uint8_t from, net::ContainerPutMsg m) {
 }
 
 void flush(double now) {
+    std::vector<std::pair<std::string, Il2CppObject*>> rekeyed;
     for (auto it = g_dirty.begin(); it != g_dirty.end();) {
         const std::string& id = it->first;
         Il2CppObject* c = it->second;
@@ -378,6 +379,21 @@ void flush(double now) {
             logx::warn("containers: no answer from the host about %s (%s); ours stands", name_of(c).c_str(),
                        short_id(id).c_str());
             g_waiting.erase(id);
+        }
+        // TLDCoop_DLC: a room's container marked while its room was still being built had the game's own id (which
+        // differs per game) instead of the room's key: sent like that it was "isn't in our CoastalRegion" for everyone
+        // else (the host's extra rolled loot in new rooms, Szymon's/Karol's logs 22:32-22:40). Its key as it is now.
+        if (alive(c) && seamless_interiors::sync_skips(c)) {  // still building: later
+            ++it;
+            continue;
+        }
+        if (alive(c)) {
+            std::string now_id = id_of(c);
+            if (now_id != id) {
+                rekeyed.emplace_back(std::move(now_id), c);
+                it = g_dirty.erase(it);
+                continue;
+            }
         }
         if (alive(c)) {
             std::string sig = signature(c);
@@ -394,6 +410,7 @@ void flush(double now) {
         }
         it = g_dirty.erase(it);
     }
+    for (auto& [id, c] : rekeyed) g_dirty.emplace(std::move(id), c);  // (sent next time, under their room's key)
 }
 
 void ask(Il2CppObject* c) {
@@ -471,6 +488,14 @@ bool room_container(const std::string& id) { return id.rfind("si:", 0) == 0; }
 void apply_stored() {
     const auto it = g_store.find(g_scene);
     if (it == g_store.end()) return;
+    // TLDCoop_DLC: this scene's containers looked up once for the pass (find() went through all of them again for
+    // each one missing: 100+ kept changes for rooms not built here, every 2 s)
+    std::unordered_map<std::string, Il2CppObject*> here;
+    for (Il2CppObject* c : all_containers()) here[id_of(c)] = c;
+    auto find = [&](const std::string& id) -> Il2CppObject* {
+        const auto f = here.find(id);
+        return f != here.end() && alive(f->second) ? f->second : nullptr;
+    };
     int applied = 0, waiting = 0;
     for (auto e = it->second.begin(); e != it->second.end();) {
         const std::string& id = e->first;
@@ -536,18 +561,40 @@ void snapshot_step() {
 void answer(const net::ContainerWantMsg& m, uint8_t from) {
     std::string contents;
     const char* source = "nothing known";
+    bool known = false;
     if (m.scene == g_scene) {
+        // TLDCoop_DLC: a change of theirs kept for a room not up here yet is newer than what our copy of the room has
+        // (Karol took the salmon from an oven; asked again, the host answered with its own untouched oven: a second
+        // salmon). Applied first if the container is here now; else it is what we know.
+        if (auto st = g_store.find(g_scene); st != g_store.end())
+            if (auto e = st->second.find(m.id); e != st->second.end() && e->second.from_peer) {
+                if (Il2CppObject* c = find(m.id)) {
+                    const std::string text = e->second.text;
+                    st->second.erase(e);
+                    if (st->second.empty()) g_store.erase(st);
+                    apply(c, m.id, text, "the other player changed, while we were elsewhere,");
+                } else {
+                    contents = strip_ours(e->second.text);
+                    source = "what they last told us";
+                    known = true;
+                }
+            }
+    }
+    if (known) {
+    } else if (m.scene == g_scene) {
         if (Il2CppObject* c = find(m.id)) {
             contents = shared_text(c);
             g_last[m.id] = contents;
             g_sig[m.id] = signature(c);
             g_dirty.erase(m.id);
             source = "ours";
+            known = true;
         }
     } else if (const auto s = g_store.find(m.scene); s != g_store.end()) {
         if (const auto it = s->second.find(m.id); it != s->second.end()) {
             contents = strip_ours(it->second.text);  // (kept from before, or a body's whole pack)
             source = "what we last knew";
+            known = true;
         }
     }
     send_put(m.id, contents, net::kContainerAnswer | (contents.empty() ? net::kContainerUnknown : 0), m.scene, from);
@@ -745,6 +792,17 @@ bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
     // the new one in g_mine over the old, which was never let go: the host's own locks don't time out, so drawer after
     // drawer stayed "Shatsca is searching this right now" for everyone else (Karol 21:05, a whole house).
     if (g_mine && g_mine->key != key) release_mine("another one opened");
+    // TLDCoop_DLC: a friend's change to this one, kept until it could be found here: applied now, before TLD shows it.
+    // A room's containers turn up in TLD's list one by one as they're looked at (the kept changes went in every 2 s,
+    // one each time: Shatsca opened kitchen cabinets Szymon had emptied and found them full, 22:56).
+    if (hosting())
+        if (auto st = g_store.find(g_scene); st != g_store.end())
+            if (auto e = st->second.find(id); e != st->second.end() && e->second.from_peer) {
+                const std::string text = e->second.text;
+                st->second.erase(e);
+                if (st->second.empty()) g_store.erase(st);
+                apply(c, id, text, "the other player changed, while we were elsewhere,");
+            }
     if (hosting()) {
         const bool was_free = owner == net::kNoOwner;
         g_locks.take(key, me, now);
