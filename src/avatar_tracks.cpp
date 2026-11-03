@@ -25,6 +25,7 @@ constexpr int kHumanFootprint = 0;     // SnowImprintType
 constexpr float kStride = 0.75f;       // m between prints (one foot each)
 constexpr float kSide = 0.12f;         // m from the middle to a foot
 constexpr ptrdiff_t kCachedPtr = 0x10;
+constexpr bool kEnabled = false;
 
 struct V3 {
     float x, y, z;
@@ -131,6 +132,13 @@ void step(Track& t, Il2CppObject* trail, const V3& at, float yaw) {
 }  // namespace
 
 bool init() {
+    // TLDCoop_DLC: off for now. With these trails in the game the snow round the player rendered black at dusk while
+    // the trees stayed lit (Karol's screenshots 22:54, the first evening with them); not shown to be the cause, but the
+    // only change to TLD's snow imprints that evening.
+    if (!kEnabled) {
+        logx::info("tracks: off (the others leave no footprints)");
+        return false;
+    }
     Il2CppClass* trail = il2::find_class(kGame, "", "FootstepTrail");
     Il2CppClass* mgr = il2::find_class(kGame, "", "FootstepTrailManager");
     Il2CppClass* physics = il2::find_class(kPhysics, "UnityEngine", "Physics");
