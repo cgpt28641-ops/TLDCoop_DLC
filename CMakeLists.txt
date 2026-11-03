@@ -46,6 +46,7 @@ add_library(tldcoop SHARED
   src/just_zoom.cpp  # TLDCoop_DLC: JustZoom (WillWunderhorn), with permission
   src/dev_console.cpp  # TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
   src/avatar.cpp
+  src/avatar_tracks.cpp  # TLDCoop_DLC: the others' footprints in the snow
   src/config.cpp
   src/coop_death.cpp
   src/coop_give.cpp

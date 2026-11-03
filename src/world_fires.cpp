@@ -356,6 +356,10 @@ std::unordered_map<std::string, std::unordered_map<std::string, net::FirePutMsg>
 std::optional<net::FireListMsg> g_list;                 // client: the host's fires for a scene we aren't in yet
 // TLDCoop_DLC: host: ids of the friends' changes (in g_store) that wait for a Seamless Interiors room of ours
 std::unordered_set<std::string> g_room_waited;
+// TLDCoop_DLC: client: the host's change to a fire that didn't load here (its Seamless Interiors room not built here
+// yet: a fire the host lit in a house we hadn't entered stayed cold for us until it changed again): kept per scene and
+// applied again when a room comes up.
+std::unordered_map<std::string, std::unordered_map<std::string, net::FirePutMsg>> g_client_wait;
 
 void reset(const char* why) {
     if (!g_sig.empty()) logx::info("fires: forgetting shared state (%s)", why);
@@ -486,6 +490,7 @@ void send_list(uint8_t to) {
 }
 
 void apply_stored(bool room_up = false);
+void apply_put(const net::FirePutMsg& m, const char* who);
 
 // Compare the fires here with what both games last had; send what changed.
 void check() {
@@ -505,6 +510,13 @@ void check() {
         }
         if (taken) logx::info("fires: a Seamless Interiors room came up here: its %d fire(s) taken in as both games'", taken);
         if (hosting()) apply_stored(true);  // TLDCoop_DLC: friends' changes that waited for a room of ours
+        if (!hosting())
+            if (auto w = g_client_wait.find(g_scene); w != g_client_wait.end()) {
+                std::vector<net::FirePutMsg> again;
+                for (auto& [id, m] : w->second) again.push_back(std::move(m));
+                g_client_wait.erase(w);
+                for (const net::FirePutMsg& m : again) apply_put(m, "(waiting for a room) the host's");
+            }
     }
     std::unordered_map<std::string, Il2CppObject*> here;
     std::vector<std::pair<std::string, Il2CppObject*>> changed;
@@ -655,9 +667,19 @@ void apply_put(const net::FirePutMsg& m, const char* who) {
     load("{\"m_SerializedFires\":[" + m.text + "],\"m_DestroyedFires\":[]}");
     Il2CppObject* f = find(m.id);
     if (!f) {
+        if (!hosting() && m.scene == g_scene) {
+            const bool again = g_client_wait[m.scene].count(m.id) != 0;
+            g_client_wait[m.scene][m.id] = m;
+            if (!again)
+                logx::info("fires: %s fire %s didn't load here (a room not built here yet?); kept for when a room comes up",
+                           who, short_id(m.id).c_str());
+            return;
+        }
         logx::warn("fires: %s fire %s didn't load here", who, short_id(m.id).c_str());
         return;
     }
+    if (!hosting())
+        if (auto w = g_client_wait.find(m.scene); w != g_client_wait.end()) w->second.erase(m.id);
     g_here[m.id] = f;
     g_sig[m.id] = signature(f);
     logx::info("fires: %s fire %s (%s): %s", who, name_of(f).c_str(), short_id(m.id).c_str(), describe_fire(f).c_str());

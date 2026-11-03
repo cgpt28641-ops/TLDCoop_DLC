@@ -3684,6 +3684,17 @@ void generic_indoors_start_detour(Il2CppObject* self, const MethodInfo* method) 
     }
     g_generic_indoors_start(self, method);
 }
+// TLDCoop_DLC: ClothingItem.MaybeGetWetOnGround: clothes put down in a room (it stands in the region, an outdoor scene)
+// soaked through as if lying in the snow (Karol: "ubrania na ziemi w budynku robią się całe mokre"). In a room: dry.
+using WetFn = void (*)(Il2CppObject* self, float hours, const MethodInfo* method);
+WetFn g_wet_on_ground = nullptr;
+void wet_on_ground_detour(Il2CppObject* self, float hours, const MethodInfo* method) {
+    if (self && api.ok && !g_instances.empty()) {
+        if (under_any_room(self)) return;
+        if (Il2CppObject* t = tf_of(self); t && built_room_at(position(t))) return;
+    }
+    g_wet_on_ground(self, hours, method);
+}
 BoolFn g_indoor_environment = nullptr;
 bool indoor_environment_detour(Il2CppObject* self, const MethodInfo* method) {
     if (engaged() && g_inside) return true;
@@ -4591,6 +4602,9 @@ bool resolve() {
         hook("Weather.IsIndoorEnvironment", il2::find_method(w, "IsIndoorEnvironment", 0), &indoor_environment_detour,
              &g_indoor_environment);
     }
+    if (Il2CppClass* ci = il2::find_class(kGame, "", "ClothingItem"))
+        hook("ClothingItem.MaybeGetWetOnGround", il2::find_method(ci, "MaybeGetWetOnGround", 1), &wet_on_ground_detour,
+             &g_wet_on_ground);
     if (Il2CppClass* gi = il2::find_class(kGame, "", "GenericIndoors"))
         hook("GenericIndoors.Start", il2::find_method(gi, "Start", 0), &generic_indoors_start_detour, &g_generic_indoors_start);
     if (Il2CppClass* ev = il2::find_class(kGame, "", "EvolveItem"))

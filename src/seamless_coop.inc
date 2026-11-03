@@ -771,6 +771,13 @@ bool settle_in_room(Il2CppObject* gear) {
     return false;
 }
 
+// TLDCoop_DLC: a world position inside a built room of ours (open or closed).
+bool built_room_at(const V3& p) {
+    for (Instance& in : g_instances)
+        if (in_room(&in) && in.hydrated && in_parked_room(in, p, 0)) return true;
+    return false;
+}
+
 bool unbuilt_room_at(float x, float y, float z) {
     if (!api.ok || !g_engaged || g_instances.empty()) return false;
     const V3 p{x, y, z};

@@ -281,6 +281,9 @@ struct WorldMsg {
     std::string region;            // SceneTransitionData.m_LastOutdoorScene: the host's region (in an interior, where it
                                    // lets out); "" from an older recording
     std::string world_id;          // game::save_id() of the host's game: which world this is
+    // TLDCoop_DLC: AuroraManager.m_NormalizedActive in the host's game (how far the aurora is on: the lamps, radios and
+    // fences it powers follow it); -1 unknown (an older host: sent last, read only when there).
+    float aurora = -1;
     double received_ms = 0;        // receiver's now_ms() on arrival; not sent
 };
 
@@ -1435,6 +1438,7 @@ inline void write_world(Writer& w, const WorldMsg& m) {
     w.put_blob(m.weather_set_state, kWeatherStateMax);
     w.put_str(m.region, kSceneLen);
     w.put_str(m.world_id, kWorldIdLen);
+    w.put(m.aurora);
 }
 
 inline bool read_world(Reader& r, WorldMsg& m) {
@@ -1455,6 +1459,7 @@ inline bool read_world(Reader& r, WorldMsg& m) {
         m.region = r.get_str(kSceneLen);
         m.world_id = r.get_str(kWorldIdLen);
     }
+    m.aurora = r.left() >= sizeof(float) ? r.get<float>() : -1.0f;
     return r.ok();
 }
 

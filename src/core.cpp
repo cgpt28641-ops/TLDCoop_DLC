@@ -22,6 +22,7 @@
 #include "coop_save.h"
 #include "coop_chat.h"
 #include "avatar.h"
+#include "avatar_tracks.h"
 #include "config.h"
 #include "dumper.h"
 #include "game_state.h"
@@ -459,6 +460,7 @@ void update_avatar(const std::string& scene, bool in_game) {
     netrt::drain_remote_states(incoming);
     avatar::push(incoming);
     avatar::update(scene, in_game);
+    avatar_tracks::update(in_game);
 }
 
 // A friend whose link drops mid-game plays on: what they change in the world goes to the host once it's back. Not
@@ -769,6 +771,7 @@ void on_runtime_ready() {
     dump_types_if_build_changed();
     game::init();
     avatar::init();
+    avatar_tracks::init();  // TLDCoop_DLC: the others' footprints
     world_sync::init();
     wildlife_sync::init();
     wildlife_targets::init();

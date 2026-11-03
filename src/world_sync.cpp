@@ -2,12 +2,14 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
 #include "game_state.h"
+#include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net_runtime.h"
@@ -144,6 +146,38 @@ void list_sets_once(Il2CppObject* weather) {
 
 // --- host ------------------------------------------------------------------------------------------------------------
 
+// TLDCoop_DLC: the aurora. TLD works out how far it is on (AuroraManager.m_NormalizedActive, every frame in
+// UpdateAuroraValue) from its own sky; a friend's sky follows the host's weather in jumps (a set taken over at 5 %,
+// the clock moved by a sleep), so its aurora came up late and weak: lamps dark while the host's shone ("zorza słabo
+// działa"). The host sends its value; a friend's UpdateAuroraValue ends with it.
+const MethodInfo* g_get_aurora = nullptr;  // static GameManager.GetAuroraManager()
+ptrdiff_t g_aurora_active = -1;            // AuroraManager.m_NormalizedActive
+float g_host_aurora = -1;                  // a friend: the host's, while fresh
+double g_host_aurora_ms = -1e18;
+int g_aurora_logged = 0;
+double now_ms_ws() {
+    static const double per_ms = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return static_cast<double>(f.QuadPart) / 1000.0;
+    }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return static_cast<double>(c.QuadPart) / per_ms;
+}
+using AuroraValueFn = void (*)(Il2CppObject* self, const MethodInfo* method);
+AuroraValueFn g_aurora_value = nullptr;
+void aurora_value_detour(Il2CppObject* self, const MethodInfo* method) {
+    g_aurora_value(self, method);
+    if (!self || g_aurora_active < 0 || g_host_aurora < 0 || now_ms_ws() - g_host_aurora_ms > 10000) return;
+    const auto role = netrt::role();
+    if (!role || *role == net::Role::Host) return;
+    float* v = reinterpret_cast<float*>(reinterpret_cast<char*>(self) + g_aurora_active);
+    if (std::fabs(*v - g_host_aurora) > 0.2f && g_aurora_logged++ < 5)
+        logx::info("world: aurora %.0f%% here, %.0f%% at the host's: the host's taken", *v * 100, g_host_aurora * 100);
+    *v = g_host_aurora;
+}
+
 net::WorldMsg read_world(bool in_game) {
     net::WorldMsg w;
     if (!in_game) return w;
@@ -173,6 +207,9 @@ net::WorldMsg read_world(bool in_game) {
     if (scene_transition && api.last_outdoor >= 0)
         if (Il2CppString* s = il2::read_field<Il2CppString*>(scene_transition, api.last_outdoor)) w.region = il2::to_utf8(s);
     w.world_id = game::save_id();
+    if (g_get_aurora && g_aurora_active >= 0)
+        if (Il2CppObject* am = il2::invoke(g_get_aurora, nullptr))
+            w.aurora = std::clamp(il2::read_field<float>(am, g_aurora_active), 0.0f, 1.0f);
     w.valid = true;
 
     list_sets_once(weather);
@@ -360,6 +397,13 @@ bool init() {
               api.transition_set >= 0 && api.transition_activate && api.transition_activate_type &&
               api.set_serialize && api.set_deserialize && api.set_prepare && api.set_progress && api.object_name &&
               api.wind_strength && api.wind_angle && api.wind_start && api.wind_start_now;
+    g_get_aurora = il2::find_method(game_manager, "GetAuroraManager", 0);
+    if (Il2CppClass* am = il2::find_class(kGame, "", "AuroraManager")) {
+        g_aurora_active = il2::field_offset(am, "m_NormalizedActive");
+        if (const MethodInfo* m = il2::find_method(am, "UpdateAuroraValue", 0); m && g_aurora_active >= 0)
+            hooks::install_method("AuroraManager.UpdateAuroraValue", m, reinterpret_cast<void*>(&aurora_value_detour),
+                                  reinterpret_cast<void**>(&g_aurora_value));
+    }
     logx::info("world sync: %s", g_ready ? "ready" : "UNAVAILABLE (TLD API missing; see warnings above)");
     return g_ready;
 }
@@ -417,6 +461,10 @@ void on_frame(const std::string& scene, bool in_game) {
     follow_clock(*world, now);
     follow_weather(*world, now);
     follow_wind(*world, now, first);
+    if (world->aurora >= 0) {
+        g_host_aurora = world->aurora;
+        g_host_aurora_ms = now_ms_ws();
+    }
 }
 
 }  // namespace world_sync
