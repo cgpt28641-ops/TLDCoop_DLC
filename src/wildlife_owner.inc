@@ -910,6 +910,12 @@ void take_local(const net::WildCtlMsg& t, double now) {
         il2::invoke(api.set_position, transform_of(ai), pa);
         il2::invoke(api.set_euler, transform_of(ai), ra);
     }
+    // TLDCoop_DLC: handed an animal in a scene another game spawns in, our own spawn region (it took it in with TLD's
+    // record) counted it as one of its own over its target (the spawning game's is higher: [wildlife] per_player) and
+    // switched it off within a second or two (Szymon's log: "we run #... now" then "TLD switched off it"), the spawning
+    // game spawned another, and so on: the host's pack of wolves. Out of our region's list (not a death there).
+    const std::string own_scene = g_own_scene;
+    if (!dead_given && !i_control(own_scene)) detach_from_region(ai);
     if (s.hp > 0) write_field<float>(ai, api.ai_hp, s.hp);
     write_field<bool>(ai, api.ai_bleeding, (s.flags & net::kAnimalBleeding) != 0);
     write_field<bool>(ai, api.ai_wounded, (s.flags & net::kAnimalWounded) != 0);

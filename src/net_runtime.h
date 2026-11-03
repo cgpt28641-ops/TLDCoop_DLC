@@ -58,11 +58,14 @@ void drain_remote_states(std::vector<net::TimedState>& out);
 class Together {
 public:
     std::vector<uint8_t> arrived(const std::string& scene);
+    // TLDCoop_DLC: which of arrived()'s last answer came only from a resync (a room came up), not a new arrival
+    bool only_resync(uint8_t id) const { return id < net::kMaxPlayers && resync_only_[id]; }
     void clear() { link_.fill(0); }
 
 private:
     std::array<uint32_t, net::kMaxPlayers> link_{};  // the link of each friend with us; 0: not with us
     std::array<uint32_t, net::kMaxPlayers> resync_{};  // resync() count of each friend when we last sent our lists
+    std::array<bool, net::kMaxPlayers> resync_only_{};
 };
 
 // Host (TLDCoop_DLC): every Together counts this friend (0: every friend) as just arrived again, so each world module

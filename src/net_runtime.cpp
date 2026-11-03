@@ -299,8 +299,12 @@ std::vector<uint8_t> Together::arrived(const std::string& scene) {
     }
     std::vector<uint8_t> out;
     for (uint8_t id = 1; id < net::kMaxPlayers; ++id) {
+        resync_only_[id] = false;
         if (!now[id]) continue;
-        if (now[id] != link_[id] || resync_[id] != g_resync[id]) out.push_back(id);
+        if (now[id] != link_[id] || resync_[id] != g_resync[id]) {
+            out.push_back(id);
+            resync_only_[id] = now[id] == link_[id];
+        }
         resync_[id] = g_resync[id];
     }
     link_ = now;

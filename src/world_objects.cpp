@@ -522,7 +522,11 @@ void changed_here(const Object& x, const std::string& id, const std::string& nam
 
 // Host: everything broken down or harvested in our scene, for friend `to` who just came in: what TLD has (for objects
 // with a TLD id) and what a player broke down without one.
-void send_list(uint8_t to) {
+// TLDCoop_DLC: `light`: only a room came up (a resync), not a new arrival: the states, without TLD's random spawns and
+// placements of the whole region. Loading those again in the friend's game each time one of its rooms was built
+// (every few seconds while walking past houses) switched off the animals it had just been handed (Szymon: wolves gone
+// within 3 s of the handover, the host spawning more: "horda wilków").
+void send_list(uint8_t to, bool light = false) {
     net::ObjectListMsg m;
     m.scene = g_scene;
     const auto members = set_members();
@@ -538,12 +542,12 @@ void send_list(uint8_t to) {
     if (const auto it = g_gone.find(g_scene); it != g_gone.end())
         for (const auto& [key, s] : it->second) m.objects.push_back(s);
     for (net::ObjectState& s : coop_death::bodies_here()) m.objects.push_back(std::move(s));  // (what they hold: opened)
-    if (api.spawns_save) m.spawns = text(reinterpret_cast<Il2CppString*>(il2::invoke(api.spawns_save, nullptr)));
+    if (api.spawns_save && !light) m.spawns = text(reinterpret_cast<Il2CppString*>(il2::invoke(api.spawns_save, nullptr)));
     if (m.spawns.size() > net::kSpawnTextMax) {
         logx::warn("objects: TLD's random spawns here are too big to send (%zu chars)", m.spawns.size());
         m.spawns.clear();
     }
-    m.placements = placements_text();
+    if (!light) m.placements = placements_text();
     if (m.placements.size() > net::kPlacementTextMax) {
         logx::warn("objects: TLD's placements here are too big to send (%zu chars)", m.placements.size());
         m.placements.clear();
@@ -555,6 +559,7 @@ void send_list(uint8_t to) {
                "spawns (%zu picked, %zu chars) and placements (%zu, %zu chars) (player %u)", g_scene.c_str(),
                m.objects.size(), count_of(m.spawns, "\"m_ObjectName\""), m.spawns.size(),
                count_of(m.placements, "\"m_Guid\""), m.placements.size(), to);
+    if (light) logx::info("objects: (a room came up: the region's spawns and placements not sent again)");
 }
 
 // --- placements a player moves -------------------------------------------------------------------------------------
@@ -1749,7 +1754,7 @@ void on_frame(bool in_game) {
     send_placements();
     track_moving_decoration();  // TLDCoop_DLC
     if (!hosting()) return;
-    for (uint8_t id : g_together.arrived(g_scene)) send_list(id);  // (see world_items)
+    for (uint8_t id : g_together.arrived(g_scene)) send_list(id, g_together.only_resync(id));  // (see world_items)
 }
 
 bool share(const net::ObjectState& s) {
