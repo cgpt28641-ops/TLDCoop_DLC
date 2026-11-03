@@ -800,7 +800,8 @@ Il2CppObject* region_fog(Il2CppObject* map) { return dict_get(get<Il2CppObject*>
 // Each new spot redraws the radar's copy of the map from every spot (one blit each, as TLD's map does when it opens):
 // spots 50 m apart, each charting 80 m round, cover the ground without piling up.
 constexpr float kChartStepM = 50;  // a new survey spot once we're this far from every one charted before
-constexpr float kChartRadiusM = 80;  // how far around it is charted (TLD's charcoal survey: m_DetailSurveyRadiusMeters)
+constexpr float kChartRadiusM = 150;  // how far around it is charted (TLDCoop_DLC: the radar's range; 80 m left most of
+                                     // the radar dark: Karol "minimapa nie działa")
 
 struct Chart {
     bool before = false;  // a spot charted (or found charted) in this scene
@@ -844,7 +845,7 @@ bool chart(const game::PlayerState& me, bool indoors, bool now) {
     Il2CppObject* spots = region_spots(map);
     if (!now && to_map(map, me.position, at) && per_m > 0 && charted_near(spots, at, kChartStepM * per_m)) return false;
     const int before = list_size(spots);
-    float radius = std::min(kChartRadiusM, std::max(1.0f, get<float>(map, api.map_survey_radius)));
+    float radius = kChartRadiusM;
     bool force = true, use_override = false, vistas = false;
     Vector3 none{0, 0, 0};
     void* args[] = {&radius, &force, &use_override, &none, &vistas};
@@ -885,7 +886,7 @@ bool chart_friend(const avatar::Seen& f) {
     Il2CppObject* spots = region_spots(map);
     if (to_map(map, pos, at) && per_m > 0 && charted_near(spots, at, kChartStepM * per_m)) return false;
     const int before = list_size(spots);
-    float radius = std::min(kChartRadiusM, std::max(1.0f, get<float>(map, api.map_survey_radius)));
+    float radius = kChartRadiusM;
     bool force = true, use_override = true, vistas = false;
     Vector3 where{f.x, f.y, f.z};
     void* args[] = {&radius, &force, &use_override, &where, &vistas};
