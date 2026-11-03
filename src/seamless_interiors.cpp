@@ -4036,8 +4036,9 @@ void set_settings(const config::Settings& s) {
     g_window_quality = std::clamp(s.seamless_window_quality, 0, 2);
     g_door_portals = s.seamless_door_portals;      // Stage 2 doors
     g_door_walk = s.seamless_door_walk;
-    g_indoor_light = std::clamp(s.seamless_indoor_light, 5, 100);
-    logx::info("interiors: in a room the sky's light is %d%% of the outdoors' ([interiors] indoor_light)", g_indoor_light);
+    g_indoor_light = std::clamp(s.seamless_indoor_light, 0, 100);
+    if (g_indoor_light) logx::info("interiors: in a room the sky's light is %d%% of the outdoors' ([interiors] indoor_light)", g_indoor_light);
+    else logx::info("interiors: rooms lit as the game lights its interiors ([interiors] indoor_light=0)");
     logx::info("interiors: Seamless Interiors %s in coop.ini (old saves' interiors %s; buildings beyond SI's configs %s; "
                "chimney smoke and window glow %s; window views %s, quality %d; door portals %s%s)",
                s.seamless_interiors ? "on" : "off", g_import_old ? "imported" : "left to the game's doors",

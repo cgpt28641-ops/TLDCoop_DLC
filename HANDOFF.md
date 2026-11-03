@@ -606,3 +606,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - [loot] per_player=50 (host): Container.PopulateWithRandomGear powtarzane z solą ziarna (world_mode::set_seed_salt), dodatkowe nazwy do m_GearToInstantiate; część ułamkowa losowo per przedmiot (deterministycznie od pozycji).
 - Lampa Szymona: w logu hosta przychodzi z 0% paliwa, zgaszona – potrzebny log Szymona.
 - Zwierzęta przy budynku: add_inside_spot z poprzedniej wersji bez zmian.
+
+## 2026-11-03 – wnętrza: oświetlenie z gry, wchodzenie w drzwi
+- Shatsca: „za jasno” dotyczyło wyglądu z modem (bez przyciemnienia); chcą wyglądu wnętrz z gry. [interiors] indoor_light=0 (nowy domyślny): w pokoju, w którym jest gracz, obiekty kDarkOnly (InteriorLightingManager_Prefab, Daytime/Daylight/Midday/AmbientLight/Nighttime) włączane (wyłączane po wyjściu); hook InteriorLightingManager.Update liczy głębokość, a Utils.SetAmbientLightScaled przepuszcza tylko wywołania z menedżera pokoju (TodAmbientLight: kolory wnętrza dzień/noc), wywołania „z zewnątrz” pomijane. Pokój bez menedżera: 45%. 5–100 = stare procenty. Lightmapy pokoju dalej wyłączone (jak w trybie outdoor SI) – wygląd zbliżony, nie identyczny.
+- Drzwi: przejście przez otwarte drzwi wymagało sprintu (kapsuła 0,5 m zatrzymywała gracza przed zasięgiem 0,5 m), przeciążony nie wchodził. kDoorWalkReach 0,5→0,9 m, prędkość 0,4→0,25 m/s albo „pcha w stronę drzwi” (vp_FPSController.m_MotorThrottle · normalna < 0).

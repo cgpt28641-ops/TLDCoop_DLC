@@ -45,7 +45,10 @@ constexpr float kDoorWidthMin = 0.55f, kDoorWidthMax = 3.2f, kDoorHeightMin = 1.
 constexpr float kDoorPairWidthDiff = 0.6f, kDoorPairHeightDiff = 0.7f;
 constexpr double kDoorFreshMs = 250;         // a door's view drawn this lately counts as showing
 constexpr float kDoorStepIn = 0.6f;          // used by hand: landed this far past the far door's plane
-constexpr float kDoorWalkReach = 0.5f, kDoorWalkSpeed = 0.4f, kDoorWalkMinDepth = 0.35f;
+// TLDCoop_DLC: 0.9 m (the player's body, 0.5 m round outdoors, stops at the door before its center comes within
+// 0.5 m of the view's plane: only a sprint got through, an overloaded player never); pushing toward the door counts as
+// walking into it (pressed against it the body doesn't move)
+constexpr float kDoorWalkReach = 0.9f, kDoorWalkSpeed = 0.25f, kDoorWalkMinDepth = 0.35f;
 constexpr double kDoorWalkCooldownMs = 750;
 constexpr float kDoorLandDrop = 1.2f, kDoorLandRise = 0.6f;
 
@@ -630,6 +633,15 @@ void tick_door_close(V3 pos, double now) {
         }
 }
 
+// The player is trying to move into the door (the motor's throttle against its outward side), stopped or not.
+bool pushing_toward(V3 door_out) {
+    if (!dapi.gm_fps_player || dapi.player_controller < 0 || dapi.motor_throttle < 0) return false;
+    Il2CppObject* player = il2::invoke(dapi.gm_fps_player, nullptr);
+    Il2CppObject* ctl = alive(player) ? get<Il2CppObject*>(player, dapi.player_controller) : nullptr;
+    if (!alive(ctl)) return false;
+    const V3 t = get<V3>(ctl, dapi.motor_throttle);
+    return w_dot(t, door_out) < -0.01f;
+}
 void tick_door_walk() {
     const double now = now_ms();
     Il2CppObject* ptf = player_tf();
@@ -657,7 +669,7 @@ void tick_door_walk() {
             const DoorFace& a = from_inside ? p.in : p.out;
             const float d = w_dot(pos - a.c, a.n), was = w_dot(last - a.c, a.n);
             if (d > kDoorWalkReach || d < -0.3f) continue;
-            if ((was - d) / static_cast<float>(dt) < kDoorWalkSpeed) continue;
+            if ((was - d) / static_cast<float>(dt) < kDoorWalkSpeed && !pushing_toward(a.n)) continue;
             if (std::fabs(w_dot(pos - a.c, a.r)) > a.w * 0.5f - 0.1f) continue;
             const float bottom = a.c.y - a.h * 0.5f;
             if (pos.y < bottom - 0.6f || pos.y > bottom + 0.8f) continue;

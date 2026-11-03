@@ -98,7 +98,7 @@ constexpr WinQuality kQualities[] = {
 uint64_t g_win_frame_now = 0;  // frames counted by the reconciler's watch (GameManager.Update)
 bool g_windows = true;      // coop.ini [interiors] windows
 int g_window_quality = 1;   // coop.ini [interiors] window_quality
-int g_indoor_light = 70;    // coop.ini [interiors] indoor_light (%)
+int g_indoor_light = 0;     // coop.ini [interiors] indoor_light (%; 0: the game's own interior light)
 const WinQuality& quality() { return kQualities[std::clamp(g_window_quality, 0, 2)]; }
 // Door portals (seamless_doors.inc): coop.ini [interiors] door_portals / door_walk, and the building whose door view is
 // wanted this frame (held for it first, also with the window views off)
@@ -1585,12 +1585,59 @@ struct IlColor {
 using AmbientFn = void (*)(IlColor* colour, float probe, const MethodInfo* m);
 AmbientFn g_set_ambient = nullptr;
 int g_indoor_logged = 0;
+
+// TLDCoop_DLC: [interiors] indoor_light=0 (default): the room as the game lights its interior. Its own lighting objects
+// (InteriorLightingManager_Prefab, Daytime/Daylight/Midday/AmbientLight/Nighttime: kept off for the outdoor look) are
+// switched on while the player is in it, and the sky's light is the interior's (its InteriorLightingManager.Update ->
+// TodAmbientLight: the game's indoor day/night colours): the outdoors' own calls are left out meanwhile. A room with
+// no lighting manager of its own: the sky's light at 45 %.
+Instance* g_game_light = nullptr;
+bool g_game_light_ilm = false;
+int g_ilm_depth = 0;
+void game_light_switch(Instance& in, bool on, int& n, bool& ilm) {
+    Il2CppObject* m = master_of(in);
+    if (!m) return;
+    each_in(m, api.t_transform, [&](Il2CppObject* t) {
+        if (!listed(kDarkOnly, std::size(kDarkOnly), name_of(t))) return;
+        set_active(go_of(t), on);
+        ++n;
+    });
+    if (on) each_in(m, api.t_ilm, [&](Il2CppObject*) { ilm = true; });
+}
+void tick_game_light() {
+    Instance* want = g_indoor_light == 0 && g_inside && engaged() && in_room(g_inside) ? g_inside : nullptr;
+    if (want == g_game_light) return;
+    int n = 0;
+    bool ilm = false;
+    if (g_game_light) game_light_switch(*g_game_light, false, n, ilm);
+    g_game_light = want;
+    g_game_light_ilm = false;
+    if (!want) return;
+    n = 0;
+    game_light_switch(*want, true, n, g_game_light_ilm);
+    logx::info("interiors: %s: lit as the game lights it (%d lighting object(s) on, %s)", want->cfg->id, n,
+               g_game_light_ilm ? "its lighting manager sets the sky's light" : "no lighting manager: the sky's light at 45%");
+}
+using IlmUpdateFn = void (*)(Il2CppObject* self, const MethodInfo* m);
+IlmUpdateFn g_ilm_update = nullptr;
+void ilm_update_detour(Il2CppObject* self, const MethodInfo* m) {
+    ++g_ilm_depth;
+    g_ilm_update(self, m);
+    --g_ilm_depth;
+}
+
 void set_ambient_detour(IlColor* colour, float probe, const MethodInfo* m) {
-    if (colour && g_inside && engaged() && g_indoor_light < 100) {
-        const float k = static_cast<float>(g_indoor_light) / 100.0f;
+    tick_game_light();
+    if (g_game_light && g_game_light == g_inside && g_game_light_ilm) {
+        if (g_ilm_depth > 0) g_set_ambient(colour, probe, m);  // the room's own (the game's indoor light)
+        return;                                               // (the outdoors' meanwhile left out)
+    }
+    const int pct = g_indoor_light == 0 ? 45 : g_indoor_light;
+    if (colour && g_inside && engaged() && pct < 100) {
+        const float k = static_cast<float>(pct) / 100.0f;
         IlColor dim{colour->r * k, colour->g * k, colour->b * k, colour->a};
         if (g_indoor_logged++ == 0)
-            logx::info("interiors: in a room: the sky's light at %d%% (ambient %.2f %.2f %.2f)", g_indoor_light, colour->r,
+            logx::info("interiors: in a room: the sky's light at %d%% (ambient %.2f %.2f %.2f)", pct, colour->r,
                        colour->g, colour->b);
         g_set_ambient(&dim, probe, m);
         return;
@@ -2850,6 +2897,8 @@ void resolve_windows() {
     }
     if (Il2CppClass* utils = il2::find_class(kGame, "", "Utils"))  // TLDCoop_DLC: the indoor look
         hook("Utils.SetAmbientLightScaled", il2::find_method(utils, "SetAmbientLightScaled", 2), &set_ambient_detour, &g_set_ambient);
+    if (Il2CppClass* ilm = il2::find_class(kGame, "", "InteriorLightingManager"))
+        hook("InteriorLightingManager.Update", il2::find_method(ilm, "Update", 0), &ilm_update_detour, &g_ilm_update);
     resolve_fog_pass();
     resolve_doors();
     logx::info("interiors: windows: ready (stand-in eye %s, snow box %s, sheet fog %s; %zu building(s) with offline window data, "

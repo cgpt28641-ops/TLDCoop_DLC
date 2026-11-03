@@ -123,9 +123,9 @@ constexpr const char* kDefaultIni =
     "; the same pose. 0 = the short fade to black as before. door_walk=1: walking into such a door takes you through too.\n"
     "door_portals=1\n"
     "door_walk=1\n"
-    "; Inside a room the light from the sky is this many percent of the outdoors' (rooms are lit like outdoors; the game's\n"
-    "; interiors are darker). 100 = as outdoors.\n"
-    "indoor_light=70\n"
+    "; Inside a room: 0 = lit as the game lights its interiors (its own lighting, default); 5-100 = the outdoors' light\n"
+    "; from the sky at this many percent (100 = as outdoors).\n"
+    "indoor_light=0\n"
     "\n"
     "[death]\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
@@ -267,7 +267,8 @@ Settings load() {
     if (s.seamless_window_quality < 0 || s.seamless_window_quality > 2) s.seamless_window_quality = 1;
     s.seamless_door_portals = GetPrivateProfileIntW(L"interiors", L"door_portals", 1, ini.c_str()) != 0;
     s.seamless_door_walk = GetPrivateProfileIntW(L"interiors", L"door_walk", 1, ini.c_str()) != 0;
-    s.seamless_indoor_light = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"interiors", L"indoor_light", 70, ini.c_str())), 5, 100);
+    s.seamless_indoor_light = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"interiors", L"indoor_light", 0, ini.c_str())), 0, 100);
+    if (s.seamless_indoor_light > 0 && s.seamless_indoor_light < 5) s.seamless_indoor_light = 5;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");

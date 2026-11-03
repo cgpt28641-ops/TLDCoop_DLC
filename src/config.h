@@ -70,7 +70,7 @@ struct Settings {
     int seamless_window_quality = 1;
     // [interiors] indoor_light (TLDCoop_DLC): in a room, the outdoor ambient light at this % (rooms stand in the open,
     // lit like outdoors; the game's interiors are darker). 100: as outdoors.
-    int seamless_indoor_light = 70;
+    int seamless_indoor_light = 0;  // (0: the game's own interior light)
     // [interiors] door_portals (Stage 2): a building's door shows its room through the doorway (and the room's door the
     // world outside), and using it moves the player through with no fade; 0: the fade as before. door_walk: walking into
     // such a door (open, its view showing) takes the player through too; 0: only by using it.
