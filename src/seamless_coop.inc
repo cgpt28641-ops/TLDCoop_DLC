@@ -366,9 +366,15 @@ std::unordered_map<std::string, PlaceSnap> scan_places(Instance& in, bool with_s
     std::vector<Il2CppObject*> all;
     each_in(master_of(in), api.t_placeable, [&](Il2CppObject* p) { all.push_back(p); });
     const auto best = best_per_guid(all, in);
+    Il2CppObject* placing = nullptr;
+    if (Il2CppObject* pm = player_manager(); pm && papi.pm_object_to_place >= 0) placing = get<Il2CppObject*>(pm, papi.pm_object_to_place);
+    if (!alive(placing)) placing = nullptr;
     for (const auto& [g, p] : best) {
         Il2CppObject* t = tf_of(p);
         if (g == kStableGuidMarker || player_or_inventory(t) || is_carried(in, p)) continue;
+        // TLDCoop_DLC: being moved right now (TLD's placement mode): told once it's put down, not every second on the
+        // way (the other game's copy jumped about while it was moved, and two players in the room fought over it)
+        if (placing && go_of(p) == placing) continue;
         PlaceSnap s;
         s.msg.region = g_region;
         s.msg.building = in.cfg->id;
@@ -488,6 +494,12 @@ bool apply_place(const net::RoomPlaceMsg& m, uint8_t from) {
         return true;
     }
     Il2CppObject* p = placeable_in_room(*in, m.guid);
+    Il2CppObject* placing = nullptr;
+    if (Il2CppObject* pm = player_manager(); pm && papi.pm_object_to_place >= 0) placing = get<Il2CppObject*>(pm, papi.pm_object_to_place);
+    if (p && alive(placing) && go_of(p) == placing) {  // TLDCoop_DLC: we're moving it right now: ours wins
+        if (g_place_logged++ < 60) logx::info("interiors: %s: %s's word on '%s' isn't applied: we're moving it", in->cfg->id, who, m.guid.c_str());
+        return true;
+    }
     if (p && (player_or_inventory(tf_of(p)) || is_carried(*in, p))) {  // ours, in our hands or pack: not theirs to move
         if (g_place_logged++ < 60) logx::info("interiors: %s: %s's word on '%s' isn't applied: we carry it", in->cfg->id, who, m.guid.c_str());
         return true;

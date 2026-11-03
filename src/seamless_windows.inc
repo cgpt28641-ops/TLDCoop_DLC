@@ -551,7 +551,7 @@ void scan_openings(Instance& in, WinRoom& wr) {
     Il2CppObject* mt = live(in.master_tf);
     if (!m || !mt) return;
     std::unordered_set<Il2CppObject*> seen;
-    int skipped = 0, unfaced = 0, split = 0;
+    int skipped = 0, unfaced = 0, split = 0, flipped = 0;
     each_in(m, api.t_mesh_renderer, [&](Il2CppObject* glass_r) {
         Il2CppObject* go = go_of(glass_r);
         if (!active_self(go)) return;
@@ -612,7 +612,17 @@ void scan_openings(Instance& in, WinRoom& wr) {
             float sign;
             if (has_snow) sign = center(snow, axis) - center(glass, axis) >= 0 ? 1.0f : -1.0f;
             else if (has_back) sign = center(back, axis) - center(glass, axis) >= 0 ? 1.0f : -1.0f;
-            else {
+            else sign = 0;
+            // TLDCoop_DLC: outward is away from the room's middle (its InteriorTrigger box): the snow/backdrop rule
+            // pointed most windows into the room, and a view out is drawn only toward where it faces (from inside not
+            // one window showed the world: "0 view(s) drawn this frame of 0 visible", Karol "z żadnego nie widać").
+            const float from_mid = center(glass, axis) - axis_of(in.trig_center, axis);
+            if (std::fabs(from_mid) > 0.5f) {
+                const float by_room = from_mid > 0 ? 1.0f : -1.0f;
+                if (sign != 0 && sign != by_room) ++flipped;
+                sign = by_room;
+            }
+            if (sign == 0) {
                 ++unfaced;
                 continue;
             }
@@ -666,8 +676,8 @@ void scan_openings(Instance& in, WinRoom& wr) {
         }
     });
     logx::info("interiors: windows: %s: %zu window(s) found in the room (%d not windows, %d with nothing to face them by, "
-               "%d split from panes grouped together)",
-               in.cfg->id, wr.openings.size(), skipped, unfaced, split);
+               "%d split from panes grouped together, %d turned to face away from the room's middle)",
+               in.cfg->id, wr.openings.size(), skipped, unfaced, split, flipped);
 }
 WinRoom& room_windows(Instance& in) {
     if (!in.win) in.win = std::make_shared<WinRoom>();
