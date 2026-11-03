@@ -726,8 +726,16 @@ Il2CppObject* action_clip(const std::string& path) {
         }
         logx::info("avatar: %zu of %zu action clip bundles loaded", g_action_bundles.size(), std::size(kActionBundles));
     }
+    // TLDCoop_DLC: a clip loaded earlier can have been unloaded since (Resources.UnloadUnusedAssets between scenes: the
+    // managed object stays, its native one is gone): AddClip then threw ArgumentNullException for every clip and the
+    // avatars had no actions at all ("0 action clip states", Karol's and Szymon's logs). Loaded again then.
     const auto known = g_action_clips.find(path);
-    if (known != g_action_clips.end()) return target(known->second);
+    if (known != g_action_clips.end()) {
+        Il2CppObject* c = target(known->second);
+        if (!known->second || is_alive(c)) return c;
+        il2::il2cpp_gchandle_free(known->second);
+        g_action_clips.erase(known);
+    }
     uintptr_t found = 0;
     for (uintptr_t b : g_action_bundles) {
         void* args[] = {il2::il2cpp_string_new(path.c_str()), api.clip_type};
