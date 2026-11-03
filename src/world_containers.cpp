@@ -493,8 +493,19 @@ void apply_stored() {
     }
     if (it->second.empty()) g_store.erase(it);
     if (applied) logx::info("containers: %d container(s) the other player changed in %s while we were elsewhere", applied, g_scene.c_str());
-    if (waiting)
+    static int waiting_logged = -1;
+    if (waiting && waiting != waiting_logged)
         logx::info("containers: %d change(s) to Seamless Interiors rooms' containers wait for their rooms here", waiting);
+    waiting_logged = waiting;
+}
+
+// TLDCoop_DLC: are friends' changes to room containers still waiting here (their room not up yet)?
+bool room_changes_waiting() {
+    const auto it = g_store.find(g_scene);
+    if (it == g_store.end()) return false;
+    for (const auto& [id, s] : it->second)
+        if (s.from_peer && room_container(id)) return true;
+    return false;
 }
 
 // Host (TLDCoop_DLC): a few more of this scene's containers read into g_last (only ones not known yet: a change sent or
@@ -1357,10 +1368,17 @@ void on_frame(bool in_game) {
     if (const uint32_t rooms_now = seamless_interiors::rooms_generation(); rooms_now != rooms_seen) {
         rooms_seen = rooms_now;
         if (hosting()) {
-            apply_stored();
-            g_by_id.clear();
+            g_by_id.clear();  // TLDCoop_DLC: before: the lookup was still the one from before the room (its containers
+            apply_stored();   // "not here", so a friend's searched cupboards stayed full for the host)
             g_snapshot_at = 0;  // the room's containers read too
         }
+    }
+    // TLDCoop_DLC: a room is built over several frames (its "came up" count changes at the start, before its
+    // containers are there): the waiting changes tried again every 2 s, not only once then.
+    static double rooms_retry = 0;
+    if (hosting() && now - rooms_retry >= 2000) {
+        rooms_retry = now;
+        if (room_changes_waiting()) apply_stored();
     }
     snapshot_step();
     lock_tick();

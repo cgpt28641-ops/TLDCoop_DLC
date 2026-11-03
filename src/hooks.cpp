@@ -2,6 +2,9 @@
 
 #include <MinHook.h>
 
+#include <mutex>
+#include <unordered_map>
+
 #include "log.h"
 
 namespace hooks {
@@ -20,8 +23,20 @@ bool install(const char* label, void* target, void* detour, void** original) {
         logx::error("hook %s: target is null", label);
         return false;
     }
-    MH_STATUS s = MH_CreateHook(target, detour, original);
-    if (s == MH_OK) s = MH_EnableHook(target);
+    // TLDCoop_DLC: two parts of the mod on the same game method (InteriorLightingManager.Update: Ambient Lights and
+    // Seamless Interiors; GameManager.LoadMainMenu: items and windows): the second used to fail (MH_ERROR_ALREADY_CREATED)
+    // and its part never ran. Now it goes on top of the first: the game calls the second, whose "original" is the first.
+    static std::mutex mu;
+    static std::unordered_map<void*, void*> top;  // game method -> the detour the game now calls
+    std::lock_guard<std::mutex> lock(mu);
+    void* at = target;
+    if (const auto it = top.find(target); it != top.end()) {
+        at = it->second;
+        logx::info("hook %s: the game's method is hooked already; ours goes on top of it", label);
+    }
+    MH_STATUS s = MH_CreateHook(at, detour, original);
+    if (s == MH_OK) s = MH_EnableHook(at);
+    if (s == MH_OK) top[target] = detour;
     if (s != MH_OK) {
         logx::error("hook %s at %p failed: %s", label, target, MH_StatusToString(s));
         return false;

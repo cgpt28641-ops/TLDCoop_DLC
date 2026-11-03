@@ -140,14 +140,21 @@ void detach_from_region(Il2CppObject* ai) {
 // (or kept switched off here for handovers) count as active, up to its target (never more: TLD would switch off ours).
 using PopulationFn = int32_t (*)(Il2CppObject* self, int32_t mode, const MethodInfo* method);
 PopulationFn g_population = nullptr;
+// TLDCoop_DLC: TLD's CalculateTargetPopulation asks GetCurrentActivePopulation itself, so asking it from here went
+// round and round (logged at 48 deep; before the loop guard: the stack overflow crashes right after animal handovers,
+// the first moment a region counts animals elsewhere). Inside our own ask, TLD's count as it is.
+thread_local bool g_pop_asking = false;
 int32_t population_detour(Il2CppObject* self, int32_t mode, const MethodInfo* method) {
     const int32_t v = g_population(self, mode, method);
-    if (g_pop_extra.empty() || !self) return v;
+    if (g_pop_asking || g_pop_extra.empty() || !self) return v;
     const auto it = g_pop_extra.find(reinterpret_cast<uintptr_t>(self));
     if (it == g_pop_extra.end() || it->second <= 0) return v;
     if (api.region_mode >= 0 && il2::read_field<int32_t>(self, api.region_mode) != mode) return v;
     int32_t want = 0;
-    if (!il2::invoke_value(api.region_target, self, want)) return v;
+    g_pop_asking = true;
+    const bool got = il2::invoke_value(api.region_target, self, want);
+    g_pop_asking = false;
+    if (!got) return v;
     const int32_t out = std::max(v, std::min(v + it->second, want));
     if (out != v && g_pop_logged++ < 20)
         logx::info("wildlife: a spawn region counts %d animal(s) of it alive in another game or kept for handovers: %d "
