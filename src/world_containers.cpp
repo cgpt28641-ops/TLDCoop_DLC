@@ -771,6 +771,10 @@ void tell_owner(const std::string& key) {
     netrt::send_packet(w, true);
 }
 
+// TLDCoop_DLC: other things held through the same locks (world_containers.h: hold / let_go), and when we last told
+// the host we still have each.
+std::unordered_map<std::string, double> g_held_things;
+
 void release_mine(const char* why);
 
 // Before TLD searches or opens container `c`: true to go on now. False when someone else is in it (the player is
@@ -934,7 +938,7 @@ void lock_tick() {
     {
         std::vector<std::string> stale;
         for (const auto& [key, e] : g_locks.entries())
-            if (e.owner == self_player() && (!g_mine || g_mine->key != key)) stale.push_back(key);
+            if (e.owner == self_player() && (!g_mine || g_mine->key != key) && !g_held_things.count(key)) stale.push_back(key);
         for (const std::string& key : stale)
             if (g_locks.release(key, self_player())) {
                 tell_owner(key);
@@ -955,9 +959,6 @@ void lock_tick() {
     }
 }
 
-// TLDCoop_DLC: other things held through the same locks (world_containers.h: hold / let_go), and when we last told
-// the host we still have each.
-std::unordered_map<std::string, double> g_held_things;
 
 void lock_reset() {
     g_held_things.clear();
@@ -1450,8 +1451,11 @@ void on_frame(bool in_game) {
     }
     // TLDCoop_DLC: a room is built over several frames (its "came up" count changes at the start, before its
     // containers are there): the waiting changes tried again every 2 s, not only once then.
-    static double rooms_retry = 0;
-    if (hosting() && now - rooms_retry >= 2000) {
+    static double rooms_retry = 0, rooms_changed_ms = -1e18;
+    static uint32_t rooms_gen_seen = 0;
+    if (const uint32_t g = seamless_interiors::rooms_generation(); g != rooms_gen_seen) rooms_gen_seen = g, rooms_changed_ms = now;
+    // (only for half a minute after a room came up: a change for a room never built here waits for its opening)
+    if (hosting() && now - rooms_changed_ms < 30000 && now - rooms_retry >= 2000) {
         rooms_retry = now;
         if (room_changes_waiting()) apply_stored();
     }

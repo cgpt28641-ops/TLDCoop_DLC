@@ -377,6 +377,7 @@ void reset(const char* why) {
 // keeps it, back at the main menu (another save may load next) it goes.
 void forget_world() {
     g_room_waited.clear();
+    g_client_wait.clear();
     if (g_store.empty()) return;
     logx::info("fires: back at the main menu; forgetting fires kept for %zu scene(s)", g_store.size());
     g_store.clear();

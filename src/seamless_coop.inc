@@ -337,6 +337,7 @@ const std::unordered_set<std::string>& file_item_ids(Instance& in) {
 struct PlaceSnap {
     std::string sig;
     net::RoomPlaceMsg msg;
+    bool placing = false;  // TLDCoop_DLC: being moved by our player right now (told once it's put down)
 };
 std::unordered_map<std::string, std::unordered_map<std::string, std::string>> g_place_seen;  // building -> guid -> sig
 std::unordered_map<std::string, uintptr_t> g_place_master;  // building -> the room (master handle) those were seen in
@@ -372,10 +373,11 @@ std::unordered_map<std::string, PlaceSnap> scan_places(Instance& in, bool with_s
     for (const auto& [g, p] : best) {
         Il2CppObject* t = tf_of(p);
         if (g == kStableGuidMarker || player_or_inventory(t) || is_carried(in, p)) continue;
-        // TLDCoop_DLC: being moved right now (TLD's placement mode): told once it's put down, not every second on the
-        // way (the other game's copy jumped about while it was moved, and two players in the room fought over it)
-        if (placing && go_of(p) == placing) continue;
         PlaceSnap s;
+        // TLDCoop_DLC: being moved right now (TLD's placement mode): told once it's put down, not every second on the
+        // way (the other game's copy jumped about while it was moved, and two players in the room fought over it).
+        // Kept in the list (left out it read as gone: the others' copy vanished)
+        s.placing = placing && go_of(p) == placing;
         s.msg.region = g_region;
         s.msg.building = in.cfg->id;
         s.msg.guid = g;
@@ -620,6 +622,7 @@ void tick_room_places() {
         std::unordered_map<std::string, PlaceSnap> with;  // (TLD's records of the player's own, made once if needed)
         bool with_made = false;
         for (auto& [g, s] : now_places) {
+            if (s.placing) continue;
             auto it = seen.find(g);
             if (it != seen.end() && it->second == s.sig) continue;
             if (!with_made) {  // how to make it, for a game that hasn't got it (the player's own furniture only)

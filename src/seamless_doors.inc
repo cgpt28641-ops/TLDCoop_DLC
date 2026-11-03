@@ -133,7 +133,9 @@ void swing(DoorFace& f, bool open) {
     Il2CppObject* best = nullptr;
     float best_w = 0;
     V3 best_c{};
+    Il2CppObject* door_t = tf_of(door);
     each_in(go, api.t_renderer, [&](Il2CppObject* r) {
+        if (tf_of(r) == door_t) return;  // (the door's own transform: its click box and where it is would move too)
         UBounds b;
         if (!il2::invoke_value(api.r_bounds, r, b)) return;
         const float w = 2 * (std::fabs(b.extents.x * f.r.x) + std::fabs(b.extents.z * f.r.z));

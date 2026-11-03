@@ -658,3 +658,20 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - **Meble „bugują się” przy dwóch graczach w pokoju**: przesuwany mebel był wysyłany co sekundę w trakcie przesuwania (pozycje pośrednie), a gra drugiego gracza przestawiała go, nawet gdy sama go właśnie przesuwała. scan_places pomija obiekt w trybie umieszczania (PlayerManager.m_ObjectToPlace); apply_place nie rusza mebla, który my przesuwamy (log „isn't applied: we're moving it”).
 - Skrzydła drzwi: odchylanie jest od buildu 21:30 UTC — Karol testował na 21:05.
 - Teleport przy wejściu/wyjściu: pokoje stoją 80 m nad budynkiem, przejście przenosi gracza w tej samej pozie — usunięcie wymaga pokoi w miejscu budynku (duża przebudowa, czeka na decyzję Karola).
+
+### 2026-11-04 00:30 — pełna analiza logów (46 sesji, 30.10–03.11) + niezależny przegląd kodu z 03.11
+- Zebrane: wszystkie zipy/logi z Pobranych Karola, raporty F11 z folderu gry, bieżące coop*.log. Skrypt zbiorczy (build, rola, błędy, zacięcia na sesję).
+- **Awatary bez animacji czynności** („0 action clip states”, 11× AddClip ArgumentNullException przy tworzeniu awatara, od drugiej sceny): klipy z paczek akcji, raz wczytane i trzymane w g_action_clips, były wyładowywane (UnloadUnusedAssets) — managed obiekt został, natywny nie. action_clip: martwy klip wczytywany ponownie.
+- Zacięcia world_objects 100–220 ms (53× u Karola) = pełne listy regionu przy każdym budowanym pokoju — naprawione wcześniej (lekki resync), Karol grał na starym pliku.
+- „Animator wilka różny od hosta (88 vs 93 bajty)” ~150× — kopie wilków z innego prefabu niż u hosta (pokazywane tylko stany). NIE naprawione (wymaga wyboru prefabu wg rozmiaru parametrów albo nazwy prefabu w protokole).
+- Wyjątek przy starcie moda (mod wyłączony) — tylko build 1.11 22:01, w nowszych brak.
+- Przegląd kodu (agent): naprawione:
+  1. Meble: obiekt w trybie przesuwania pomijany w scan_places czytał się jako „zniknął” → u innych znikał. Teraz zostaje w liście z flagą `placing` (nie wysyłany, `seen` nietknięte).
+  2. Host zwalniał co 500 ms własne blokady rzeczy trzymanych przez hold() (g_held_things) — wykluczone z czyszczenia; deklaracja g_held_things przeniesiona wyżej.
+  3. Kara „gra chowa zwierzęta” zabierała też zwierzęta, które gracz już prowadził — teraz tylko nowe przekazania; licznik zeruje się po minucie.
+  5. Kierunek okien od środka pokoju tylko gdy pokój ma InteriorTrigger (have_trigger).
+  6. Skrzydło drzwi: nie obracamy transformu samego LoadScene.
+  7. g_client_wait (ogniska) czyszczone w forget_world.
+  8. Świeżość zorzy liczona od chwili przyjścia wiadomości (received_ms).
+  9. Ponawianie apply_stored tylko 30 s po pojawieniu się pokoju (reszta przy otwarciu: may_open).
+- Do sprawdzenia: (4) losowe spawny w pokojach przy lekkim resyncu — pokoje mają własne losowanie (seed hosta), więc prawdopodobnie bez wpływu.

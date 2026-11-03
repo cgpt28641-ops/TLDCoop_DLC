@@ -617,7 +617,7 @@ void scan_openings(Instance& in, WinRoom& wr) {
             // pointed most windows into the room, and a view out is drawn only toward where it faces (from inside not
             // one window showed the world: "0 view(s) drawn this frame of 0 visible", Karol "z żadnego nie widać").
             const float from_mid = center(glass, axis) - axis_of(in.trig_center, axis);
-            if (std::fabs(from_mid) > 0.5f) {
+            if (in.have_trigger && std::fabs(from_mid) > 0.5f) {
                 const float by_room = from_mid > 0 ? 1.0f : -1.0f;
                 if (sign != 0 && sign != by_room) ++flipped;
                 sign = by_room;

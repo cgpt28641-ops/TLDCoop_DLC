@@ -185,6 +185,7 @@ std::unordered_map<uint32_t, Entry> g_registry;
 // (Shatsca: "horda wilków", ~40 wolves in 2 min). Not handed anything for a minute after that.
 std::array<double, net::kMaxPlayers> g_keeps_nothing_until{};
 std::array<int, net::kMaxPlayers> g_quick_put_aways{};
+std::array<double, net::kMaxPlayers> g_quick_put_away_ms{};  // the last one (two within a minute count)
 net::wild::RateLimit g_handovers{4, 6};
 double g_last_arbiter = 0, g_last_controllers = 0;
 std::array<std::pair<std::string, double>, net::kMaxPlayers> g_arrival{};  // host: where each player is, since when
@@ -277,6 +278,8 @@ void host_gone(uint32_t id, uint8_t from) {
     logx::info("wildlife: #%u (%s) is gone from %s's game (TLD put it away): forgotten", id, kind_name(it->second.last.kind),
                who_name(from).c_str());
     if (from < net::kMaxPlayers && from != 0 && it->second.owned_ms > 0 && now_ms() - it->second.owned_ms < 20000) {
+        if (now_ms() - g_quick_put_away_ms[from] > 60000) g_quick_put_aways[from] = 0;
+        g_quick_put_away_ms[from] = now_ms();
         if (++g_quick_put_aways[from] >= 2) {
             g_quick_put_aways[from] = 0;
             g_keeps_nothing_until[from] = now_ms() + 60000;
@@ -558,7 +561,8 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
             if (p.scene != e.scene) continue;
             if (p.id == 0) host_here = true;
             if (p.id < net::kMaxPlayers && now < e.blocked_until[p.id]) continue;
-            if (p.id < net::kMaxPlayers && now < g_keeps_nothing_until[p.id]) continue;
+            // (only new handovers: what they run already stays theirs)
+            if (p.id < net::kMaxPlayers && p.id != e.owner && now < g_keeps_nothing_until[p.id]) continue;
             net::wild::Seat s;
             s.player = p.id;
             const float dx = e.last.x - p.pos.x, dy = e.last.y - p.pos.y, dz = e.last.z - p.pos.z;

@@ -463,7 +463,7 @@ void on_frame(const std::string& scene, bool in_game) {
     follow_wind(*world, now, first);
     if (world->aurora >= 0) {
         g_host_aurora = world->aurora;
-        g_host_aurora_ms = now_ms_ws();
+        g_host_aurora_ms = now_ms_ws() - (now - world->received_ms);  // (when it came: a stale one stops counting)
     }
 }
 
