@@ -92,6 +92,8 @@ struct Api {
     Il2CppObject* placements_type = nullptr;      // typeof(List<PlaceableInfoSaveData>)
     ptrdiff_t placement_state = -1;               // PlaceableInfoSaveData.m_State (PlacementState)
     ptrdiff_t placement_guid = -1;                // PlaceableInfoSaveData.m_Guid (TLDCoop_DLC)
+    ptrdiff_t placement_data = -1;                // PlaceableInfoSaveData.m_Serialized (TLDCoop_DLC)
+    const MethodInfo* placeable_apply = nullptr;  // static Placeable.FindOrCreateAndDeserialize(guid, data) (TLDCoop_DLC)
     const MethodInfo* placements_carried = nullptr;  // static PlaceableManager.SerializeInventory() (TLDCoop_DLC)
     // TLDCoop_DLC: one player at a time moves a decoration (customization mode)
     const MethodInfo* deco_interact = nullptr;    // DecorationItem.PerformInteraction()
@@ -728,6 +730,20 @@ bool apply_placement(const net::ObjectState& s) {
     g_applying = true;
     void* load_args[] = {list};
     il2::invoke(api.placements_load, nullptr, load_args);
+    // TLDCoop_DLC (Karol 04.11: furniture moved in the safehouse editor stayed where it was for the others, though the log
+    // said "same here now"): loading a scene's placements doesn't move a placeable already standing in the scene. It is
+    // put where the record says the way TLD's rooms do it (Placeable.FindOrCreateAndDeserialize: the one by that id, or
+    // made).
+    if (api.placeable_apply && api.placement_data >= 0 && api.placement_guid >= 0 && get<int32_t>(e, api.placement_state) == 0) {
+        Il2CppString* guid = get<Il2CppString*>(e, api.placement_guid);
+        Il2CppObject* data = get<Il2CppObject*>(e, api.placement_data);
+        if (guid && data) {
+            void* args2[] = {guid, data};
+            Il2CppObject* p = il2::invoke(api.placeable_apply, nullptr, args2);
+            static int told = 0;
+            if (told++ < 30) logx::info("objects: %s put where the other player put it%s", s.id.c_str(), p ? "" : " (TLD couldn't)");
+        }
+    }
     g_applying = false;
     g_placed[s.id] = s.text;
     g_marked.erase(s.id);
@@ -1630,6 +1646,8 @@ bool init() {
     }
     api.placement_state = il2::field_offset(il2::find_class(kGame, "TLD.Placement", "PlaceableInfoSaveData"), "m_State");
     api.placement_guid = il2::field_offset(il2::find_class(kGame, "TLD.Placement", "PlaceableInfoSaveData"), "m_Guid");
+    api.placement_data = il2::field_offset(il2::find_class(kGame, "TLD.Placement", "PlaceableInfoSaveData"), "m_Serialized");
+    api.placeable_apply = il2::find_method(il2::find_class(kGame, "TLD.Placement", "Placeable"), "FindOrCreateAndDeserialize", 2);
     api.placements_carried = il2::find_method_quiet(placements, "SerializeInventory", 0);
     auto type_of = [](Il2CppClass* k) {
         Il2CppObject* t = k ? il2::type_object(k) : nullptr;
