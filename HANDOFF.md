@@ -6,7 +6,7 @@
 - Karol (Polak, nie programista; w grze "Kerel_007_" / na Discordzie "kerel123"). Pisz po polsku, krótko i prosto. Gra z hostem **Shatsca** i z **szymongrzyb2017** (Discord "szymongrzyb.").
 - Zasada: **najpierw napisz przyczynę/plan, zanim coś zmienisz**, gdy pyta "przeanalizuj" / "napisz zanim coś zrobisz". Gdy mówi "rób wszystko" / "działaj" / "popraw odrazu" — działaj sam.
 - **Po każdym zbudowanym pliku:**
-  1. link do pobrania: https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/download/dll-latest/winhttp.dll (CI wrzuca tam winhttp.dll przy każdym pushu na main);
+  1. link do pobrania: https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/download/dll-latest/winhttp.dll (CI wrzuca tam winhttp.dll przy każdym pushu na main); Karol 04.11: NIE robić nowego zipa, jeśli nie trzeba — tylko ten link (zip, ręczne uruchomienie workflow, tylko gdy zmienia się coś poza dll, np. tekstury drzew);
   2. wpis w tym HANDOFF + kopia do /mnt/user-data/outputs/HANDOFF.md;
   3. post na Discordzie, grupa **ICARUS**: co zrobione + link, z dopiskiem **~CLAUDE~** (zgoda Karola).
 - Za każdym razem czytaj ICARUS i pobieraj **najnowsze** logi (zipy F11) + logi Karola z jego komputera.
