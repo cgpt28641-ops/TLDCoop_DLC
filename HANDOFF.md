@@ -777,3 +777,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 ## 2026-11-04 19:50 — ekran co-op: kolumna wartości, kratki (po zrzutach Karola 19:41)
 - Zrzut: kratki kodu zlewały się w jeden ciemny pas, wiersze „NAZWA: WARTOŚĆ” nierówne (strzałki raz tu, raz tam). Teraz jak w ustawieniach gry: nazwa po lewej, wartość w kolumnie (kValueColumn 150 od lewego brzegu nazwy) — kopia etykiety wiersza (Instantiate, „TLDCoop_Value”, pivot Left, resize freely), strzałki wokół wartości, pasek zaznaczenia do końca wartości / kratek. Kratki 32×40, odstęp 10, czcionka 24. Lobby i strona MODS: jedna etykieta jak dotąd (values_on=false).
 - Karol: „nie działa wchodzenie w modyfikacje” — w logu 19:40:59 „menu: the MODS page”, zamknięta 19:41:07; nie wiadomo, co nie działa (zapytany).
+
+## 2026-11-04 20:05 — crash Kerela przy drzwiach (klient, build 434594d... właściwie 18:45)
+- coop.log 20:00:31: „door used: 'InteriorLoadTrigger' (to RuralStoreA)” (ThompsonStore, pokój zbudowany 3 s wcześniej i trzymany dla widoku okien) → FAULT 0xC0000005 UnityPlayer.dll+0xa77fa (adres 0x5d). Brak „swung open”/„no door leaf” → padło w swing(): szukanie skrzydła u rodzica/dziadka LoadScene (dodane 04.11 08:50; GetComponentsInChildren(Renderer) + get_bounds na dużej hierarchii). 03.11 kliknięcia drzwi działały wiele razy bez tego.
+- Cofnięte (kLookAbove=false): skrzydło tylko w obiekcie samych drzwi. Pewności 100% nie ma — jeśli dalej pada przy drzwiach, podejrzane door_sound albo stan trzymanego pokoju (warstwy/kolidery).

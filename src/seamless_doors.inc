@@ -152,7 +152,10 @@ void swing(DoorFace& f, bool open) {
     look_in(go, false);
     // TLDCoop_DLC: the leaf is often beside the LoadScene, not under it (Shatsca: "skrzydla drzwi nie dzialaja", the
     // log: "no door leaf found"): its parent's and grandparent's, near the doorway
-    Il2CppObject* up = parent_of(tf_of(go));
+    // TLDCoop_DLC: off again (Kerel 04.11 20:00: the game crashed in UnityPlayer on the click of ThompsonStore's door,
+    // right after this went in; without it door clicks worked all evening on 03.11): only the door's own object
+    constexpr bool kLookAbove = false;
+    Il2CppObject* up = kLookAbove ? parent_of(tf_of(go)) : nullptr;
     for (int i = 0; i < 2 && !best && alive(up); ++i, up = parent_of(up)) look_in(go_of(up), true);
     Il2CppObject* t = best ? tf_of(best) : nullptr;
     if (!alive(t)) {
