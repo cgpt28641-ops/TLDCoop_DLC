@@ -2173,6 +2173,41 @@ bool setup_inside_out(Instance& in) {
             v.spot = best;
             ++g_io.paired;
         }
+        // TLDCoop_DLC: the room's windows left unpaired (Karol's drawing: the view through them shifted along and across
+        // the wall: they were carried by the config's building-wide shift, which is off by up to a metre). The paired
+        // ones' average correction first; then each still unpaired one to the nearest free building pane facing the same
+        // way (within 2 m once corrected).
+        V3 fix{0, 0, 0};
+        int fixes = 0;
+        for (const InsideOut::View& v : g_io.views)
+            if (v.spot >= 0) fix = fix + (v.delta - building_delta), ++fixes;
+        if (fixes) fix = fix * (1.0f / static_cast<float>(fixes));
+        int late = 0, shifted = 0;
+        for (size_t i = 0; i < g_io.views.size(); ++i) {
+            InsideOut::View& v = g_io.views[i];
+            if (v.spot >= 0) continue;
+            const V3 here = v.o.portal + building_delta + fix;
+            int near = -1;
+            float best_d = 2.0f;
+            for (size_t sidx = 0; sidx < ws.size(); ++sidx) {
+                if (taken[sidx] || w_dot(ws[sidx].out, v.o.out) < 0.9f) continue;
+                const float d = w_len(ws[sidx].c - here);
+                if (d < best_d) best_d = d, near = static_cast<int>(sidx);
+            }
+            if (near >= 0) {
+                taken[near] = 1;
+                v.delta = ws[near].c - v.o.portal + view_out_offset(row, static_cast<int>(i), v.o.out);
+                v.spot = near;
+                ++g_io.paired;
+                ++late;
+            } else if (fixes) {
+                v.delta = building_delta + fix + view_out_offset(row, static_cast<int>(i), v.o.out);
+                ++shifted;
+            }
+        }
+        if (late || shifted)
+            logx::info("interiors: windows: %s: %d more window(s) paired to the nearest building pane, %d shifted by the "
+                       "paired ones' average (%.2f, %.2f, %.2f m)", in.cfg->id, late, shifted, fix.x, fix.y, fix.z);
     }
     for (InsideOut::View& v : g_io.views) {
         Il2CppObject* q = new_quad("TLDCoop_SI_WindowView");
@@ -2378,7 +2413,20 @@ bool setup_held(Instance& in, HeldRoom& h) {
         if (mean_slide(rc, sc, back, hs)) slide = hs, fitted = true;
     }
     const float toward = row && !std::isnan(row->plane_cm) ? row->plane_cm / 100 : kOutsideInToward;
-    int paired = 0, pretend = 0;
+    int paired = 0, pretend = 0, late = 0;
+    // TLDCoop_DLC: the paired panes' average carry (building pane -> the room behind it), and which room windows are
+    // taken: a building pane left unpaired goes to the nearest free room window facing the same way (Karol's drawing:
+    // the room seen through such a pane was shifted along and across the wall)
+    std::vector<char> room_taken(wo.size(), 0);
+    V3 carry{0, 0, 0};
+    int carries = 0;
+    for (size_t s = 0; s < ws.size(); ++s) {
+        const int b = left_alone(row, static_cast<int>(s)) ? -1 : shell_to_room[s];
+        if (b < 0) continue;
+        room_taken[static_cast<size_t>(b)] = 1;
+        carry = carry + (wo[static_cast<size_t>(b)].portal - ws[s].c), ++carries;
+    }
+    if (carries) carry = carry * (1.0f / static_cast<float>(carries));
     for (size_t s = 0; s < ws.size(); ++s) {
         Aperture a;
         a.out = ws[s].out;
@@ -2395,6 +2443,21 @@ bool setup_held(Instance& in, HeldRoom& h) {
             a.delta = behind - a.center;
             a.paired = true;
             ++paired;
+        } else if (int near = -1; carries && !left_alone(row, static_cast<int>(s)) && [&] {
+                       float best_d = 2.0f;
+                       for (size_t r = 0; r < wo.size(); ++r) {
+                           if (room_taken[r] || w_dot(wo[r].out, a.out) < 0.9f) continue;
+                           const float d = w_len(wo[r].portal - (a.center + carry));
+                           if (d < best_d) best_d = d, near = static_cast<int>(r);
+                       }
+                       return near >= 0;
+                   }()) {
+            const WorldOpening& o = wo[static_cast<size_t>(near)];
+            room_taken[static_cast<size_t>(near)] = 1;
+            const V3 behind = row && !std::isnan(row->view_from_out_cm) ? o.glass + o.out * (row->view_from_out_cm / 100) : o.portal;
+            a.delta = behind - a.center;
+            a.paired = true;
+            ++paired, ++late;
         } else if (fitted && !left_alone(row, static_cast<int>(s)) &&
                    (!in.have_trigger || in_volume(in, a.center + slide + kParkOffset, kPretendEyeInRoom))) {
             a.delta = slide + kParkOffset;
@@ -2408,8 +2471,8 @@ bool setup_held(Instance& in, HeldRoom& h) {
     }
     h.was_drawn.assign(h.aps.size(), 0);
     logx::info("interiors: windows: %s: %zu window(s) on the building, %d matched to a window of the room, %d shown with no "
-               "window in the room behind them",
-               in.cfg->id, h.aps.size(), paired, pretend);
+               "window in the room behind them (%d paired to the nearest room window)",
+               in.cfg->id, h.aps.size(), paired, pretend, late);
     return paired + pretend > 0;
 }
 // SI: RelayerInteriorForOutsideIn
