@@ -222,7 +222,8 @@ enum class Msg : uint8_t {
     ObjectList = 29, FirePut = 30, FireList = 31, CaughtUp = 32, GameMode = 33, Roster = 34, Wait = 35, Sleep = 36,
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
     BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
-    Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52, FlareShot = 53
+    Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52, FlareShot = 53,
+    LogsWant = 54, LogsFile = 55
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1253,6 +1254,36 @@ inline bool read_report(Reader& r, uint32_t& id, std::string& who) {
     id = r.get<uint32_t>();
     who = r.get_blob(64);
     return r.ok() && id != 0;
+}
+
+// TLDCoop_DLC: "everyone's logs" (Ctrl + the report key): `who` asks; every other game packs its logs and sends the zip
+// back to `who` in parts (the host passes both on).
+constexpr size_t kLogsPart = 192 * 1024;
+constexpr size_t kLogsFileMax = 16 * 1024 * 1024;
+struct LogsFileMsg {
+    uint32_t id = 0;
+    std::string to, from, name;  // who asked, whose logs, the zip's file name
+    uint16_t part = 0, parts = 0;
+    std::string bytes;
+};
+inline void write_logs_file(Writer& w, const LogsFileMsg& m) {
+    w.put<uint32_t>(m.id);
+    w.put_blob(m.to, 64);
+    w.put_blob(m.from, 64);
+    w.put_blob(m.name, 160);
+    w.put<uint16_t>(m.part);
+    w.put<uint16_t>(m.parts);
+    w.put_long_blob(m.bytes);
+}
+inline bool read_logs_file(Reader& r, LogsFileMsg& m) {
+    m.id = r.get<uint32_t>();
+    m.to = r.get_blob(64);
+    m.from = r.get_blob(64);
+    m.name = r.get_blob(160);
+    m.part = r.get<uint16_t>();
+    m.parts = r.get<uint16_t>();
+    m.bytes = r.get_long_blob(kLogsPart);
+    return r.ok() && m.parts > 0 && m.part < m.parts && m.parts <= kLogsFileMax / kLogsPart + 1;
 }
 
 // Chat (TLDCoop_DLC), either way (the host passes a friend's on): who said it and what (UTF-8).

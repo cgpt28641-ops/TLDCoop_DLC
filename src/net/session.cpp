@@ -920,6 +920,8 @@ struct Session::Impl {
             case Msg::BloodMark:
             case Msg::SprayMark:
             case Msg::Report:
+            case Msg::LogsWant:
+            case Msg::LogsFile:
             case Msg::Chat:
             case Msg::Rooms:
             case Msg::RoomPlace:

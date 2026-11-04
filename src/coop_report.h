@@ -9,5 +9,8 @@ namespace coop_report {
 
 void init();
 void on_frame(bool in_game);  // in_game: the description box can show (TLD's HUD is up)
+// TLDCoop_DLC: ESC's "POBIERZ LOGI": our logs packed, and every other player's game packs its own and sends the zip
+// here, into TLDCoop\reports\<time>_logi_wszystkich\.
+void collect_all();
 
 }  // namespace coop_report

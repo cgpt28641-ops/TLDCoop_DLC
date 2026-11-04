@@ -7,7 +7,9 @@
 
 #include "hooks.h"
 #include "il2cpp_api.h"
+#include "coop_report.h"
 #include "log.h"
+#include "net_runtime.h"
 
 namespace coop_save {
 namespace {
@@ -15,6 +17,9 @@ namespace {
 constexpr const char* kGame = "Assembly-CSharp.dll";
 constexpr const char* kItemId = "tldcoop_save";
 constexpr int32_t kItemValue = 100;  // not one of TLD's PauseMenuItemType values (0-4)
+// TLDCoop_DLC: "POBIERZ LOGI" (Karol: one click for everyone's newest logs), in co-op only
+constexpr const char* kLogsId = "tldcoop_logs";
+constexpr int32_t kLogsValue = 101;
 
 struct Color {
     float r, g, b, a;
@@ -63,7 +68,7 @@ void configure_detour(Il2CppObject* self, const MethodInfo* method) {
     if (api.has_item) il2::invoke_value(api.has_item, m, has, has_args);
     int32_t count = 0;
     if (api.item_count) il2::invoke_value(api.item_count, m, count);
-    if (has) return;
+    if (!has) {
     int32_t value = kItemValue, index = count;
     Color normal{1, 1, 1, 1}, highlight{1, 1, 1, 1};
     void* args[] = {il2::il2cpp_string_new(kItemId), &value, &index, il2::il2cpp_string_new("ZAPISZ GRĘ"),
@@ -74,6 +79,20 @@ void configure_detour(Il2CppObject* self, const MethodInfo* method) {
     if (api.refresh) il2::invoke(api.refresh, m);
     static int logged = 0;
     if (logged++ < 3) logx::info("save: 'ZAPISZ GRĘ' added to ESC's menu (row %d)", index);
+    }
+    // TLDCoop_DLC: everyone's logs, while playing together
+    bool has_logs = false;
+    void* has_logs_args[] = {il2::il2cpp_string_new(kLogsId)};
+    if (api.has_item) il2::invoke_value(api.has_item, m, has_logs, has_logs_args);
+    if (has_logs || !netrt::status().connected) return;
+    if (api.item_count) il2::invoke_value(api.item_count, m, count);
+    int32_t lv = kLogsValue, li = count;
+    Color normal{1, 1, 1, 1}, highlight{1, 1, 1, 1};
+    void* largs[] = {il2::il2cpp_string_new(kLogsId), &lv, &li, il2::il2cpp_string_new("POBIERZ LOGI"),
+                     il2::il2cpp_string_new("Zbiera najnowsze logi wszystkich graczy do TLDCoop\\reports."),
+                     il2::il2cpp_string_new(""), nullptr, &normal, &highlight};
+    il2::invoke(api.add_item, m, largs);
+    if (api.refresh) il2::invoke(api.refresh, m);
 }
 
 // The id of the menu's row `index` ("" if it can't be read).
@@ -96,6 +115,15 @@ bool ours(Il2CppObject* self, int32_t index) {
     if (row_id(self, index, id)) return id == kItemId;
     return index == g_index && g_index >= 0;
 }
+bool logs_row(Il2CppObject* self, int32_t index) {
+    std::string id;
+    return self && self == menu() && row_id(self, index, id) && id == kLogsId;
+}
+void do_logs_from_menu() {
+    logx::info("report: 'POBIERZ LOGI' chosen");
+    if (g_pause_panel && api.on_done) il2::invoke(api.on_done, g_pause_panel);
+    coop_report::collect_all();
+}
 
 void do_save_from_menu() {
     logx::info("save: 'ZAPISZ GRĘ' chosen; the game saves as the menu closes");
@@ -105,18 +133,22 @@ void do_save_from_menu() {
 
 void clicked_detour(Il2CppObject* self, int32_t index, const MethodInfo* method) {
     if (ours(self, index)) return do_save_from_menu();  // (our row has no Action of its own)
+    if (logs_row(self, index)) return do_logs_from_menu();
     g_clicked(self, index, method);
 }
 
 void double_clicked_detour(Il2CppObject* self, int32_t index, const MethodInfo* method) {
     if (ours(self, index)) return do_save_from_menu();
+    if (logs_row(self, index)) return do_logs_from_menu();
     g_double_clicked(self, index, method);
 }
 
 void confirm_detour(Il2CppObject* self, const MethodInfo* method) {
     if (self && self == menu() && api.selected_id) {
         if (Il2CppObject* id = il2::invoke(api.selected_id, self)) {
-            if (il2::to_utf8(reinterpret_cast<Il2CppString*>(id)) == kItemId) return do_save_from_menu();
+            const std::string sid = il2::to_utf8(reinterpret_cast<Il2CppString*>(id));
+            if (sid == kItemId) return do_save_from_menu();
+            if (sid == kLogsId) return do_logs_from_menu();
         }
     }
     g_confirm(self, method);
