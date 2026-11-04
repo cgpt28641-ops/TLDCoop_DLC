@@ -43,6 +43,7 @@ struct Settings {
     float hl_intensity = 2.0f;      // how bright (the mod's 0-3)
     float hl_range = 1.4f;          // how far they reach (x their own range, at most 20 m)
     bool hl_white = false;          // whiter light
+    bool hl_warm = true;            // TLDCoop_DLC: every lamp the same warm white (Karol 04.11)
     bool hl_no_flicker = true;      // no aurora flicker
     int hl_cull = 50;               // lights farther than this (m) stay off
     bool hl_shadows = false;        // they cast shadows

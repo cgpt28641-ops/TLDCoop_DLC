@@ -110,7 +110,7 @@ struct Api {
 // Settings: the levels are each player's own; ON / OFF is the host's (coop_features).
 struct Levels {
     float intensity = 2.0f, range = 1.4f, reach = 1.0f;
-    bool white = false, no_flicker = true, shadows = false, audio = false, outside = false;
+    bool warm = true, white = false, no_flicker = true, shadows = false, audio = false, outside = false;
     int cull = 50;
     uint32_t generation = 0;  // changes with the settings: lights take their ranges and colours again
 } g_lv;
@@ -511,7 +511,7 @@ void update_lights(Il2CppObject* mngr) {
                 float r = std::min(e.ranges[i] * g_lv.range, 20.0f);
                 void* ra[] = {&r};
                 il2::invoke(api.light_set_range, l, ra);
-                Color c = g_lv.white ? to_white(e.colors[i]) : e.colors[i];
+                Color c = g_lv.warm ? Color{1.0f, 0.84f, 0.64f, 1.0f} : g_lv.white ? to_white(e.colors[i]) : e.colors[i];
                 void* ca[] = {&c};
                 il2::invoke(api.light_set_color, l, ca);
                 if (g_lv.shadows && api.light_set_shadows) {
@@ -775,6 +775,7 @@ void set_settings(const config::Settings& s) {
     g_lv.intensity = s.hl_intensity;
     g_lv.range = s.hl_range;
     g_lv.white = s.hl_white;
+    g_lv.warm = s.hl_warm;
     g_lv.no_flicker = s.hl_no_flicker;
     g_lv.cull = s.hl_cull;
     g_lv.shadows = s.hl_shadows;

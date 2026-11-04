@@ -848,3 +848,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   ładowany ponownie, oryginał ukrywany dopiero gdy nasz powstał, a skan powtarzany co 1 s do 20 s po wejściu (log).
 - Drzewa: screenshot Karola (mgła, korony jako płaskie szaro-niebieskie wielokąty). Bundle sprawdzony: alfa i mipy
   zgodne z oryginałem; zapytany o porównanie z wyłączonymi Dynamic Trees / przy dobrej pogodzie.
+
+### 2026-11-04 ~22:05 UTC — House Lights: wszystkie lampy ciepły biały
+- Karol: wszystkie lampy z włączników w tym samym kolorze. coop.ini [houselights] warm_white=1 (domyślnie): kolor
+  (1.0, 0.84, 0.64) dla każdej lampy; 0 = kolor każdej lampy jak w grze (white=1 nadal odbarwia).
+- Pytania Karola (tylko czy się da): jeden kolor — zrobione; „maszyna hazardowa” (włożyć przedmiot, wylosować mnożnik) —
+  da się, większa robota (model, interakcja, losuje host, zasady); czeka na decyzję i plan.
+

@@ -86,6 +86,8 @@ constexpr const char* kDefaultIni =
     "intensity=2.0\n"
     "range=1.4\n"
     "white=0\n"
+    "; every lamp the same warm white (0 = each its own colour)\n"
+    "warm_white=1\n"
     "no_flicker=1\n"
     "cull=50\n"
     "shadows=0\n"
@@ -286,6 +288,7 @@ Settings load() {
         num(L"intensity", s.hl_intensity, 0, 3);
         num(L"range", s.hl_range, 0, 5);
         flag(L"white", s.hl_white);
+        flag(L"warm_white", s.hl_warm);
         flag(L"no_flicker", s.hl_no_flicker);
         s.hl_cull = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"houselights", L"cull", s.hl_cull, ini.c_str())), 10, 75);
         flag(L"shadows", s.hl_shadows);
