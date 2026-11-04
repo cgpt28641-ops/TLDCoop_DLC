@@ -134,8 +134,13 @@ constexpr ULONGLONG kStatusRefreshMs = 500;
 constexpr ULONGLONG kLobbyRefreshMs = 250;
 constexpr ULONGLONG kNoticeMs = 4000;
 // TLDCoop_DLC: the code in boxes on its row (TLD's button frame, one per character) and COPY / PASTE beside them
-constexpr int kCellWidth = 38, kCellHeight = 46, kCellGap = 6, kCellFont = 28;
-constexpr float kCellLead = 16;  // from the row's text to the first box
+constexpr int kCellWidth = 32, kCellHeight = 40, kCellGap = 10, kCellFont = 24;
+constexpr float kCellLead = 4;   // from the value column's start to the first box
+// TLDCoop_DLC: the setup's rows as TLD's settings screens: the name on the left, the value (between its arrows) in
+// one column, TLD's second label of the row
+constexpr float kValueColumn = 150;  // from the name's left edge
+constexpr int kValueWidth = 320;
+constexpr int kPivotLeft = 3;
 constexpr int kCodeButtonWidth = 118, kCodeButtonHeight = 36;
 constexpr ULONGLONG kCursorBlinkMs = 500;
 #ifndef TLDCOOP_BUILD
@@ -312,6 +317,8 @@ struct Menu {
     uintptr_t root = 0;    // our screen
     uintptr_t rows[kRowCount] = {};
     uintptr_t row_labels[kRowCount] = {};
+    uintptr_t row_values[kRowCount] = {};  // TLDCoop_DLC: each row's value (TLD's SecondaryLabel)
+    bool values_on = false;
     std::vector<Arrow> arrows;
     uintptr_t description = 0;
     uintptr_t confirm = 0;
@@ -652,10 +659,12 @@ void move_highlight(uintptr_t highlight, uintptr_t row) {
 }
 
 // The highlight's band as wide as the selected row's text (never narrower than TLD's).
+float g_fit_width = -1;  // TLDCoop_DLC: set: this width instead of the label's (the row with its value column)
 void fit_highlight(uintptr_t highlight, uintptr_t label) {
     Il2CppObject* band = component(find(target(highlight), kHighlightSprite), api.sprite_type);
     Vector2 printed{};
     if (!band || !il2::invoke_value(api.label_printed, target(label), printed)) return;
+    if (g_fit_width > 0) printed.x = g_fit_width;
     const float width = std::max(static_cast<float>(kBandWidth), (printed.x + kBandMargin - kBandStart) / kBandShown);
     set_int(api.widget_set_width, band, static_cast<int>(width));
     Vector3 pos{};
@@ -1173,7 +1182,41 @@ std::string row_help(int row) {
     }
 }
 
+// TLDCoop_DLC: a label's text: left edge and size, in its row's space.
+bool text_box(Il2CppObject* label, float& left, float& y, Vector2& size) {
+    if (!label) return false;
+    Vector2 pivot{};
+    il2::invoke_value(api.label_printed, label, size);
+    il2::invoke_value(api.widget_pivot, label, pivot);
+    Vector3 pos{};
+    il2::invoke_value(api.get_local_position, transform_of(go_of(label)), pos);
+    left = pos.x - pivot.x * size.x;
+    y = pos.y;
+    return true;
+}
+
+void place_value(int row) {
+    Il2CppObject* value = target(g.row_values[row]);
+    Il2CppObject* name = target(g.row_labels[row]);
+    if (!value || !name) return;
+    float left = 0, y = 0;
+    Vector2 size{};
+    text_box(name, left, y, size);
+    set_vec(api.set_local_position, transform_of(go_of(value)), {left + kValueColumn, y, 0});
+}
+
 void place_arrows(int row) {
+    if (g.values_on && target(g.row_values[row])) {  // TLDCoop_DLC: round the value
+        float left = 0, y = 0;
+        Vector2 size{};
+        text_box(target(g.row_values[row]), left, y, size);
+        for (const Arrow& a : g.arrows) {
+            if (a.row != row) continue;
+            const float x = a.step < 0 ? left - kArrowGap : left + size.x + kArrowGap;
+            set_vec(api.set_local_position, transform_of(target(a.go)), {x, y, 0});
+        }
+        return;
+    }
     Il2CppObject* label = target(g.row_labels[row]);
     if (!label) return;
     Vector2 size{}, pivot{};
@@ -1232,8 +1275,10 @@ void show_preview(const std::string& body) {
 // The selected row bright, the others as TLD draws its unselected items. Its arrows too: grey ones vanish on the
 // highlight's band.
 void color_rows() {
-    for (int i = 0; i < kRowCount; ++i)
+    for (int i = 0; i < kRowCount; ++i) {
         set_color(target(g.row_labels[i]), i == g.selected ? g.selected_color : g.normal_color);
+        set_color(target(g.row_values[i]), i == g.selected ? g.selected_color : g.normal_color);
+    }
     for (const Arrow& a : g.arrows)
         set_color(component(target(a.go), api.sprite_type), a.row == g.selected ? g.selected_color : g.normal_color);
 }
@@ -1315,7 +1360,9 @@ void place_code_cells() {
     il2::invoke_value(api.widget_pivot, label, pivot);
     Vector3 pos{};
     il2::invoke_value(api.get_local_position, transform_of(go_of(label)), pos);
-    const float left = pos.x - pivot.x * size.x + size.x + kCellLead;
+    const float name_left = pos.x - pivot.x * size.x;
+    // TLDCoop_DLC: in the value column (else straight after the row's text)
+    const float left = g.values_on ? name_left + kValueColumn + kCellLead : name_left + size.x + 16;
     const std::string& code = g.mode == kHost ? g.settings.code : g.join_code;
     const bool whole = code.size() == kCodeLength;
     const Color good{0.56f, 0.70f, 0.42f, 1}, cursor{0.85f, 0.82f, 0.76f, 1};
@@ -1339,6 +1386,8 @@ void refresh_mods() {
     Il2CppObject* root = target(g.root);
     for (int i = 0; i < kRowCount; ++i) set_active(target(g.rows[i]), mod_of_row(i) >= 0);
     for (const Arrow& a : g.arrows) set_active(target(a.go), mod_of_row(a.row) >= 0);
+    g.values_on = false;  // TLDCoop_DLC: "NAME: ON" in one label here, as before
+    for (uintptr_t v : g.row_values) set_active(go_of(target(v)), false);
     for (int m = 0; m < kModCount; ++m)
         set_text(target(g.row_labels[kModRows[m]]), std::string(kMods[m].name) + (g.mod_on[m] ? ": ON" : ": OFF"));
     il2::invoke(api.grid_reposition, component(part(root, g.menu_path, kGrid), api.grid_type));
@@ -1364,15 +1413,26 @@ void refresh() {
         refresh_mods();
         return;
     }
-    set_text(target(g.row_labels[kMode]), std::string("TRYB: ") + kModeNames[g.mode]);
-    set_text(target(g.row_labels[kCharacter]), "POSTAĆ: " + upper(display_name(g.bodies[g.body])));
-    set_text(target(g.row_labels[kVoice]), std::string("GŁOS: ") + kVoiceNames[g.voice]);
-    set_text(target(g.row_labels[kName]), "NAZWA: " + g.settings.name);
     const bool local = g.settings.transport == "local";
-    set_text(target(g.row_labels[kCode]), local ? std::string("GRA LOKALNA (IP)") : g.mode == kHost ? "TWÓJ KOD:" : "KOD HOSTA:");
-    constexpr const char* kSwitchNames[] = {"NAZWY: ", "RADAR: ", "AUTO MAPA: "};
-    for (int i = 0; i < 3; ++i)
-        set_text(target(g.row_labels[kSwitchRows[i]]), std::string(kSwitchNames[i]) + (g.hud[i] ? "WŁ" : "WYŁ"));
+    // TLDCoop_DLC: name | value (between its arrows, in one column)
+    const std::string kNamesPl[kRowCount] = {"TRYB", "POSTAĆ", "GŁOS", "NAZWA", g.mode == kHost ? "TWÓJ KOD" : "KOD HOSTA",
+                                             "NAZWY", "RADAR", "AUTO MAPA"};
+    std::string values[kRowCount];
+    values[kMode] = kModeNames[g.mode];
+    values[kCharacter] = upper(display_name(g.bodies[g.body]));
+    values[kVoice] = kVoiceNames[g.voice];
+    values[kName] = g.settings.name;
+    values[kCode] = local ? std::string("GRA LOKALNA (IP)") : std::string();
+    for (int i = 0; i < 3; ++i) values[kSwitchRows[i]] = g.hud[i] ? "WŁ" : "WYŁ";
+    for (int i = 0; i < kRowCount; ++i) {
+        if (g.values_on && target(g.row_values[i])) {
+            set_text(target(g.row_labels[i]), kNamesPl[i]);
+            set_text(target(g.row_values[i]), values[i]);
+            place_value(i);
+        } else {
+            set_text(target(g.row_labels[i]), kNamesPl[i] + ": " + values[i]);
+        }
+    }
     g.shown_status = lobby_status();
     set_text(target(g.description), g.notice.empty() ? row_help(g.selected) : g.notice);
     place_arrows(kMode);
@@ -1386,7 +1446,18 @@ void refresh() {
     set_active(target(g.quick_join_root), quick);
     if (quick) set_text(target(g.quick_join_label), "DOŁĄCZ: " + upper(g.settings.last_host));
     move_highlight(g.highlight, g.rows[g.selected]);
+    if (g.values_on) {  // TLDCoop_DLC: the band under the name and the value (the code row: its boxes too)
+        float left = 0, y = 0, vleft = 0, vy = 0;
+        Vector2 size{}, vsize{};
+        text_box(target(g.row_labels[g.selected]), left, y, size);
+        text_box(target(g.row_values[g.selected]), vleft, vy, vsize);
+        float end = std::max(left + size.x, vleft + vsize.x);
+        if (g.selected == kCode && !local)
+            end = left + kValueColumn + kCellLead + static_cast<float>(kCodeLength) * (kCellWidth + kCellGap);
+        g_fit_width = end - left;
+    }
     fit_highlight(g.highlight, g.row_labels[g.selected]);
+    g_fit_width = -1;
     color_rows();
     show_preview(g.bodies[g.body]);
 }
@@ -1504,6 +1575,8 @@ void release() {
     drop(g.root);
     for (auto& h : g.rows) drop(h);
     for (auto& h : g.row_labels) drop(h);
+    for (auto& h : g.row_values) drop(h);
+    g.values_on = false;
     for (auto& a : g.arrows) drop(a.go);
     g.arrows.clear();
     drop(g.description);
@@ -1607,6 +1680,27 @@ bool open_menu(Il2CppObject* screen_panel) {
             if (Il2CppObject* l = target(label)) il2::invoke(api.label_set_encoding, l, enc_args);
         if (Il2CppObject* help = label_of(part(clone, m, kDescription))) il2::invoke(api.label_set_encoding, help, enc_args);
     }
+    // TLDCoop_DLC: each row's value, a copy of its name's label (the same font and colour), in a column
+    int values = 0;
+    for (int i = 0; i < kRowCount; ++i) {
+        Il2CppObject* name = target(g.row_labels[i]);
+        Il2CppObject* row = target(g.rows[i]);
+        if (!name || !row) continue;
+        void* args[] = {go_of(name), transform_of(row)};
+        Il2CppObject* copy = il2::invoke(api.instantiate, nullptr, args);
+        Il2CppObject* value = label_of(copy);
+        if (!value) continue;
+        void* name_args[] = {il2::il2cpp_string_new("TLDCoop_Value")};
+        il2::invoke(api.set_name, copy, name_args);
+        set_int(api.widget_set_pivot, value, kPivotLeft);
+        set_int(api.label_set_overflow, value, kOverflowResizeFreely);
+        set_int(api.widget_set_width, value, kValueWidth);
+        set_active(copy, true);
+        g.row_values[i] = hold(value);
+        ++values;
+    }
+    g.values_on = values == kRowCount;
+    if (!g.values_on) logx::warn("menu: only %d of %d row values made; names and values in one label", values, kRowCount);
     // TLD draws its selected item white and the others in its dimmer menu colour (the dimmest row has it).
     float least = 1e9f;
     for (uintptr_t label : g.row_labels) {
@@ -2152,6 +2246,12 @@ void refresh_lobby(bool force) {
 void show_setup_parts(bool setup) {
     for (const Arrow& a : g.arrows) set_active(target(a.go), setup);
     for (uintptr_t label : g.row_labels) set_int(api.widget_set_width, target(label), setup ? kRowWidth : kLobbyRowWidth);
+    {  // TLDCoop_DLC: the value column is the setup's; the lobby's lines are one label each
+        bool all = true;
+        for (uintptr_t v : g.row_values) all = all && target(v);
+        g.values_on = setup && all;
+        for (uintptr_t v : g.row_values) set_active(go_of(target(v)), g.values_on);
+    }
     for (uintptr_t root : g.action_roots) set_active(target(root), false);
     set_active(target(g.mods_root), setup && g.mode == kHost && !g.mods);
     if (!setup) set_active(target(g.quick_join_root), false);

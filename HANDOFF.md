@@ -773,3 +773,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Komunikaty błędów (opis + wiersz kodu w lobby): nie ma gry z kodem (link transportu „no game with code”), inna wersja moda (host vNN, ty v48), inna wersja gry, brak DLC, gra pełna (nowe Status.full z reported_busy), nie wpuszczono.
 - session.cpp: klient czyta Reject hosta także w innej wersji protokołu (wcześniej odrzucał go i łączył się w nieskończoność) → „Host ma inną wersję moda”. Działa dla przyszłych niezgodności (klient musi mieć ten build).
 - Niezrobione: „łączy się ponownie…” w lobby (sieć nie zgłasza takiego stanu). Wszystko NIEPRZETESTOWANE w grze; układ kratek liczony od tekstu wiersza — mogą wymagać poprawki po zrzucie (kCellWidth/Height/Gap/Lead, kCodeButtonWidth, kLobbyRowWidth 480).
+
+## 2026-11-04 19:50 — ekran co-op: kolumna wartości, kratki (po zrzutach Karola 19:41)
+- Zrzut: kratki kodu zlewały się w jeden ciemny pas, wiersze „NAZWA: WARTOŚĆ” nierówne (strzałki raz tu, raz tam). Teraz jak w ustawieniach gry: nazwa po lewej, wartość w kolumnie (kValueColumn 150 od lewego brzegu nazwy) — kopia etykiety wiersza (Instantiate, „TLDCoop_Value”, pivot Left, resize freely), strzałki wokół wartości, pasek zaznaczenia do końca wartości / kratek. Kratki 32×40, odstęp 10, czcionka 24. Lobby i strona MODS: jedna etykieta jak dotąd (values_on=false).
+- Karol: „nie działa wchodzenie w modyfikacje” — w logu 19:40:59 „menu: the MODS page”, zamknięta 19:41:07; nie wiadomo, co nie działa (zapytany).
