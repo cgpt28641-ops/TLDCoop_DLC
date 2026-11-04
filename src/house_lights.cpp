@@ -194,7 +194,11 @@ bool g_bundle_failed = false;
 std::map<std::string, uintptr_t> g_prefabs;
 
 Il2CppObject* bundle() {
-    if (Il2CppObject* b = target(g_bundle)) return b;
+    if (Il2CppObject* b = target(g_bundle); alive(b)) return b;
+    if (g_bundle) {
+        drop(g_bundle);
+        g_bundle = 0;
+    }
     if (g_bundle_failed) return nullptr;
     const auto file = paths::instance_dir() / L"tldcoop_houselights.bundle";
     std::error_code ec;
@@ -220,7 +224,13 @@ Il2CppObject* bundle() {
 }
 
 Il2CppObject* prefab(const char* name) {
-    if (auto it = g_prefabs.find(name); it != g_prefabs.end()) return target(it->second);
+    // TLDCoop_DLC: a prefab Unity unloaded with a scene (unused assets go on each load: Kerel 04.11 22:26, back in from
+    // outside, every switch gone, TLD's own hidden and none of ours made) is loaded from the bundle again
+    if (auto it = g_prefabs.find(name); it != g_prefabs.end()) {
+        if (Il2CppObject* p = target(it->second); alive(p)) return p;
+        drop(it->second);
+        g_prefabs.erase(it);
+    }
     Il2CppObject* b = bundle();
     if (!b) return nullptr;
     void* a[] = {il2::il2cpp_string_new(name), api.go_type};
@@ -239,6 +249,7 @@ Il2CppObject* make_switch(Vector3 pos, Vector3 euler, int variant) {
     Il2CppObject* go = il2::invoke(api.instantiate, nullptr, a);
     if (!go) return nullptr;
     static Il2CppObject* shader = nullptr;
+    if (shader && !alive(shader)) shader = nullptr;
     if (!shader && api.shader_find) {
         void* sa[] = {il2::il2cpp_string_new("Shader Forge/TLD_StandardDiffuse")};
         shader = il2::invoke(api.shader_find, nullptr, sa);
@@ -382,8 +393,10 @@ void scene_in(const std::string& scene) {
         const std::string nm = lower(name_of(tf));
         const int variant = nm.find("houselightswitch") != std::string::npos || nm.find("lightswitcha") != std::string::npos ? 1 : 2;
         const Vector3 pos = get_vec(api.tf_position, tf), euler = get_vec(api.tf_euler, tf);
-        set_active(go, false);
-        if (Il2CppObject* made = make_switch(pos, euler, variant)) register_switch(made), ++found;
+        if (Il2CppObject* made = make_switch(pos, euler, variant)) {  // (TLD's stays when ours can't be made)
+            set_active(go, false);
+            register_switch(made), ++found;
+        }
     }
     show_switches();
     if (found || custom)
@@ -796,7 +809,21 @@ void on_frame(const std::string& scene, bool in_game) {
     // TLDCoop_DLC: a scene the hook didn't see come in (Shatsca 04.11 21:45: back into the farmhouse from outside, its
     // switches were gone: GameManager.InstantiatePlayerObject runs when a scene loads from the menu, and before the scene
     // is the active one otherwise), done here once it's in.
-    if (in_game && !scene.empty() && scene != g_scene) scene_in(scene);
+    const double tick = static_cast<double>(GetTickCount64());
+    static double retry_until = 0, last_try = 0;
+    if (in_game && !scene.empty() && scene != g_scene) {
+        scene_in(scene);
+        retry_until = tick + 20000;
+        last_try = tick;
+    } else if (in_game && scene == g_scene && g_switches.empty() && active() && enabled_here(scene) && tick < retry_until &&
+               tick - last_try >= 1000) {
+        // TLDCoop_DLC: none found yet (Kerel 04.11 22:26: back in from outside, no switches): its objects still coming in
+        last_try = tick;
+        scene_in(scene);
+        if (!g_switches.empty()) logx::info("houselights: %s: switches found %.0f s after coming in", scene.c_str(),
+                                            (20000 - (retry_until - tick)) / 1000);
+        else if (tick + 1000 >= retry_until) logx::warn("houselights: %s: no light switches found in 20 s", scene.c_str());
+    }
     if (!in_game || scene != g_scene || !active()) return;
     // Lights on in our scene: said now and then, so a player who comes in has them on too.
     if (g_on && static_cast<double>(GetTickCount64()) - g_last_said >= kStateEveryMs) say(false);

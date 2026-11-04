@@ -840,3 +840,11 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (2) „inni nie widzieli światła” — Msg::HouseLights nie był na liście przyjmowanych w session.cpp (pakiety wyrzucane).
   (3) „naprawione drzwiczki szafki w kuchni (narzędzia stolarskie) u drugiego nadal zniszczone” — w logach zero śladu;
   dodane logi: przy starcie czy RepairableInteractiveItem jest dzielone, i w każdej scenie ile rzeczy do naprawy (+nazwy).
+
+### 2026-11-04 ~21:40 UTC — włączniki House Lights znikają po wyjściu/wejściu (2)
+- Log 22:15–22:28 (build 21:07 UTC): światło w co-op już działa (on/off od drugiego gracza). Po wyjściu i wejściu do
+  FarmHouseA nadal brak włączników. Przyczyna: prefaby z bundla Unity wyładowuje przy zmianie sceny (unused assets);
+  cache zwracał martwy prefab → nasze się nie robiły, a oryginalne były już ukryte. Teraz: martwy prefab/bundle/shader
+  ładowany ponownie, oryginał ukrywany dopiero gdy nasz powstał, a skan powtarzany co 1 s do 20 s po wejściu (log).
+- Drzewa: screenshot Karola (mgła, korony jako płaskie szaro-niebieskie wielokąty). Bundle sprawdzony: alfa i mipy
+  zgodne z oryginałem; zapytany o porównanie z wyłączonymi Dynamic Trees / przy dobrej pogodzie.
