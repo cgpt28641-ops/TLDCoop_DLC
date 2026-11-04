@@ -1322,11 +1322,11 @@ void place_code_cells() {
     for (size_t i = 0; i < kCodeLength; ++i) {
         const float x = left + kCellWidth * 0.5f + static_cast<float>(i) * (kCellWidth + kCellGap);
         set_vec(api.set_local_position, transform_of(target(g.cell_roots[i])), {x, pos.y, 0});
-        std::string ch = i < code.size() ? code.substr(i, 1) : "";
+        std::string glyph = i < code.size() ? code.substr(i, 1) : "";
         const bool at_cursor = g.mode == kJoin && i == code.size() && g.selected == kCode;
-        if (at_cursor && g.blink) ch = "_";
+        if (at_cursor && g.blink) glyph = "_";
         Il2CppObject* cell_label = target(g.cell_labels[i]);
-        set_text(cell_label, ch);
+        set_text(cell_label, glyph);
         set_color(cell_label, whole && g.mode == kJoin ? good : at_cursor ? cursor : g.selected_color);
     }
     const float bx = left + static_cast<float>(kCodeLength) * (kCellWidth + kCellGap) + kCellGap + kCodeButtonWidth * 0.5f;
