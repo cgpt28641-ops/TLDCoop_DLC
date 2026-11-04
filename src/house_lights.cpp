@@ -348,10 +348,10 @@ void show_switches() {
 
 // GameManager.InstantiatePlayerObject (the mod's prefix): a scene came in. Its switches: the game's own are swapped for
 // the mod's working ones, plus the mod's where the game has none.
-void scene_in() {
+void scene_in(const std::string& scene) {
     for (Switch& s : g_switches) drop(s.part);
     g_switches.clear();
-    g_scene = game::active_scene();
+    g_scene = scene;
     if (!active() || !enabled_here(g_scene)) return;
     g_on = g_scene_on[g_scene];
     const std::string low = lower(g_scene);
@@ -572,7 +572,7 @@ BoolFn g_interact = nullptr;
 DarkFn g_too_dark = nullptr;
 
 void player_object_detour(Il2CppObject* self, const MethodInfo* m) {
-    if (api.ok) scene_in();  // (the mod's prefix)
+    if (api.ok) scene_in(game::active_scene());  // (the mod's prefix)
     g_player_object(self, m);
 }
 
@@ -793,6 +793,10 @@ void on_frame(const std::string& scene, bool in_game) {
         g_scene_on[sc] = on;
         if (sc == g_scene && active()) set_on(on, "another player's switch");
     }
+    // TLDCoop_DLC: a scene the hook didn't see come in (Shatsca 04.11 21:45: back into the farmhouse from outside, its
+    // switches were gone: GameManager.InstantiatePlayerObject runs when a scene loads from the menu, and before the scene
+    // is the active one otherwise), done here once it's in.
+    if (in_game && !scene.empty() && scene != g_scene) scene_in(scene);
     if (!in_game || scene != g_scene || !active()) return;
     // Lights on in our scene: said now and then, so a player who comes in has them on too.
     if (g_on && static_cast<double>(GetTickCount64()) - g_last_said >= kStateEveryMs) say(false);

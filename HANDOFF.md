@@ -828,3 +828,15 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   szarobrązowa z płatami, cedr czerwonobrązowy włóknisty), relief wzmocniony, śnieg na korze zostaje; gałęzie: śnieg
   kępami na igłach, zieleń między, osobno dla każdego stanu (0–55% pokrycia). Limit shown_index (max Medium) cofnięty.
   Bundle w third_party/dynamictrees + w zipie; podgląd pnie_podglad.jpg.
+
+### 2026-11-04 ~22:10 UTC — łom zdublowany, House Lights w co-op, naprawa szafki
+- Logi 21:37–21:54 (build 20:15 UTC). Kerel F11 21:54 „zduplikowałem łom”: jego własny łom 6714e09a (położony na półce
+  w FarmHouseA w poprzedniej sesji) leżał w jego grze, ale nie jako „luźny” przedmiot → przyszedł łom hosta, zrobiła się
+  kopia obok (ac665f21), obie podniesione, obie wyrzucone = 2 łomy. Teraz (world_items apply_put): istniejący, włączony,
+  nie w plecaku/pojemniku → odpięty od rodzica, ustawiony tam gdzie u hosta, bez drugiej kopii; jeśli nadal nie jest luźny
+  — usuwany i robiona kopia hosta (log z nazwą rodzica).
+- Shatsca F11: (1) „włącznik House Lights zniknął po wyjściu z budynku i powrocie” — scene_in szedł tylko z hooka
+  InstantiatePlayerObject (przy wejściu z drzwi scena jeszcze nie aktywna); teraz też z on_frame przy zmianie sceny.
+  (2) „inni nie widzieli światła” — Msg::HouseLights nie był na liście przyjmowanych w session.cpp (pakiety wyrzucane).
+  (3) „naprawione drzwiczki szafki w kuchni (narzędzia stolarskie) u drugiego nadal zniszczone” — w logach zero śladu;
+  dodane logi: przy starcie czy RepairableInteractiveItem jest dzielone, i w każdej scenie ile rzeczy do naprawy (+nazwy).

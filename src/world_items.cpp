@@ -70,6 +70,7 @@ struct Api {
     const MethodInfo* get_position = nullptr;
     const MethodInfo* get_rotation = nullptr;
     const MethodInfo* get_parent = nullptr;
+    const MethodInfo* set_parent = nullptr;  // Transform.SetParent(Transform, bool) (TLDCoop_DLC)
     const MethodInfo* set_pose = nullptr;      // Transform.SetPositionAndRotation(Vector3, Quaternion)
     const MethodInfo* object_name = nullptr;
     // GearItem
@@ -1291,6 +1292,51 @@ void apply_put(const net::ItemPutMsg& m, double now) {
             }
         }
     }
+    // TLDCoop_DLC: we have it in the world, on, but not as a loose item (Kerel 04.11 21:53: the crowbar he'd put on a
+    // shelf in the farmhouse an hour before, his own and the host's: "ours: ac665f21" made beside it, both picked up,
+    // both dropped: two crowbars). That one is shown where the host has it, freed from what holds it, not a second copy.
+    if (gi && !get<bool>(gi, api.in_inventory) && !get<bool>(gi, api.no_save) && !in_a_container(gi) && !held_now(ours)) {
+        bool on = false;
+        il2::invoke_value(api.go_active, go, on);
+        if (on) {
+            Il2CppObject* parent = api.get_parent ? il2::invoke(api.get_parent, transform_of(gi)) : nullptr;
+            const std::string under = alive(parent) ? name_of(il2::invoke(api.component_go, parent)) : std::string("nothing");
+            const bool radial = get<Il2CppObject*>(gi, api.radial_parent) != nullptr;
+            if (radial && api.radial_parent >= 0) il2::store_ref(gi, api.radial_parent, nullptr);
+            if (alive(parent) && api.set_parent) {
+                bool keep = true;
+                void* pa[] = {nullptr, &keep};
+                il2::invoke(api.set_parent, transform_of(gi), pa);
+            }
+            set_pose(gi, pos, rot);
+            seamless_interiors::settle_in_room(gi);
+            if (is_loose(gi)) {
+                Known& k = g_known[ours];
+                k.prefab = m.prefab;
+                k.pos = k.told = pos;
+                k.rot = rot;
+                k.units = units_of(gi);
+                k.snare = snare_state(gi);
+                k.moved_ms = now;
+                k.shared = true;
+                load_snare(gi, m.gear, m.pdid, k);
+                load_opened(gi, m.gear, k);
+                load_burn(gi, m.gear, k);
+                load_lamp(gi, m.gear);
+                load_evolve(gi, m.gear);
+                load_pot(gi, m.gear, m.pdid);
+                logx::info("items: the other player's %s (%s) lay here too but not as a loose item (under %s%s); shown "
+                           "at (%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(),
+                           under.c_str(), radial ? ", a spawner's" : "", pos.x, pos.y, pos.z);
+                return;
+            }
+            logx::warn("items: the other player's %s (%s) lies here under %s and isn't loose even freed; this one goes, "
+                       "a copy of the host's is made", m.prefab.c_str(), short_id(m.pdid).c_str(), under.c_str());
+            destroy_loose(gi);
+            go = nullptr;
+            gi = nullptr;
+        }
+    }
     // Make it from TLD's save record, under the same id unless something here already goes by it.
     std::string id = m.pdid, gear = m.gear;
     forget_alias(ours);
@@ -2151,6 +2197,7 @@ bool init() {
     api.get_position = il2::find_method(transform, "get_position", 0);
     api.get_rotation = il2::find_method(transform, "get_rotation", 0);
     api.get_parent = il2::find_method(transform, "get_parent", 0);
+    api.set_parent = il2::find_method(transform, "SetParent", 2);
     api.set_pose = il2::find_method(transform, "SetPositionAndRotation", 2);
     api.object_name = il2::find_method(object, "get_name", 0);
     api.gear_type = il2::type_object(gear);

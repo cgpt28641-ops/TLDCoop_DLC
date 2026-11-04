@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -340,6 +341,24 @@ void locks_into(std::vector<Object>& out) {
         Il2CppObject* found = il2::invoke(api.find_all, nullptr, args);
         for (size_t i = 0, n = il2::array_length(found); i < n; ++i)
             repairables.push_back(il2::il2cpp_gchandle_new(il2::array_object_at(found, i), false));
+        // TLDCoop_DLC: what's there to repair in this scene, once (Shatsca 04.11 21:49: a kitchen cabinet door repaired
+        // with the carpentry tools stayed broken for Kerel, and nothing in either log said a word of it)
+        static std::string told_scene;
+        const std::string here = game::active_scene();
+        static size_t told_count = SIZE_MAX;
+        if (told_scene != here || told_count != repairables.size()) {
+            told_scene = here;
+            told_count = repairables.size();
+            std::string names;
+            int fixed = 0;
+            for (uintptr_t h : repairables)
+                if (Il2CppObject* r = il2::il2cpp_gchandle_get_target(h); alive(r)) {
+                    fixed += get<bool>(r, api.repaired) ? 1 : 0;
+                    if (names.size() < 300) names += (names.empty() ? "" : ", ") + name_of(r);
+                }
+            logx::info("objects: %zu thing(s) to repair in %s (%d repaired)%s%s", repairables.size(), here.c_str(), fixed,
+                       names.empty() ? "" : ": ", names.c_str());
+        }
     }
     for (uintptr_t h : repairables)
         if (Il2CppObject* r = il2::il2cpp_gchandle_get_target(h); alive(r) && seen.insert(r).second)
@@ -1694,6 +1713,8 @@ bool init() {
             api.repair_save_done = il2::field_offset_quiet(api.repair_save_class, "m_IsRepaired");
         }
     }
+    logx::info("objects: repairs (RepairableInteractiveItem) %s", api.repairable_type && api.repaired >= 0 && api.find_all
+                                                                      ? "shared" : "NOT shared (TLD's type or field missing)");
     Il2CppClass* placeable = il2::find_class(kGame, "TLD.Placement", "Placeable");
     Il2CppClass* decoration = il2::find_class(kGame, "", "DecorationItem");
     api.placeable_guid = il2::field_offset(placeable, "m_Guid");

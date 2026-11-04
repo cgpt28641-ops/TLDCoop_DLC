@@ -945,6 +945,7 @@ struct Session::Impl {
             case Msg::WildHit:
             case Msg::FlareShot:
             case Msg::Sleep:
+            case Msg::HouseLights:  // TLDCoop_DLC (it was never let in: Shatsca 04.11 21:46 "the others didn't see the lights")
             case Msg::Give: {
                 if (!linked) return;
                 keep_packet(*l, type, data, size, now);
