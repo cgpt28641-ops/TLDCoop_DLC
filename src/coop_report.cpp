@@ -228,6 +228,15 @@ std::string stamp_now(const char* tail) {
     return stamp;
 }
 
+// TLDCoop_DLC: who asks for logs and who they go to: the name and the player's number (04.11 23:09: everyone's coop.ini
+// came back from the zip with name=Player, so "the one who asked" was everyone, and each game skipped the request
+// as its own: no logs came)
+std::string me_key() { return g_name + "#" + std::to_string(netrt::status().self_id); }
+std::string shown(const std::string& key) {
+    const size_t hash = key.rfind('#');
+    return hash == std::string::npos ? key : key.substr(0, hash);
+}
+
 // TLDCoop_DLC: a zip of our logs, to the player who asked, in parts (the host passes them on).
 void send_zip(const Done& d) {
     FILE* in = _wfsopen(d.zip.c_str(), L"rb", _SH_DENYNO);
@@ -303,15 +312,6 @@ void send(uint32_t id, const std::string& who, int except = -1) {
         netrt::send_packet_except(static_cast<uint8_t>(except), w, true);
     else
         netrt::send_packet(w, true);
-}
-
-// TLDCoop_DLC: who asks for logs and who they go to: the name and the player's number (04.11 23:09: everyone's coop.ini
-// came back from the zip with name=Player, so "the one who asked" was everyone, and each game skipped the request
-// as its own: no logs came)
-std::string me_key() { return g_name + "#" + std::to_string(netrt::status().self_id); }
-std::string shown(const std::string& key) {
-    const size_t hash = key.rfind('#');
-    return hash == std::string::npos ? key : key.substr(0, hash);
 }
 
 void send_want(uint32_t id, const std::string& who, int except = -1) {
