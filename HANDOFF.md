@@ -1,4 +1,58 @@
-# TLDCoop_DLC: handoff for the next assistant (30.10.2026, updated 17:35)
+# TLDCoop_DLC — HANDOFF
+
+## >>> START TUTAJ: stan na 04.11.2026 09:25 (czytaj najpierw to; niżej starsza historia, góra pliku od "The user" jest NIEAKTUALNA tam, gdzie się kłóci z tym) <<<
+
+### Karol i jak z nim pracować
+- Karol (Polak, nie programista; w grze "Kerel_007_" / na Discordzie "kerel123"). Pisz po polsku, krótko i prosto. Gra z hostem **Shatsca** i z **szymongrzyb2017** (Discord "szymongrzyb.").
+- Zasada: **najpierw napisz przyczynę/plan, zanim coś zmienisz**, gdy pyta "przeanalizuj" / "napisz zanim coś zrobisz". Gdy mówi "rób wszystko" / "działaj" / "popraw odrazu" — działaj sam.
+- **Po każdym zbudowanym pliku:**
+  1. link do pobrania: https://github.com/cgpt28641-ops/TLDCoop_DLC/releases/download/dll-latest/winhttp.dll (CI wrzuca tam winhttp.dll przy każdym pushu na main);
+  2. wpis w tym HANDOFF + kopia do /mnt/user-data/outputs/HANDOFF.md;
+  3. post na Discordzie, grupa **ICARUS**: co zrobione + link, z dopiskiem **~CLAUDE~** (zgoda Karola).
+- Za każdym razem czytaj ICARUS i pobieraj **najnowsze** logi (zipy F11) + logi Karola z jego komputera.
+- Karol sam loguje się wszędzie; nigdy nie wpisuj haseł/kodów.
+- Karol chce mieć dostęp do Ciebie z telefonu; komputer zostaje włączony (uśpienie: nigdy, blokada dynamiczna wyłączona, aplikacja Claude otwarta, ekran wygaszony). **Gry za niego nie obsługujemy** ("tego nie robimy") — 04.11 rozważał, żebyś sam testował grę (nowy zapis co-op jako host bez graczy, NIE ruszać zapisu nr 28 = `sandbox28`, jego zapis klienta; świat hosta to `sandbox25` u Shatscy), ale **odłożył to** ("narazie odpuszczamy").
+- Twarde zasady projektu: assetów Hinterland nie commitujemy/publikujemy (.bodycut lokalnie); paczki DynamicTrees nie rozsyłamy osobno (repo prywatne); self-updater i Adaptive Arsenal usunięte; JustZoom zawsze włączony; bez powrotu do starego formatu plików pokoi; **"pokoje w miejscu" (bez offsetu 80 m) tylko po wyraźnym "tak" Karola**; ruchu drzew/liści **nie ruszać** (Karol: "tego nie ruszaj").
+
+### Repo, build, narzędzia
+- Repo prywatne **cgpt28641-ops/TLDCoop_DLC**, gałąź main, lokalnie /home/claude/tldcoop_dlc (sklonuj, jeśli nowej sesji brak). C++ IL2CPP, winhttp.dll proxy, MinHook (hooks::install_method; hook na już zahookowanej metodzie idzie "na wierzch").
+- CI: GitHub Actions (windows, MSVC). Status: `gh api repos/cgpt28641-ops/TLDCoop_DLC/actions/runs?per_page=5 --jq '.workflow_runs[]|"\(.head_sha[0:7]) \(.status) \(.conclusion)"'`; błąd: `gh run view <id> --log-failed | grep error`. Pełny zip (z ciałami, ~220 MB) tylko przez workflow_dispatch.
+- Uwaga MSVC/Windows: `near`, `far`, `min`, `max` itp. to makra — nie używaj jako nazw zmiennych.
+- **Protokół: v48** (`kProtocolVersion` w src/net/protocol.h). Wszyscy muszą mieć ten sam dll. v48 dodało: ObjectKind::Door=8 (drzwi/szafy OpenClose), Msg::LogsWant=54, Msg::LogsFile=55; WorldMsg ma na końcu opcjonalny float `aurora`.
+- **Most do komputera Karola** (narzędzia mcp__remote-devices__*): foldery `D:\SteamLibrary\steamapps\common\TheLongDark\TLDCoop` (logi coop.log/coop-prev*.log, coop.ini, reports\, backups\, tldcoop_trees.bundle) i `C:\Users\Karol Dusza\Downloads`. Pliki: device_stage_files (do /mnt/user-data/uploads/...), zapis: device_commit_files ze stagedPath w /mnt/user-data/outputs/.
+- **Discord (wbudowana przeglądarka, karta "seed")** = ICARUS: https://discord.com/channels/@me/1397990296977145877
+  - Czytanie wiadomości/załączników: javascript_tool na `li[id^="chat-messages"]` (autor, czas, treść, linki cdn.discordapp.com).
+  - Pobieranie załącznika: nowa karta (tabs_create) + navigate na URL cdn → plik ląduje w Pobranych Karola (lub obrazek się wyświetla — wtedy screenshot/zoom karty), potem device_stage_files.
+  - Pisanie: find "Napisz na ICARUS" → klik w textbox → type; nowe linie shift+Enter; sprawdź `document.querySelector('[role="textbox"]').innerText`; Enter.
+  - Wysłanie obrazka: przez przeglądarkę się nie da; zrobione przez computer use na aplikacji Discord Karola (zgody: Discord app-1.0.9265\discord.exe + Eksplorator plików w trybie click; plik najpierw do Pobranych przez device_commit_files; "+" → "Prześlij plik" → dwuklik pliku → podpis → Enter; na końcu computer_release_lock).
+- Zipy F11 zawierają `./opis.txt` (ścieżka z "./") — czytaj pythonem zipfile.
+- Analiza logów: tools/logs/ana.py (lista sesji, błędy/ostrzeżenia zbiorczo; wejście: plik json z listą ścieżek logów). Lokalne kopie logów z 03.11 były w /root/logs (znikną z sesją).
+- Tekstury drzew: tools/trees/tone_snow.py (+ sf.py, lz4d): rozpakowuje paczkę UnityFS, miesza zaśnieżone zestawy z Clear (K=0.55), własny koder DXT5, zapisuje paczkę (1 blok LZMA). pip z PyPI zablokowany w tej sesji (proxy) — UnityPy niedostępne, stąd własne narzędzia.
+- Typy gry: zrzut tld_types.txt (w folderze TLDCoop Karola i w uploads tej sesji), global-metadata.dat w uploads (strings).
+
+### Stan na 04.11 rano (wszystko zbudowane, NIC z tego nie testowane w grze)
+- 31e88e2 + wcześniejsze dziś:
+  1. **Widoki z pokoju na zewnątrz oświetlane światłem dworu** (było: drzewa kremowe/ziemia czarna patrząc z domku przez drzwi o zmierzchu). seamless_windows.inc: g_out_cams, view_sky_on/off w Camera.FireOnPreCull/PostRender (ambient dworu g_sky_out + światła pokoju wyłączone na czas tej kamery).
+  2. **Dynamic Trees mniej białe**: nowa third_party/dynamictrees/tldcoop_trees.bundle (11 MB, zestawy zaśnieżone zmieszane z Clear). Wgrana Karolowi do TLDCoop\ (stara w TLDCoop\backups\tldcoop_trees_stary.bundle). Ryzyko: gra mogła nie wczytać przepakowanej paczki — sprawdź w logu "trees: textures loaded" / brak "could not load". Znajomi dostaną ją w pełnej paczce.
+  3. **Diagnostyka płasko-kremowych drzew** (screen Karola: pnie i korony jednolicie kremowe bez tekstury, ziemia czarna, skały normalne — NIE rozwiązane): co minutę "trees: a tree material shows '<tekstura>'" i "interiors: sky's light r g b ... from ...". Następne logi to rozstrzygną (biała/brak tekstury vs przepalone światło). Test proponowany: host wyłącza Dynamic Trees w MODS.
+  4. **v48: drzwi/szafy/szafki w zwykłych interiorach (OpenClose) zsynchronizowane** (world_objects.cpp Kind::Door, klucz "o/", odpytywane w obie strony, Open/Close(false,false)).
+  5. **Skrzydło drzwi SI** szukane też u rodzica/dziadka LoadScene (raport Shatscy 22:32: "buguje się tekstura przy drzwiach i skrzydła drzwi nie działają", log "no door leaf found"). Gdy nadal brak — log z pełną ścieżką obiektu.
+  6. **ESC → "POBIERZ LOGI"** (tylko w co-op, coop_save.cpp + coop_report.cpp): pakuje nasze logi, prosi resztę; ich zipy przychodzą w częściach do TLDCoop\reports\<czas>_logi_wszystkich\.
+  7. **Okna przesunięte** (rysunek Karola: widok przez okno przesunięty wzdłuż i w poprzek ściany, nic nie zasłania): niesparowane okna → najbliższa szyba budynku w tę samą stronę / średnia korekta sparowanych; w obie strony.
+  8. **Szyba i szprosy na widoku**: kolejka widoków 2450 (przed szybą gry), z zewnątrz płaszczyzna 3 cm za szybą (kOutsideInBehindGlass). Jeśli z zewnątrz okna zrobią się ciemne/puste → cofnąć to.
+- **Półki/szafki "druga osoba musi przeszukać jeszcze raz"**: logi z problemem (03.11 22:31–22:40) były z dll 21:20 u hosta; przyczyna (meble z budującego się pokoju wysyłane pod tymczasowym id → "container X isn't in our CoastalRegion") naprawiona 23:20 (przekluczanie). Czekamy na logi z nowej wersji. Pomysł na dalej: zmiana z nieznanym id nie przepada, tylko czeka na zbudowanie pokoju.
+
+### Otwarte / do zrobienia
+- Płasko-kremowe drzewa (pkt 3) — przeanalizować nowe logi.
+- Wilk-pacynka: niezgodny prefab (88 vs 93 bajty parametrów animatora).
+- Mapa: odkrywanie przez innych i gracze z innych regionów na mapie (wymaga zmiany protokołu).
+- Teleport przy wchodzeniu do domku (wymaga "pokoi w miejscu" — tylko po "tak").
+- Drzwi, przez które nie dało się wejść ponownie — w logu są linie "door used"/"ignored"; przeanalizować.
+- Ślady stóp innych graczy (avatar_tracks, kEnabled=false) — można włączyć, jeśli czarna ziemia okaże się niezwiązana.
+
+
+---
+# (starsze) TLDCoop_DLC: handoff for the next assistant (30.10.2026, updated 17:35)
 
 ## The user
 - Karol, Polish (in-game name "Kerel_007_"). Write to him in Polish, short and simple. If he writes "krótko", answer in a few lines.
