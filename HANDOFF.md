@@ -675,3 +675,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   8. Świeżość zorzy liczona od chwili przyjścia wiadomości (received_ms).
   9. Ponawianie apply_stored tylko 30 s po pojawieniu się pokoju (reszta przy otwarciu: may_open).
 - Do sprawdzenia: (4) losowe spawny w pokojach przy lekkim resyncu — pokoje mają własne losowanie (seed hosta), więc prawdopodobnie bez wpływu.
+
+## 2026-11-04 — jasne drzewa o zmierzchu (widok z pokoju)
+- Przyczyna (log Kerel 22:54–22:55): Karol stał W pokoju CoastalHouse_15 (y=106) i patrzył przez otwarte drzwi ("1 door view drawn, 1 from inside"). Widoki na zewnątrz z pokoju rysowały się światłem pokoju (ambient z InteriorLightingManager + światła Daytime/Daylight/... pokoju), nie wieczornym światłem dworu → drzewa kremowe, ziemia czarna. Tekstury Dynamic Trees wykluczone (jasność jak w grze, tylko kora).
+- Poprawka (seamless_windows.inc / seamless_doors.inc): g_out_cams (kamery widoków okno/drzwi z pokoju na zewnątrz); FireOnPreCull takiej kamery → ambient dworu (ostatni g_sky_out z TodAmbientLight) + światła pokoju wyłączone; FireOnPostRender → przywraca ambient pokoju i światła. Log raz: "a view out of the room drawn with the outdoors' light".
+- Do sprawdzenia w grze: zmierzch, wejść do domu, patrzeć przez otwarte drzwi/okno — drzewa i ziemia jak na zewnątrz; brak migotania światła w pokoju.
