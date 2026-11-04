@@ -686,3 +686,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - tools/trees/tone_snow.py: każdy zaśnieżony zestaw (Pine Lowest..Highest, Cedar Low..Highest) zmieszany z Clear: clear + 0.55*(snowy-clear), mip po mipie (dekodowanie DXT5 → mieszanie → własny koder DXT5, PSNR ~53 dB), alfa bez zmian. Paczka zapisana na nowo (UnityFS, jeden blok LZMA, info nieskompresowane) — 11 MB zamiast 22 MB. Clear i Snow_A bez zmian.
 - Nowy plik wgrany Karolowi do TLDCoop\tldcoop_trees.bundle; stary w TLDCoop\backups\tldcoop_trees_stary.bundle. W logu sprawdzić "trees: textures loaded" i brak "could not load" / "no texture".
 - Ruch liści: czekam na opis Karola (sztywne / za mocno / drgają). Parametry w materiałach: _XZAnimScaleByH/_XZAnimScaleByR 0.15, _LocalPhaseScalars 0.1 (atlas gałęzi), _TrunkBendHeight 5; globalnie _GlobalWindInfo/_GlobalBranchPhase (UpdateShaderGlobalsForFoliage).
+
+## 2026-11-04 08:15 — drzewa płasko kremowe (screen Karola)
+- Screen: pnie i korony jednolicie kremowe, zero szczegółów tekstury, ziemia czarna, skały normalne. To nie "za dużo śniegu" w teksturze — wygląda na brak tekstury (biała) albo przepalone światło drzew.
+- Dodane logi raz na minutę: "trees: a tree material shows '<tekstura>'" i "interiors: sky's light r g b ... from the outdoors/a room's lighting manager". Następne logi rozstrzygną.
+- Ruch liści: z mojej strony nie widać gry; poproszony o krótkie nagranie. Parametry: _XZAnimScaleByH/R 0.15, _LocalPhaseScalars 0.1, _TrunkBendHeight 5, globalne _GlobalWindInfo/_GlobalBranchPhase.
