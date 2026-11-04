@@ -1357,7 +1357,8 @@ void show_legend(Il2CppObject* map, const std::vector<std::pair<Color, std::stri
     if (!api.pixel_adjustment || !il2::invoke_value(api.pixel_adjustment, nullptr, units_a_pixel, args) || units_a_pixel <= 0)
         units_a_pixel = 720.0f / height;
     const float px = 1.0f / units_a_pixel;
-    const float left = 24 * px, top = height - 24 * px, line = (kLegendFont + 8) * px;
+    // TLDCoop_DLC: under TLD's "MAPA" title and its "last updated" line (Karol 04.11: the legend sat on them)
+    const float left = 24 * px, top = height - 150 * px, line = (kLegendFont + 8) * px;
     while (g_legend.size() < rows.size() + 1) g_legend.emplace_back();
     for (size_t i = 0; i < g_legend.size(); ++i) {
         LegendRow& r = g_legend[i];
