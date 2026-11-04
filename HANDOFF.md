@@ -697,3 +697,9 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Skrzydło drzwi SI (Shatsca, raport 22:32 "skrzydla drzwi nie dzialaja", log "no door leaf found"): szukane też u rodzica i dziadka LoadScene (tylko w obrębie futryny); przy braku log z całą ścieżką obiektu.
 - ESC → "POBIERZ LOGI" (tylko w co-op): pakuje nasze logi i prosi resztę (LogsWant); każdy pakuje swoje i wysyła zip (LogsFile, części po 192 KB, host przekazuje) do TLDCoop\reports\<czas>_logi_wszystkich\<nick>_<plik>.zip.
 - v48: wszyscy muszą mieć ten sam dll.
+
+## 2026-11-04 09:10 — okna: przesunięcie i szyba
+- Rysunek Karola: widok przez okno przesunięty wzdłuż i w poprzek ściany. Okna bez pary szły przesunięciem z configu SI (myli się do ~1 m). Teraz: każde niesparowane okno → najbliższa wolna szyba budynku w tę samą stronę (do 2 m po średniej korekcie sparowanych), inaczej średnia korekta sparowanych. Tak samo z zewnątrz do pokoju. Log: "N more window(s) paired to the nearest building pane" / "(N paired to the nearest room window)".
+- Szyba i szprosy: widoki rysowane w kolejce 2450 (przed szybą gry STR_WindowGlassMix, przezroczystą), więc jej szron, odcień i szprosy są na wierzchu; z zewnątrz płaszczyzna widoku 3 cm za szybą. Jeśli widok z zewnątrz zrobi się pusty/zasłonięty → cofnąć kOutsideInBehindGlass.
+- Półki: logi z problemem były z dll 21:20 (Shatsca), poprawka przekluczania (23:20) tego dotyczy; czekamy na nowe logi.
+- `near` to makro Windows — nie używać jako nazwy.
