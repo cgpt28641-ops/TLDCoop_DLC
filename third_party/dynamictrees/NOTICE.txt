@@ -5,3 +5,5 @@ ported to C++ (src/dynamic_trees.cpp, src/trees_math.h), with the authors' permi
 cgpt28641-ops, 30.10.2026). Source commit: see `git log` of the upstream repository at the time of copying.
 Do not redistribute this file separately from TLDCoop_DLC without the authors' permission.
 2ff105757a345264e8a553ab046b0f5376681841
+TLDCoop_DLC change (04.11.2026): the snowy pine/cedar sets (Lowest..Highest) blended back towards the Clear set
+(tools/trees/tone_snow.py, K=0.55) so the needles keep their green under the snow.
