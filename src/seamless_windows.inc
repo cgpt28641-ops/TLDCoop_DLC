@@ -1316,8 +1316,12 @@ struct Slot {
     uintptr_t cam = 0, rt = 0, mat = 0;
     int w = 0, h = 0;
 };
+// TLDCoop_DLC: the cameras that draw the outdoors from inside a room (window views out, door views out): lit as the
+// outdoors while they draw, not as the room (see view_sky_on).
+std::unordered_set<Il2CppObject*> g_out_cams;
 void free_slot(Slot& s) {
     if (Il2CppObject* c = live(s.cam)) {
+        g_out_cams.erase(c);
         set_behaviour(c, false);
         void* nt[] = {nullptr};
         il2::invoke(wapi.cam_set_target, c, nt);
@@ -1603,6 +1607,9 @@ int g_indoor_logged = 0;
 // no lighting manager of its own: the sky's light at 45 %.
 Instance* g_game_light = nullptr;
 bool g_game_light_ilm = false;
+std::vector<uintptr_t> g_room_lights;  // the room's own lights (see view_sky_on)
+void view_sky_off();
+void forget_room_lights();
 int g_ilm_depth = 0;
 void game_light_switch(Instance& in, bool on, int& n, bool& ilm) {
     Il2CppObject* m = master_of(in);
@@ -1611,6 +1618,7 @@ void game_light_switch(Instance& in, bool on, int& n, bool& ilm) {
         if (!listed(kDarkOnly, std::size(kDarkOnly), name_of(t))) return;
         set_active(go_of(t), on);
         ++n;
+        if (on) each_in(go_of(t), api.t_light, [&](Il2CppObject* l) { g_room_lights.push_back(hold(l)); });
     });
     if (on) each_in(m, api.t_ilm, [&](Il2CppObject*) { ilm = true; });
 }
@@ -1619,6 +1627,8 @@ void tick_game_light() {
     if (want == g_game_light) return;
     int n = 0;
     bool ilm = false;
+    view_sky_off();
+    forget_room_lights();
     if (g_game_light) game_light_switch(*g_game_light, false, n, ilm);
     g_game_light = want;
     g_game_light_ilm = false;
@@ -1636,11 +1646,28 @@ void ilm_update_detour(Il2CppObject* self, const MethodInfo* m) {
     --g_ilm_depth;
 }
 
+// TLDCoop_DLC: the sky's light as the outdoors set it last (the outdoors' TodAmbientLight call) and as it was last put in
+// (the room's, while the player is in a room). Karol: "drzewa są nienaturalnie jasne w pewnym momencie": at dusk, looking
+// out of a room's open door, the trees outside were drawn bright cream and the ground black: the views out were lit by
+// the room (its indoor sky's light and its Daytime/Daylight/... lights), not by the evening outside.
+struct SkyLight {
+    bool have = false;
+    IlColor colour{};
+    float probe = 1;
+};
+SkyLight g_sky_out, g_sky_put;
+const MethodInfo* g_sky_method = nullptr;
+void put_sky(IlColor* colour, float probe, const MethodInfo* m) {
+    g_sky_method = m;
+    if (colour) g_sky_put.have = true, g_sky_put.colour = *colour, g_sky_put.probe = probe;
+    g_set_ambient(colour, probe, m);
+}
 void set_ambient_detour(IlColor* colour, float probe, const MethodInfo* m) {
     tick_game_light();
+    if (colour && g_ilm_depth == 0) g_sky_out.have = true, g_sky_out.colour = *colour, g_sky_out.probe = probe;
     if (g_game_light && g_game_light == g_inside && g_game_light_ilm) {
-        if (g_ilm_depth > 0) g_set_ambient(colour, probe, m);  // the room's own (the game's indoor light)
-        return;                                               // (the outdoors' meanwhile left out)
+        if (g_ilm_depth > 0) put_sky(colour, probe, m);  // the room's own (the game's indoor light)
+        return;                                         // (the outdoors' meanwhile left out)
     }
     const int pct = g_indoor_light == 0 ? 45 : g_indoor_light;
     if (colour && g_inside && engaged() && pct < 100) {
@@ -1649,13 +1676,49 @@ void set_ambient_detour(IlColor* colour, float probe, const MethodInfo* m) {
         if (g_indoor_logged++ == 0)
             logx::info("interiors: in a room: the sky's light at %d%% (ambient %.2f %.2f %.2f)", pct, colour->r,
                        colour->g, colour->b);
-        g_set_ambient(&dim, probe, m);
+        put_sky(&dim, probe, m);
         return;
     }
-    g_set_ambient(colour, probe, m);
+    put_sky(colour, probe, m);
+}
+
+// The room's own lights (under its Daytime/Daylight/Midday/AmbientLight/Nighttime objects), switched off while a view
+// out draws and on again after it.
+std::vector<Il2CppObject*> g_lights_off;
+bool g_view_sky = false;
+int g_view_sky_logged = 0;
+void forget_room_lights() {
+    for (uintptr_t h : g_room_lights) drop(h);
+    g_room_lights.clear();
+}
+void view_sky_on() {
+    if (g_view_sky || !g_sky_out.have || !g_sky_put.have || !g_inside || !engaged()) return;
+    g_view_sky = true;
+    IlColor c = g_sky_out.colour;
+    g_set_ambient(&c, g_sky_out.probe, g_sky_method);
+    g_lights_off.clear();
+    for (uintptr_t h : g_room_lights)
+        if (Il2CppObject* l = live(h); l && behaviour_on(l)) {
+            set_behaviour(l, false);
+            g_lights_off.push_back(l);
+        }
+    if (g_view_sky_logged++ == 0)
+        logx::info("interiors: a view out of the room drawn with the outdoors' light (ambient %.2f %.2f %.2f, the room's "
+                   "%.2f %.2f %.2f; %zu room light(s) off for it)",
+                   c.r, c.g, c.b, g_sky_put.colour.r, g_sky_put.colour.g, g_sky_put.colour.b, g_lights_off.size());
+}
+void view_sky_off() {
+    if (!g_view_sky) return;
+    g_view_sky = false;
+    IlColor c = g_sky_put.colour;
+    g_set_ambient(&c, g_sky_put.probe, g_sky_method);
+    for (Il2CppObject* l : g_lights_off) set_behaviour(l, true);
+    g_lights_off.clear();
 }
 
 void fire_pre_cull_detour(Il2CppObject* cam, const MethodInfo* m) {
+    if (cam && !g_out_cams.empty() && g_out_cams.count(cam)) view_sky_on();
+    else view_sky_off();  // (another camera: the room's own light)
     if (g_sheet_fog_wanted && !g_sheet_fog_off && cam && cam == g_main.raw && wapi.fog_ok) {
         bool was = false;
         if (il2::invoke_value(wapi.fog_get, nullptr, was)) {
@@ -1673,6 +1736,7 @@ void restore_sheet_fog() {
 }
 void fire_post_render_detour(Il2CppObject* cam, const MethodInfo* m) {
     g_fire_post_render(cam, m);
+    if (g_view_sky && cam && g_out_cams.count(cam)) view_sky_off();
     if (g_sheet_fog_off && cam && cam == g_main.raw) restore_sheet_fog();
 }
 
@@ -2173,6 +2237,7 @@ void render_inside_out() {
         std::snprintf(name, sizeof(name), "TLDCoop_SI_WindowCamera%d", used);
         if (!ensure_slot(s, name, -50 - used, kViewOutQueue, tw, th, mask)) continue;
         Il2CppObject* cam = live(s.cam);
+        if (cam) g_out_cams.insert(cam);
         share_player_buffers(used, cam);  // SI: SharePlayerBuffersWith
         use_fog_pass(used, cam);          // SI: UseWindowViewFogPass
         // the eye stands to the building's pane as it stands to the room's; the view starts past the shell's frame

@@ -496,6 +496,7 @@ int doors_render(Instance* inside, V3 eye) {
         if (!ensure_slot(s, name, pk.inside ? -70 - k : -90 - k, pk.inside ? kViewOutQueue : kViewInQueue, tw, th, mask)) continue;
         Il2CppObject* cam = live(s.cam);
         if (pk.inside) {
+            if (cam) g_out_cams.insert(cam);
             share_player_buffers(static_cast<int>(kDoorFxBase) + k, cam);
             use_fog_pass(static_cast<int>(kDoorFxBase) + k, cam);
         }
