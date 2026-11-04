@@ -805,3 +805,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 
 ## 2026-11-04 21:15 — suszenie skóry niewidoczne u znajomego (Karol, zrzuty: u hosta „stopień wysuszenia: 1%”, u niego nic)
 - world_items.cpp: load_evolve — z rekordu przedmiotu (m_EvolveItemSerialized → m_TimeSpentEvolvingGameHours) ustawiany czas suszenia (EvolveItem), przy obu ścieżkach wczytywania (obok load_lamp). Host co 30 s wysyła rekord leżącego przedmiotu, który się suszy („is curing”). Log, jeśli TLD mówi, że u nas nie może schnąć (CanEvolve false). Nieprzetestowane.
+
+## 2026-11-04 21:40 — House Lights wbudowany (protokół v49), FPS co minutę, legenda mapy niżej
+- House Lights (DemonBunnyBon/tld-house-lights, MIT, zgoda autora wg Karola): src/house_lights.cpp/.h, third_party/house-lights (LICENSE, NOTICE, hlbundle = modele włączników, Unity 2021.3.6f1), tools/houselights/gen_bundle.py → src/house_lights_bundle.inc (paczka w DLL, przy pierwszym użyciu zapisywana do TLDCoop\tldcoop_houselights.bundle i LoadFromFile).
+  Hooki: GameManager.InstantiatePlayerObject (przed: włączniki gry podmieniane na modele moda + własne z tabeli kCustom; tylko wnętrza, chyba że [houselights] outside=1, i DamTransitionZone), AuroraModularElectrolizer.Initialize (zbiera, bez radii/ekranów), AuroraManager.RegisterAuroraLightSimple, AuroraManager.Update (po: UpdateElectroLights — w 2.59 nie ma UpdateForceAurora, której używa mod), PlayerManager.UpdateHUDText („Włącz/Wyłącz światło”), PlayerManager.InteractiveObjectsProcessInteraction (klik), Weather.IsTooDarkForAction.
+  Zmiany względem moda: zasięgi/kolory/cienie ustawiane raz (na zmianę ustawień), nie co klatkę; poprawiony błąd moda (dźwięk prostych świateł brał listę złożonych); stan włącznika pamiętany na scenę w sesji.
+  Co-op: Msg::HouseLights=56 (u8 on, scena[64]), host przekazuje dalej; włączone światła ogłaszane co 5 s (wchodzący gracz też ma). Włącz/wyłącz dla wszystkich: host, MODS → HOUSE LIGHTS (kFeatureHouseLights=32). Poziomy: coop.ini [houselights] (intensity 2, range 1.4, white, no_flicker, cull 50, shadows, audio, reach 1, outside).
+- core.cpp: co minutę „frames: N fps on average…, co-op X ms a frame: najdroższe części” (Karol: FPS spada do 54 z ~104).
+- coop_hud.cpp: legenda graczy na mapie 150 px niżej (nachodziła na „MAPA”).
+- Nieprzetestowane w grze.

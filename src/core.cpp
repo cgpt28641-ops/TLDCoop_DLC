@@ -12,6 +12,7 @@
 #include <string>
 
 #include "ambient_lights.h"
+#include "house_lights.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
@@ -175,6 +176,7 @@ void coop_off(const char* why) {
 // Start, restart or stop co-op to match the settings. Used at startup and by the co-op menu.
 void apply_net_settings(const config::Settings& s, bool startup) {
     ambient_lights::set_settings(s);
+    house_lights::set_settings(s);
     dynamic_trees::set_settings(s);
     seamless_interiors::set_settings(s);
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
@@ -225,6 +227,7 @@ void start_networking() {
     config::Settings s = config::load();
     if (!s.autostart) {
         ambient_lights::set_settings(s);
+        house_lights::set_settings(s);
         dynamic_trees::set_settings(s);
         seamless_interiors::set_settings(s);
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
@@ -597,6 +600,7 @@ void on_frame() {
     TIMED("world_spray::on_frame", world_spray::on_frame(in_game));
     TIMED("coop_features::on_frame", coop_features::on_frame());
     TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
+    TIMED("house_lights::on_frame", house_lights::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
     TIMED("seamless_interiors::on_frame", seamless_interiors::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("custom_pictures::on_frame", custom_pictures::on_frame(scene, in_game));
@@ -814,6 +818,7 @@ void on_runtime_ready() {
     coop_backup::init();
     world_spray::init();
     ambient_lights::init();
+    house_lights::init();  // TLDCoop_DLC
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC
     custom_pictures::init();

@@ -1,0 +1,3 @@
+House Lights (https://github.com/DemonBunnyBon/tld-house-lights), MIT licence (LICENSE: Copyright (c) 2019 Xpazeman),
+maintained by DemonBunnyBon. Ported to C++ and built into TLDCoop_DLC with the author's permission (Karol, 04.11.2026).
+The switch models (hlbundle) are the mod's own asset bundle, embedded in the DLL and written next to it on first use.

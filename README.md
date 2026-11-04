@@ -69,6 +69,7 @@ Oryginalny opis po angielsku, ze zrzutami ekranu i pełną listą funkcji, jest 
   litery działają, a postać nie chodzi, gdy piszesz. Wiadomości widzą wszyscy gracze.
 - **Gesty:** machanie (F5), wskazywanie (F6), „chodź tu” (F7), „stój” (F8), kiwanie głową na tak (F3) i na nie (F4).
   Klawisze można zmienić w `coop.ini`, sekcja `[emotes]`.
+- **House Lights (wbudowane):** włączniki światła w domach znów działają (kliknij włącznik na ścianie). W co-opie włączone światło widzą wszyscy w tym budynku; włącza/wyłącza moda host (ekran co-opa → MODY). Poziomy: `coop.ini [houselights]`.
 - **Ambient Lights (wbudowane):** w budynkach światło z okien zmienia się z porą dnia i pogodą (ciepłe rano od
   wschodu, chłodne i słabsze w zamieć, bez promieni słońca we mgle), a własne oświetlenie wnętrz gry jest do tego
   dopasowane. To przeniesiony do TLDCoop mod AmbientLights (Xpazeman, Thekillergreece): **bez MelonLoadera i bez
@@ -377,6 +378,7 @@ Powstanie `build\winhttp.dll`. Skopiuj go obok `tld.exe`, a pliki `.bundle` z zi
 - Poprawki pod 2.58: **[afkfatih](https://github.com/afkfatih)**.
 - Obsługa DLC (TLDCoop_DLC): **cgpt28641-ops** z Claude.
 - [MinHook](https://github.com/TsudaKageyu/minhook): Tsuda Kageyu (licencja BSD 2-Clause).
+- House Lights: mod [House Lights](https://github.com/DemonBunnyBon/tld-house-lights) (**DemonBunnyBon**, oryginał **Xpazeman**, MIT); przeniesiony do C++ i wbudowany za zgodą autora (`third_party/house-lights/NOTICE.txt`).
 - Ambient Lights: mod [AmbientLights](https://github.com/Thekillergreece/tld-ambient-lights) autorstwa **Xpazemana**,
   utrzymywany przez **Thekillergreece** (licencja MIT, `third_party/ambient-lights/LICENSE`); jego dane świateł są
   wbudowane w TLDCoop, a logika przeniesiona do C++.

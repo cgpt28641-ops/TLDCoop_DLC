@@ -37,6 +37,18 @@ struct Settings {
     // light through each interior's windows that follows the time of day and the weather. In co-op the host's
     // `enabled` counts for everyone (the CO-OP setup screen's MODS page); the levels are each player's own.
     bool ambient_lights = true;
+    // TLDCoop_DLC: [houselights] House Lights (built in, by DemonBunnyBon / Xpazeman, with permission): the light
+    // switches of houses work again. enabled: the host's choice for everyone (MODS); the rest each player's own.
+    bool house_lights = true;
+    float hl_intensity = 2.0f;      // how bright (the mod's 0-3)
+    float hl_range = 1.4f;          // how far they reach (x their own range, at most 20 m)
+    bool hl_white = false;          // whiter light
+    bool hl_no_flicker = true;      // no aurora flicker
+    int hl_cull = 50;               // lights farther than this (m) stay off
+    bool hl_shadows = false;        // they cast shadows
+    bool hl_audio = false;          // the lamps hum
+    float hl_reach = 1.0f;          // how near the switch must be (m)
+    bool hl_outside = false;        // also in the regions (street lamps...)
     float ambient_intensity = 1.1f;    // the window lights' brightness (0 = off, 1 = the mod's own)
     float ambient_range = 1.0f;        // how far they reach
     int ambient_night = 1;             // 0 game default, 1 the mod's, 2 brighter nights, 3 endless day

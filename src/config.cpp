@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <filesystem>
 #include <fstream>
@@ -78,6 +79,19 @@ constexpr const char* kDefaultIni =
     "; game). Your own pick for a friend, by their name: red, orange, yellow, green, teal, blue, purple, pink, white,\n"
     "; grey, black or #RRGGBB, e.g.\n"
     "; Shatsca=blue\n"
+    "\n"
+    "[houselights]\n"
+    "; House Lights (built in): light switches work again. enabled: the host's choice (MODS page); the rest your own\n"
+    "enabled=1\n"
+    "intensity=2.0\n"
+    "range=1.4\n"
+    "white=0\n"
+    "no_flicker=1\n"
+    "cull=50\n"
+    "shadows=0\n"
+    "audio=0\n"
+    "reach=1\n"
+    "outside=0\n"
     "\n"
     "[ambient]\n"
     "; Ambient Lights (built in, after the mod by Xpazeman / Thekillergreece, MIT): daylight through each interior's\n"
@@ -219,6 +233,7 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"radar", s.hud_radar ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
+    WritePrivateProfileStringW(L"houselights", L"enabled", s.house_lights ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"interiors", L"enabled", s.seamless_interiors ? L"1" : L"0", ini.c_str());
     // TLDCoop_DLC: the codes aren't written to the log (it goes into F11's bug reports): only whether one is set
@@ -259,6 +274,25 @@ Settings load() {
     s.hud_chart = GetPrivateProfileIntW(L"hud", L"chart", 1, ini.c_str()) != 0;
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
+    {  // TLDCoop_DLC: [houselights]
+        auto num = [&](const wchar_t* key, float& v, float lo, float hi) {
+            const std::string t = read(ini, key, "", L"houselights");
+            if (!t.empty()) v = std::clamp(static_cast<float>(std::atof(t.c_str())), lo, hi);
+        };
+        auto flag = [&](const wchar_t* key, bool& v) {
+            v = GetPrivateProfileIntW(L"houselights", key, v ? 1 : 0, ini.c_str()) != 0;
+        };
+        flag(L"enabled", s.house_lights);
+        num(L"intensity", s.hl_intensity, 0, 3);
+        num(L"range", s.hl_range, 0, 5);
+        flag(L"white", s.hl_white);
+        flag(L"no_flicker", s.hl_no_flicker);
+        s.hl_cull = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"houselights", L"cull", s.hl_cull, ini.c_str())), 10, 75);
+        flag(L"shadows", s.hl_shadows);
+        flag(L"audio", s.hl_audio);
+        num(L"reach", s.hl_reach, 1, 3);
+        flag(L"outside", s.hl_outside);
+    }
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
     // TLDCoop_DLC (Karol 04.11): Seamless Interiors off for now, whatever coop.ini says (more trouble than it's worth;
     // the animals are kept by the wildlife ownership instead). The code stays for later.

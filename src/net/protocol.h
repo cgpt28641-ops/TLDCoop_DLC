@@ -138,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 48;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 49;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -223,7 +223,8 @@ enum class Msg : uint8_t {
     Give = 37, WaterPut = 38, WaterList = 39, ContainerLock = 40,
     BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
     Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52, FlareShot = 53,
-    LogsWant = 54, LogsFile = 55
+    LogsWant = 54, LogsFile = 55,
+    HouseLights = 56  // TLDCoop_DLC (v49): House Lights' switch in a scene: u8 on, scene[64] (either way; the host passes it on)
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1233,6 +1234,7 @@ constexpr uint32_t kFeatureAmbientLights = 1;  // Ambient Lights (built-in port 
 constexpr uint32_t kFeatureDynamicTrees = 2;   // Dynamic Trees (built in, with its authors' permission)
 constexpr uint32_t kFeatureAdaptiveArsenal = 4;  // (was Adaptive Arsenal: removed; the bit stays unused)
 constexpr uint32_t kFeatureSeamlessInteriors = 8;  // Seamless Interiors (built in, with its author's permission)
+constexpr uint32_t kFeatureHouseLights = 32;   // (v49) House Lights (built in, with its author's permission)
 constexpr uint32_t kFeatureWildOwnership = 16;  // (v44) [wildlife] ownership=1: each animal is run by one game
 inline void write_features(Writer& w, uint32_t bits, float tree_snow) {
     w.put<uint32_t>(bits);
