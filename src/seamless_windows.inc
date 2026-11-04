@@ -2187,17 +2187,17 @@ bool setup_inside_out(Instance& in) {
             InsideOut::View& v = g_io.views[i];
             if (v.spot >= 0) continue;
             const V3 here = v.o.portal + building_delta + fix;
-            int near = -1;
+            int pick_ix = -1;
             float best_d = 2.0f;
             for (size_t sidx = 0; sidx < ws.size(); ++sidx) {
                 if (taken[sidx] || w_dot(ws[sidx].out, v.o.out) < 0.9f) continue;
                 const float d = w_len(ws[sidx].c - here);
-                if (d < best_d) best_d = d, near = static_cast<int>(sidx);
+                if (d < best_d) best_d = d, pick_ix = static_cast<int>(sidx);
             }
-            if (near >= 0) {
-                taken[near] = 1;
-                v.delta = ws[near].c - v.o.portal + view_out_offset(row, static_cast<int>(i), v.o.out);
-                v.spot = near;
+            if (pick_ix >= 0) {
+                taken[pick_ix] = 1;
+                v.delta = ws[pick_ix].c - v.o.portal + view_out_offset(row, static_cast<int>(i), v.o.out);
+                v.spot = pick_ix;
                 ++g_io.paired;
                 ++late;
             } else if (fixes) {
@@ -2443,17 +2443,17 @@ bool setup_held(Instance& in, HeldRoom& h) {
             a.delta = behind - a.center;
             a.paired = true;
             ++paired;
-        } else if (int near = -1; carries && !left_alone(row, static_cast<int>(s)) && [&] {
+        } else if (int pick_ix = -1; carries && !left_alone(row, static_cast<int>(s)) && [&] {
                        float best_d = 2.0f;
                        for (size_t r = 0; r < wo.size(); ++r) {
                            if (room_taken[r] || w_dot(wo[r].out, a.out) < 0.9f) continue;
                            const float d = w_len(wo[r].portal - (a.center + carry));
-                           if (d < best_d) best_d = d, near = static_cast<int>(r);
+                           if (d < best_d) best_d = d, pick_ix = static_cast<int>(r);
                        }
-                       return near >= 0;
+                       return pick_ix >= 0;
                    }()) {
-            const WorldOpening& o = wo[static_cast<size_t>(near)];
-            room_taken[static_cast<size_t>(near)] = 1;
+            const WorldOpening& o = wo[static_cast<size_t>(pick_ix)];
+            room_taken[static_cast<size_t>(pick_ix)] = 1;
             const V3 behind = row && !std::isnan(row->view_from_out_cm) ? o.glass + o.out * (row->view_from_out_cm / 100) : o.portal;
             a.delta = behind - a.center;
             a.paired = true;
