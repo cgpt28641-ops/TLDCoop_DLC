@@ -125,7 +125,9 @@ struct Present {
 std::vector<Present> present_players(const std::string& my_scene, bool my_in_game) {
     std::vector<Present> out;
     const game::PlayerState me = game::read_player();
-    if (my_in_game && me.valid) {
+    // TLDCoop_DLC: not while our own scene is still loading (the scene name changes before ownership is on there: the
+    // host was picked to keep bodies it couldn't take, "can't take #… : we aren't in its scene", 62 times on 04.11)
+    if (my_in_game && me.valid && (g_own_scene.empty() || g_own_scene == my_scene)) {
         Present p;
         p.id = self_id();
         p.scene = my_scene;
@@ -1200,6 +1202,10 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                            kind_name(il2::read_field<int32_t>(ai, api.ai_kind)));
                 drop(hidden_it->second);
                 g_hidden.erase(hidden_it);
+                // TLDCoop_DLC: no longer one of those we hid on arrival (Kerel 04.11 20:31-20:35: hidden again at once,
+                // switched on again by TLD a second later, 51 times: nothing TLD spawned near him while the host was in a
+                // house ever stayed)
+                g_initial.erase(key);
             }
             if (!control || initial_hide) {
                 set_active(go, false);
