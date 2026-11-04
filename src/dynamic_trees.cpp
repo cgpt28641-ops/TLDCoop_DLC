@@ -475,6 +475,16 @@ void on_frame(const std::string& scene, bool in_game) {
         survey_terrains();
         rescan = true;
     }
+    // TLDCoop_DLC: once a minute, what one tree material really shows (Karol: trees drawn flat cream, no texture)
+    static double probe_at = 0;
+    if (now - probe_at > 60000 && !g_mats.empty()) {
+        probe_at = now;
+        auto& [ptr, t] = *g_mats.begin();
+        Il2CppObject* m = target(t.material);
+        Il2CppObject* tex = alive(m) ? il2::invoke(api.get_main, m) : nullptr;
+        logx::info("trees: a tree material shows '%s' (%s; ours #%d, snow %.1f, %s)", alive(tex) ? name_of(tex).c_str() : "-",
+                   alive(m) ? "material alive" : "material gone", t.shown, g_snow, indoors() ? "indoors" : "outdoors");
+    }
     const int state = trees::state_of(g_snow);
     if ((rescan || state != g_state || !g_applied) && !indoors()) {
         g_state = state;

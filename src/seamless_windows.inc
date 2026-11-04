@@ -1662,8 +1662,17 @@ void put_sky(IlColor* colour, float probe, const MethodInfo* m) {
     if (colour) g_sky_put.have = true, g_sky_put.colour = *colour, g_sky_put.probe = probe;
     g_set_ambient(colour, probe, m);
 }
+double g_sky_logged_ms = 0;
 void set_ambient_detour(IlColor* colour, float probe, const MethodInfo* m) {
     tick_game_light();
+    // TLDCoop_DLC: the sky's light once a minute (Karol's trees drawn flat cream with black ground at dusk: what the
+    // ambient was then)
+    if (colour && now_ms() - g_sky_logged_ms > 60000) {
+        g_sky_logged_ms = now_ms();
+        logx::info("interiors: sky's light %.2f %.2f %.2f (probe %.2f) from %s; player %s", colour->r, colour->g,
+                   colour->b, probe, g_ilm_depth > 0 ? "a room's lighting manager" : "the outdoors",
+                   g_inside ? "in a room" : "outside");
+    }
     if (colour && g_ilm_depth == 0) g_sky_out.have = true, g_sky_out.colour = *colour, g_sky_out.probe = probe;
     if (g_game_light && g_game_light == g_inside && g_game_light_ilm) {
         if (g_ilm_depth > 0) put_sky(colour, probe, m);  // the room's own (the game's indoor light)
