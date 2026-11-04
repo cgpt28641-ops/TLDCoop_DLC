@@ -108,9 +108,8 @@ constexpr ModSwitch kMods[] = {
      "and cedars go from green to white. You decide for everyone, and everyone's trees carry your snow. (Built in, "
      "by Fuar, The Illusion and Jods, with their permission.)"},
     {"SEAMLESS INTERIORS",
-     "Seamless Interiors: a building's door takes you in and out without a loading screen. Still being finished: "
-     "rooms start fresh on every visit to a region, so don't leave things in their containers. You decide for "
-     "everyone in your game. (Built in, by karsontr13, with his permission; coop.ini [interiors].)"},
+     "Seamless Interiors: wejście do budynków bez ekranu ładowania. Na razie WYŁĄCZONE (za dużo błędów); zwierzęta "
+     "przy wejściu hosta do budynku pilnuje nowy system zwierząt. (Wbudowany, autor karsontr13, za jego zgodą.)"},
 };
 constexpr int kModCount = static_cast<int>(sizeof(kMods) / sizeof(kMods[0]));
 constexpr int kModRows[] = {kMode, kCharacter, kNames, kRadar, kChart};  // rows with arrows (VOICE may be hidden)
@@ -1474,6 +1473,12 @@ void change(int row, int step) {
     if (g.mods) {  // TLDCoop_DLC: a mod's ON / OFF
         const int m = mod_of_row(row);
         if (m < 0) return;
+        if (m == 2) {  // TLDCoop_DLC: Seamless Interiors off for now (config forces it)
+            play(api.sound_error);
+            g.mod_on[m] = false;
+            refresh();
+            return;
+        }
         play(api.sound_change ? api.sound_change : api.sound_click);
         g.mod_on[m] = !g.mod_on[m];
         refresh();

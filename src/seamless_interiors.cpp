@@ -1,4 +1,5 @@
 #include "seamless_interiors.h"
+#include "wildlife_sync.h"
 #include "world_items.h"
 
 // TLDCoop_DLC: Seamless Interiors (karsontr13), ported from its C# source function by function; the SI function each
@@ -3180,6 +3181,7 @@ void tick_waited() {
 
 void load_screen_detour(Il2CppString* scene, const MethodInfo* method) {
     world_items::door_used();
+    wildlife_sync::host_leaving_scene(scene ? il2::to_utf8(scene) : std::string());  // TLDCoop_DLC: (hooked with SI on or off)
     if (api.ok) release_windows("a scene load");  // Stage 2: nothing of the views may travel with a kept room
     if (api.ok && scene) persist_before_load(il2::to_utf8(scene));  // A8: the rooms to keep leave the region first
     // The game loads one of those interiors as its own scene now: a late load of it given up on is no longer told from

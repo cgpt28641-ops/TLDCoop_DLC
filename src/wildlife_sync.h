@@ -43,6 +43,8 @@ void carcass_made(uint32_t id, Il2CppObject* carcass_go);
 // net::kNoPlayer unknown). owned_here(ai): one of ours that we run (host_animal / host_animal_id then work in any
 // game). copies_shown(): this game shows copies others' weapons may hit (a friend; or anyone with ownership).
 bool ownership();
+// TLDCoop_DLC, host: about to load another scene: our animals here go to the friends here at once.
+void host_leaving_scene(const std::string& to_scene);
 uint8_t owner_of(uint32_t id);
 bool owned_here(Il2CppObject* ai);
 bool copies_shown();

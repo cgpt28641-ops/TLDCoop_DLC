@@ -70,6 +70,7 @@ struct Owned {
     double body_at = 0;
     double body_sent_ms = 0; // a friend: when the host last got our carcass of it
     bool moved = false;      // kTakeMoved: placed anew in its region once TLD has started it
+    int rescued = 0;         // TLDCoop_DLC: times TLD switched it off right after we took it and we put it back
 };
 std::map<uint32_t, Owned> g_owned;
 // A friend's animal that died here while the host was in the scene: the host runs its carcass; ours stays (dying) until
@@ -1352,6 +1353,19 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
     for (auto it = g_owned.begin(); it != g_owned.end();) {
         Il2CppObject* ai = target(it->second.ai);
         if (ai && alive(ai) && active(go_of(ai))) {
+            ++it;
+            continue;
+        }
+        // TLDCoop_DLC: switched off by TLD within seconds of our taking it (Kerel 04.11 19:58: "we run #21967910 now
+        // (... one made for it)", 16 ms later "TLD switched off it"): the spawn region we spawn in counted it over its
+        // target. Lost, the host forgot it and the region made another (the vanishing animals, the packs). Back on, out
+        // of the region's list, at most twice.
+        if (ai && alive(ai) && !it->second.dead_told && it->second.rescued < 2 && now - it->second.since_ms < 15000) {
+            ++it->second.rescued;
+            detach_from_region(ai);
+            set_active(go_of(ai), true);
+            logx::info("wildlife: TLD switched off #%u %.1f s after we took it; switched back on and out of its spawn "
+                       "region's list (%d)", it->first, (now - it->second.since_ms) / 1000, it->second.rescued);
             ++it;
             continue;
         }

@@ -1764,6 +1764,38 @@ float host_animal_hp(Il2CppObject* ai) { return il2::read_field<float>(ai, api.a
 bool mirroring() { return g_mirroring; }
 
 bool ownership() { return g_ready && own_mode(); }
+
+// TLDCoop_DLC: the host's game is about to load another scene (a house's door, the region's edge): the animals it runs
+// here go now, with TLD's own record of each, to the friend in this scene nearest to each one, instead of after the
+// load from the registry's last record (they stood still or jumped meanwhile, or went to nobody). Nobody left here:
+// nothing to do (they freeze as before).
+void host_leaving_scene(const std::string& to_scene) {
+    if (!g_ready || !own_mode() || !hosting_now() || g_own_scene.empty() || to_scene == g_own_scene) return;
+    const double now = now_ms();
+    const std::vector<Present> players = present_players(g_own_scene, true);
+    int handed = 0, kept = 0;
+    for (auto& [id, e] : g_registry) {
+        if (e.owner != 0 || e.scene != g_own_scene || e.pending_to != net::kNoPlayer || (e.last.flags & net::kAnimalDead))
+            continue;
+        uint8_t best = net::kNoPlayer;
+        float best_d = 1e30f;
+        for (const Present& p : players) {
+            if (p.id == 0 || p.id >= net::kMaxPlayers || p.scene != e.scene || p.inside || now < e.blocked_until[p.id]) continue;
+            const float dx = e.last.x - p.pos.x, dy = e.last.y - p.pos.y, dz = e.last.z - p.pos.z;
+            const float d = dx * dx + dy * dy + dz * dz;
+            if (d < best_d) best_d = d, best = p.id;
+        }
+        if (best == net::kNoPlayer) {
+            ++kept;
+            continue;
+        }
+        transfer(e, best, "the host is leaving the scene", players, now);
+        ++handed;
+    }
+    if (handed || kept)
+        logx::info("wildlife: the host leaves '%s': %d animal(s) handed to friends there at once, %d with nobody to take them",
+                   g_own_scene.c_str(), handed, kept);
+}
 uint8_t owner_of(uint32_t id) {
     if (g_owned.count(id)) return self_id();
     const auto it = g_registry.find(id);

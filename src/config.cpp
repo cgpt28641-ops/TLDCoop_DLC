@@ -260,7 +260,9 @@ Settings load() {
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.dynamic_trees = GetPrivateProfileIntW(L"trees", L"enabled", 1, ini.c_str()) != 0;
-    s.seamless_interiors = GetPrivateProfileIntW(L"interiors", L"enabled", 0, ini.c_str()) != 0;
+    // TLDCoop_DLC (Karol 04.11): Seamless Interiors off for now, whatever coop.ini says (more trouble than it's worth;
+    // the animals are kept by the wildlife ownership instead). The code stays for later.
+    s.seamless_interiors = false;
     s.seamless_import_old = GetPrivateProfileIntW(L"interiors", L"import_old", 1, ini.c_str()) != 0;
     s.seamless_reimport_changed = GetPrivateProfileIntW(L"interiors", L"reimport_changed", 1, ini.c_str()) != 0;
     s.seamless_keep_rooms = GetPrivateProfileIntW(L"interiors", L"keep_rooms", 1, ini.c_str()) != 0;
