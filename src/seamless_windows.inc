@@ -67,7 +67,11 @@ constexpr int kRoomLayers[] = {3, 4, 30};           // SI: OUTSIDE_IN_ROOM_LAYER
 constexpr int kRoomLayersMask = (1 << 3) | (1 << 4) | (1 << 30);
 constexpr float kMinEyeDistance = 0.05f;            // SI: WINDOW_PORTAL_MIN_EYE_DISTANCE
 constexpr float kViewStartsOutsideShellGlass = 0.04f;
-constexpr int kViewOutQueue = 3001, kViewInQueue = 2600;
+// TLDCoop_DLC: the views go in before the game's window glass (STR_WindowGlassMix, transparent, drawn later over them):
+// its frost, its tint and the panes' crossbars show over the view (Karol: "suchy portal" with no glass and no
+// crossbars; SI's 3001 drew the view over the glass). Outside-in the view's plane is a little behind the glass for that.
+constexpr int kViewOutQueue = 2450, kViewInQueue = 2450;
+constexpr float kOutsideInBehindGlass = 0.03f;
 constexpr int kMinTarget = 128;
 constexpr float kSubrectMargin = 0.03f, kSubrectMarginFloor = 0.01f;
 constexpr float kHysteresis = 1.25f;
@@ -2412,7 +2416,7 @@ bool setup_held(Instance& in, HeldRoom& h) {
         V3 hs;
         if (mean_slide(rc, sc, back, hs)) slide = hs, fitted = true;
     }
-    const float toward = row && !std::isnan(row->plane_cm) ? row->plane_cm / 100 : kOutsideInToward;
+    const float toward = (row && !std::isnan(row->plane_cm) ? row->plane_cm / 100 : kOutsideInToward) - kOutsideInBehindGlass;
     int paired = 0, pretend = 0, late = 0;
     // TLDCoop_DLC: the paired panes' average carry (building pane -> the room behind it), and which room windows are
     // taken: a building pane left unpaired goes to the nearest free room window facing the same way (Karol's drawing:
