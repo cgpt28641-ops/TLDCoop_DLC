@@ -24,6 +24,13 @@ target_include_directories(minhook PUBLIC third_party/minhook/include PRIVATE th
 
 # Everything below is our code.
 add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+# TLDCoop_DLC: the build's commit, shown on the co-op screens (so everyone can see they run the same dll)
+execute_process(COMMAND git rev-parse --short=7 HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE TLDCOOP_BUILD OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT TLDCOOP_BUILD)
+  set(TLDCOOP_BUILD "local")
+endif()
+add_compile_definitions(TLDCOOP_BUILD="${TLDCOOP_BUILD}")
 add_compile_options(/W4 /permissive- /utf-8 /EHsc /Zi)
 add_link_options(/DEBUG /OPT:REF /OPT:ICF)
 

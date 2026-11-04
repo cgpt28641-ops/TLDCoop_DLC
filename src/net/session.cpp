@@ -627,6 +627,18 @@ struct Session::Impl {
         if (version != kProtocolVersion) {
             if (hosting() && type == Msg::Hello)
                 send_reject(from, RejectReason::Protocol, "host speaks v" + std::to_string(kProtocolVersion));
+            // TLDCoop_DLC: a host on another version answers with a Reject in its own version (the reason and
+            // detail are laid out the same in every version): we say why instead of trying forever.
+            if (!hosting() && type == Msg::Reject && !rejected) {
+                r.get<uint8_t>();  // its reason: Protocol, whatever the byte says
+                std::string detail = r.get_str(kDetailLen);
+                if (!r.ok() || detail.empty()) detail = "host speaks v" + std::to_string(version);
+                rejected = true;
+                reject_reason = static_cast<uint8_t>(RejectReason::Protocol);
+                reject_detail = detail;
+                logf("host refused us: %s (%s; we speak v%u); not retrying", reject_text(RejectReason::Protocol),
+                     detail.c_str(), static_cast<unsigned>(kProtocolVersion));
+            }
             return;
         }
         Link* l = find_link(from);
@@ -1125,6 +1137,7 @@ struct Session::Impl {
         st.connected = any_connected();
         st.caught_up = hosting() && st.connected;
         st.turned_away = turned_away;
+        st.full = !hosting() && reported_busy && !st.connected;
         st.waiting = !hosting() && !st.connected && !rejected && now_ms() - last_wait <= kTimeoutMs;
         for (const Asking& a : asking) {
             PlayerInfo p;

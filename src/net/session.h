@@ -72,6 +72,7 @@ struct Status {
     uint8_t reject_reason = 0; // client: why the host refused us (RejectReason), 0 none
     std::string reject_detail; // client: the host's detail (MissingContent: the DLC ids we lack)
     bool turned_away = false;  // client: the host didn't let us in, or kicked us (rejected is set too)
+    bool full = false;         // TLDCoop_DLC: client: the host's game is full; we ask again until a place frees up
 };
 
 // A player's state plus when it arrived (now_ms clock), for interpolation.

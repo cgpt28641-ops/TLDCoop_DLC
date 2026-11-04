@@ -12,6 +12,8 @@ struct Settings {
     std::string transport = "steam";   // steam (join codes) | local (UDP by IP, for tldbot / LAN)
     std::string code;                  // host: the code your friend enters (made once, then kept)
     std::string join_code;             // join: the code you were given
+    std::string last_host;             // TLDCoop_DLC: join: the host we last got into, and with which code
+    std::string last_host_code;
     std::string bind_ip = "127.0.0.1"; // UDP: our interface; 0.0.0.0 for LAN
     std::string host_ip = "127.0.0.1"; // UDP join: the host's address
     uint16_t port = 27015;

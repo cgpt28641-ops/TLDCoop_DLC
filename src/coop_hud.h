@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 // Friends are on TLD's map screen too, as markers that aren't saved with the map. Everything hides when TLD hides its
 // HUD (its HUD setting off, screenshot mode, a menu over the game). Plain logic in net/hud.h (hud_test). Main thread.
 
+#include <cstdint>
 #include <string>
 
 namespace coop_hud {
@@ -25,6 +27,8 @@ void set_switches(bool names, bool radar, bool chart);
 
 // TLDCoop_DLC: coop.ini [colors]: a friend's colour by their name (else each player's own, net::hud::player_colour).
 void set_colours(const std::vector<std::pair<std::string, std::string>>& by_name);
+// TLDCoop_DLC: a player's colour (by number, or coop.ini's for their name) as "rrggbb".
+std::string colour_hex(uint8_t player, const std::string& name);
 
 // Every frame: charting as we walk, friends on the map screen.
 void on_frame(const std::string& scene, bool in_game);

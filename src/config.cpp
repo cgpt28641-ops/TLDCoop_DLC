@@ -209,6 +209,8 @@ void save(const Settings& s) {
     put(L"transport", s.transport);
     put(L"code", s.code);
     put(L"join_code", s.join_code);
+    put(L"last_host", s.last_host);
+    put(L"last_host_code", s.last_host_code);
     put(L"host_ip", s.host_ip);
     put(L"name", s.name);
     put(L"body", s.body);
@@ -238,6 +240,8 @@ Settings load() {
     s.transport = read(ini, L"transport", s.transport);
     s.code = read(ini, L"code", s.code);
     s.join_code = read(ini, L"join_code", s.join_code);
+    s.last_host = read(ini, L"last_host", s.last_host);
+    s.last_host_code = read(ini, L"last_host_code", s.last_host_code);
     s.bind_ip = read(ini, L"bind_ip", s.bind_ip);
     s.host_ip = read(ini, L"host_ip", s.host_ip);
     s.port = static_cast<uint16_t>(GetPrivateProfileIntW(L"net", L"port", s.port, ini.c_str()));

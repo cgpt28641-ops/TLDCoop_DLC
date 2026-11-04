@@ -14,11 +14,13 @@
 
 #include "avatar.h"
 #include "config.h"
+#include "coop_hud.h"
 #include "core.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/content.h"
+#include "net/protocol.h"
 #include "net_runtime.h"
 #include "world_mode.h"
 
@@ -120,9 +122,9 @@ constexpr int mod_of_row(int row) {  // which mod a row shows on the MODS page, 
 }
 enum Mode { kHost, kJoin };
 constexpr const char* kModes[] = {"host", "join"};
-constexpr const char* kModeNames[] = {"HOST", "JOIN"};
+constexpr const char* kModeNames[] = {"HOST", "DOŁĄCZ"};
 constexpr const char* kVoices[] = {"male", "female"};  // VoicePersona 0 / 1
-constexpr const char* kVoiceNames[] = {"MALE", "FEMALE"};
+constexpr const char* kVoiceNames[] = {"MĘSKI", "ŻEŃSKI"};
 
 // Join codes: 6 characters without look-alikes (no 0/O, 1/I).
 constexpr const char* kCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -130,13 +132,25 @@ constexpr size_t kCodeLength = 6;
 constexpr float kArrowGap = 18.0f;  // between a row's text and its arrows
 constexpr ULONGLONG kStatusRefreshMs = 500;
 constexpr ULONGLONG kLobbyRefreshMs = 250;
-constexpr ULONGLONG kNoticeMs = 4000;  // a one-off line in the lobby (LET IN, "Not yet"...) stays this long
+constexpr ULONGLONG kNoticeMs = 4000;
+// TLDCoop_DLC: the code in boxes on its row (TLD's button frame, one per character) and COPY / PASTE beside them
+constexpr int kCellWidth = 38, kCellHeight = 46, kCellGap = 6, kCellFont = 28;
+constexpr float kCellLead = 16;  // from the row's text to the first box
+constexpr int kCodeButtonWidth = 118, kCodeButtonHeight = 36;
+constexpr ULONGLONG kCursorBlinkMs = 500;
+#ifndef TLDCOOP_BUILD
+#define TLDCOOP_BUILD "local"
+#endif
+// The mod's version on the screens' header: everyone should run the same one.
+std::string version_text() {
+    return "MOD V" + std::to_string(net::kProtocolVersion) + " · " + utf8_upper(TLDCOOP_BUILD);
+}  // a one-off line in the lobby (LET IN, "Not yet"...) stays this long
 constexpr float kActionGap = 135;  // the lobby's LET IN / KICK and TURN AWAY buttons, left of CONFIRM in TLD's bar
 // The character preview (avatar::preview), where TLD's difficulty screen shows its animal: right of the list.
 constexpr float kPreviewX = 90, kPreviewY = -20;
 constexpr int kPreviewWidth = 400, kPreviewHeight = 640, kPreviewDepth = 5;
 constexpr int kRowWidth = 240;        // a TLD menu row's label (wider text shrinks)
-constexpr int kLobbyRowWidth = 420;   // the lobby's: "NAME (YOU) - CHARACTER - NOT READY" at full size
+constexpr int kLobbyRowWidth = 480;   // the lobby's: "NAME (YOU) - CHARACTER - NOT READY" at full size
 // TLD's menu highlight (TLDHOME_MenuHighlight, 256 wide, centred 65 right of a row's start): its brush shows over
 // ~46% of the sprite, from ~24% in. Stretched so it covers the selected row's text, as it does TLD's short ones.
 constexpr int kBandWidth = 256;
@@ -167,6 +181,7 @@ struct Api {
     const MethodInfo* label_set_font_size = nullptr;
     const MethodInfo* label_set_alignment = nullptr;  // NGUIText.Alignment
     const MethodInfo* label_set_overflow = nullptr;   // UILabel.Overflow
+    const MethodInfo* label_set_encoding = nullptr;   // UILabel.set_supportEncoding: [rrggbb] colours in text
     const MethodInfo* widget_set_pivot = nullptr;     // UIWidget.Pivot; NGUI keeps the widget where it was
     const MethodInfo* widget_get_color = nullptr;
     const MethodInfo* widget_set_color = nullptr;
@@ -283,6 +298,7 @@ struct LobbyLine {
     uint32_t link = 0;  // hosting: their connection (KICK), or their ticket while they ask (LET IN / TURN AWAY)
     std::string name, body;
     bool ready = false, you = false, host = false, asking = false;
+    double rtt_ms = -1;  // TLDCoop_DLC: linked: their ping
 };
 
 // The CO-OP setup screen: in place of TLD's difficulty screen (NEW) or over the Survival menu (RESUME / LOAD).
@@ -313,6 +329,12 @@ struct Menu {
     bool mods = false;           // TLDCoop_DLC: the MODS page is up
     bool mod_on[kModCount] = {};  // each mod's ON / OFF (hosting; a friend follows the host's)
     uintptr_t mods_button = 0, mods_root = 0;
+    // TLDCoop_DLC: the code's boxes and COPY / PASTE on the code row; JOIN's "the last host" in the bottom bar
+    uintptr_t cells[kCodeLength] = {}, cell_roots[kCodeLength] = {}, cell_labels[kCodeLength] = {};
+    uintptr_t code_button = 0, code_button_root = 0, code_button_label = 0;
+    uintptr_t quick_join = 0, quick_join_root = 0, quick_join_label = 0;
+    ULONGLONG blink_at = 0;
+    bool blink = true;
     std::string join_code;  // being typed
     std::string notice;     // one-off message shown instead of the row help ("Copied!")
     std::vector<std::string> bodies;
@@ -647,9 +669,9 @@ void fit_highlight(uintptr_t highlight, uintptr_t label) {
 // behind the selected one, and the help text below. CLOSE stays bottom right, where TLD keeps it.
 
 std::string choice_help(int choice) {
-    if (choice == kChooseSolo) return "Play alone, the normal way. Co-op stays off and nothing goes online.";
-    return "Play with up to three friends through Steam. The next screen gives you a code to send them, and you "
-           "choose who gets in.\n\nJoining a friend? Pick CO-OP, then JOIN on the next screen.";
+    if (choice == kChooseSolo) return "Gra w pojedynkę, jak zwykle. Co-op jest wyłączony i nic nie idzie do sieci.";
+    return "Gra z maksymalnie trzema znajomymi przez Steam. Na następnym ekranie dostaniesz kod dla nich i sam "
+           "zdecydujesz, kogo wpuścić.\n\nDołączasz do znajomego? Wybierz CO-OP, a potem TRYB: DOŁĄCZ.";
 }
 
 void set_color(Il2CppObject* widget, Color c) {
@@ -734,7 +756,7 @@ void layout_chooser(Il2CppObject* clone) {
     Il2CppObject* header = label_of(part(clone, m, kTitleSmall));
     Il2CppObject* title = label_of(part(clone, m, kTitleBig));
     set_text(header, kPurposeTitles[static_cast<int>(ch.purpose)]);
-    set_text(title, "SOLO OR CO-OP?");
+    set_text(title, "SOLO CZY CO-OP?");
     style_label(header, 0, kOverflowResizeFreely, 0);
     style_label(title, kTitleFont, kOverflowResizeFreely, 0);
     place(header, clone, kPivotCenter, kHeaderY);
@@ -1087,47 +1109,67 @@ void chooser_frame() {
 // --- the CO-OP setup screen ----------------------------------------------------------------------------------------
 
 // The lobby as it stands, for the code row.
+// TLDCoop_DLC: [rrggbb]text[-] when the labels take NGUI's colour codes (else the text alone).
+bool g_colour_codes = false;
+std::string tint(const char* hex, const std::string& text) {
+    return g_colour_codes ? "[" + std::string(hex) + "]" + text + "[-]" : text;
+}
+constexpr const char* kGood = "8fb36a";   // green: ready, connected, a whole code
+constexpr const char* kWarn = "d2a24c";   // ochre: waiting
+constexpr const char* kBad = "d9786b";    // red: couldn't join
+constexpr const char* kDim = "6c7079";    // grey: an empty place, by the way
+
 std::string lobby_status() {
     if (g.mode == kJoin) return {};
-    if (!netrt::active()) return "Couldn't open a Steam lobby. Make sure Steam is running and online.";
+    if (!netrt::active()) return tint(kBad, "✕ Nie udało się otworzyć lobby Steam. Sprawdź, czy Steam działa i jest online.");
     const net::Status st = netrt::status();
     if (st.connected) {
         std::string names;
         for (size_t i = 0; i < st.players.size(); ++i)
-            names += (i == 0 ? "" : i + 1 == st.players.size() ? " and " : ", ") + st.players[i].name;
-        return names + (st.players.size() == 1 ? " is here." : " are here.");
+            names += (i == 0 ? "" : i + 1 == st.players.size() ? " i " : ", ") + st.players[i].name;
+        return tint(kGood, "● ") + "Lobby otwarte · w grze: " + names + " (" + std::to_string(st.players.size() + 1) +
+               "/" + std::to_string(net::kMaxPlayers) + ")";
     }
-    return st.link.empty() ? "Steam lobby: opening..." : "Steam: " + st.link;
+    if (st.link.empty()) return tint(kWarn, "○ ") + "Otwieram lobby Steam...";
+    return tint(kGood, "● ") + "Lobby otwarte · Steam połączony · czekam na graczy (1/" +
+           std::to_string(net::kMaxPlayers) + ")";
 }
 
 std::string row_help(int row) {
     switch (row) {
         case kMode:
-            return "HOST: friends join your world, and you choose who gets in.\nJOIN: you join a friend's world "
-                   "with their code.";
+            return "HOST: znajomi dołączają do twojego świata, a ty decydujesz, kogo wpuścić.\nDOŁĄCZ: wchodzisz do "
+                   "świata znajomego jego kodem.";
         case kCharacter:
-            return "How your friends see you in the world. You still see your own arms in first person.";
+            return "Tak widzą cię znajomi w świecie. Ty dalej widzisz swoje ręce z pierwszej osoby.";
         case kVoice:
-            return "Your survivor's voice (and first-person hands), the Male / Female choice TLD normally asks for. "
-                   "Your look is the CHARACTER above.";
+            return "Głos twojej postaci (i ręce z pierwszej osoby): wybór Mężczyzna / Kobieta, o który zwykle pyta "
+                   "gra. Wygląd to POSTAĆ wyżej.";
         case kName:
-            return "What your friends see you as: your Steam name.";
+            return "Pod tym imieniem widzą cię znajomi: twoja nazwa ze Steama.";
         case kNames:
-            return "A small dot over each friend's head; their name and how far away they are when you look at them or "
-                   "they're close. Out of sight, an arrow at the edge of the screen points the way.";
+            return "Mała kropka nad głową każdego znajomego; jego imię i odległość, gdy na niego patrzysz albo jest "
+                   "blisko. Poza zasięgiem wzroku strzałka na brzegu ekranu wskazuje drogę.";
         case kRadar:
-            return "A small round map of the area around you in the corner, as far as you have charted it, with your "
-                   "friends on it.";
+            return "Mała okrągła mapa okolicy w rogu ekranu, na tyle, na ile ją znasz, ze znajomymi na niej.";
         case kChart:
-            return "Your map charts itself where you walk, as charcoal mapping does. Only your own travels: your "
-                   "friends chart theirs.";
+            return "Twoja mapa rysuje się sama tam, gdzie chodzisz, jak przy rysowaniu węglem. Tylko twoje trasy: "
+                   "znajomi rysują swoje.";
         default:
             if (g.mode == kHost)
-                return "Give this code to your friends (Discord, Steam chat...). It stays the same every time you "
-                       "host. Click it, or press CTRL+C, to copy.\n\n" +
+                return "Daj ten kod znajomym (Discord, czat Steama...). Jest zawsze ten sam, gdy hostujesz. KOPIUJ "
+                       "albo CTRL+C kopiuje go do schowka.\n\n" +
                        lobby_status();
-            return "Type the code your friend gave you, or paste it with CTRL+V. BACKSPACE deletes.\n\nYou "
-                   "connect through Steam: no IP address or port forwarding needed.";
+            {
+                std::string s = "Wpisz kod od znajomego z klawiatury albo WKLEJ (CTRL+V). BACKSPACE kasuje. Łączysz "
+                                "się przez Steam: bez adresu IP i przekierowania portów.";
+                if (!g.settings.last_host.empty())
+                    s += "\n\nOstatni host: " + g.settings.last_host + " (" + g.settings.last_host_code +
+                         "). Przycisk DOŁĄCZ: " + utf8_upper(g.settings.last_host) + " na dole wpisze jego kod i "
+                         "dołączy.";
+                if (g.join_code.size() == kCodeLength) s += "\n\n" + tint(kGood, "✓ Kod pełny: ZATWIERDŹ, żeby dołączyć.");
+                return s;
+            }
     }
 }
 
@@ -1198,6 +1240,100 @@ void color_rows() {
 
 void show_setup_parts(bool setup);
 
+// TLDCoop_DLC: one of TLD's button frames (the screen's back button, copied and dressed like make_button's) under
+// `parent`, w x h, with `text` at `font`: the code's boxes and COPY / PASTE on the code row. Returns its button (what
+// a click names); root / label out.
+Il2CppObject* make_framed(Il2CppObject* parent, const std::string& text, int w, int h, int font, bool glow,
+                          Il2CppObject** root_out, Il2CppObject** label_out) {
+    Il2CppObject* clone = target(g.root);
+    Il2CppObject* back_root = clone ? part(clone, g.menu_path, kBackRoot) : nullptr;
+    if (!back_root || !parent) return nullptr;
+    void* args[] = {back_root, transform_of(parent)};
+    Il2CppObject* root = il2::invoke(api.instantiate, nullptr, args);
+    if (!root) return nullptr;
+    set_vec(api.set_local_scale, transform_of(root), {1, 1, 1});
+    Il2CppObject* button = find(root, "ButtonBottomRightMouse");
+    Il2CppObject* label = label_of(find(button, "Mouse_Button_Label_BAck"));
+    set_text(label, text);
+    if (font > 0) set_int(api.label_set_font_size, label, font);
+    const std::pair<const char*, const char*> kSkins[] = {{"Background", "menuButtonCenter_fill"},
+                                                          {"BackGlow", "menuButtonCenter_outer"}};
+    for (int i = 0; i < 2; ++i) {
+        Il2CppObject* sprite_go = find(button, kSkins[i].first);
+        Il2CppObject* sprite = component(sprite_go, api.sprite_type);
+        void* name_args[] = {il2::il2cpp_string_new(kSkins[i].second)};
+        if (sprite) il2::invoke(api.sprite_set_name, sprite, name_args);
+        if (i == 1 && !glow) {
+            set_active(sprite_go, false);  // the boxes sit close together: no glow over the next one
+            continue;
+        }
+        set_int(api.widget_set_width, sprite, i == 0 ? w : w + w / 4);
+        set_int(api.widget_set_height, sprite, i == 0 ? h : h * 2);
+    }
+    if (Il2CppObject* box = component(button, api.box_type)) {
+        Vector3 size = {static_cast<float>(w), static_cast<float>(h), 0};
+        void* size_args[] = {&size};
+        il2::invoke(api.box_set_size, box, size_args);
+    }
+    set_active(root, true);
+    if (root_out) *root_out = root;
+    if (label_out) *label_out = label;
+    return button;
+}
+
+// The boxes and COPY / PASTE, made once the screen is up.
+void make_code_cells() {
+    Il2CppObject* row = target(g.rows[kCode]);
+    if (!row || g.cells[0]) return;
+    int made = 0;
+    for (size_t i = 0; i < kCodeLength; ++i) {
+        Il2CppObject *root = nullptr, *label = nullptr;
+        g.cells[i] = hold(make_framed(row, "", kCellWidth, kCellHeight, kCellFont, false, &root, &label));
+        g.cell_roots[i] = hold(root);
+        g.cell_labels[i] = hold(label);
+        made += g.cells[i] != 0;
+    }
+    Il2CppObject *root = nullptr, *label = nullptr;
+    g.code_button = hold(make_framed(row, "KOPIUJ", kCodeButtonWidth, kCodeButtonHeight, 0, true, &root, &label));
+    g.code_button_root = hold(root);
+    g.code_button_label = hold(label);
+    logx::info("menu: the code's boxes made (%d of %zu, copy / paste %s)", made, kCodeLength,
+               g.code_button ? "yes" : "MISSING");
+}
+
+void show_code_cells(bool on) {
+    for (uintptr_t r : g.cell_roots) set_active(target(r), on);
+    set_active(target(g.code_button_root), on);
+}
+
+// The code in its boxes after the row's "KOD:" (the next box blinks a cursor while JOIN's code is typed).
+void place_code_cells() {
+    Il2CppObject* label = target(g.row_labels[kCode]);
+    if (!label || !g.cells[0]) return;
+    Vector2 size{}, pivot{};
+    il2::invoke_value(api.label_printed, label, size);
+    il2::invoke_value(api.widget_pivot, label, pivot);
+    Vector3 pos{};
+    il2::invoke_value(api.get_local_position, transform_of(go_of(label)), pos);
+    const float left = pos.x - pivot.x * size.x + size.x + kCellLead;
+    const std::string& code = g.mode == kHost ? g.settings.code : g.join_code;
+    const bool whole = code.size() == kCodeLength;
+    const Color good{0.56f, 0.70f, 0.42f, 1}, cursor{0.85f, 0.82f, 0.76f, 1};
+    for (size_t i = 0; i < kCodeLength; ++i) {
+        const float x = left + kCellWidth * 0.5f + static_cast<float>(i) * (kCellWidth + kCellGap);
+        set_vec(api.set_local_position, transform_of(target(g.cell_roots[i])), {x, pos.y, 0});
+        std::string ch = i < code.size() ? code.substr(i, 1) : "";
+        const bool at_cursor = g.mode == kJoin && i == code.size() && g.selected == kCode;
+        if (at_cursor && g.blink) ch = "_";
+        Il2CppObject* cell_label = target(g.cell_labels[i]);
+        set_text(cell_label, ch);
+        set_color(cell_label, whole && g.mode == kJoin ? good : at_cursor ? cursor : g.selected_color);
+    }
+    const float bx = left + static_cast<float>(kCodeLength) * (kCellWidth + kCellGap) + kCellGap + kCodeButtonWidth * 0.5f;
+    set_vec(api.set_local_position, transform_of(target(g.code_button_root)), {bx, pos.y, 0});
+    set_text(target(g.code_button_label), g.mode == kHost ? "KOPIUJ" : "WKLEJ");
+}
+
 // TLDCoop_DLC: the MODS page: one row per mod, the rest hidden.
 void refresh_mods() {
     Il2CppObject* root = target(g.root);
@@ -1206,9 +1342,10 @@ void refresh_mods() {
     for (int m = 0; m < kModCount; ++m)
         set_text(target(g.row_labels[kModRows[m]]), std::string(kMods[m].name) + (g.mod_on[m] ? ": ON" : ": OFF"));
     il2::invoke(api.grid_reposition, component(part(root, g.menu_path, kGrid), api.grid_type));
-    set_text(label_of(part(root, g.menu_path, kTitleSmall)), "SET UP");
+    set_text(label_of(part(root, g.menu_path, kTitleSmall)), "USTAWIENIA");
     set_text(label_of(part(root, g.menu_path, kTitleBig)), "MODS");
     set_active(target(g.mods_root), false);
+    set_active(target(g.quick_join_root), false);
     const int m = mod_of_row(g.selected);
     set_text(target(g.description), m >= 0 ? kMods[m].help : "");
     for (int i = 0; i < kModCount; ++i) place_arrows(kModRows[i]);
@@ -1227,23 +1364,27 @@ void refresh() {
         refresh_mods();
         return;
     }
-    set_text(target(g.row_labels[kMode]), std::string("MODE: ") + kModeNames[g.mode]);
-    set_text(target(g.row_labels[kCharacter]), "CHARACTER: " + upper(display_name(g.bodies[g.body])));
-    set_text(target(g.row_labels[kVoice]), std::string("VOICE: ") + kVoiceNames[g.voice]);
-    set_text(target(g.row_labels[kName]), "NAME: " + g.settings.name);
-    set_text(target(g.row_labels[kCode]),
-             g.mode == kHost ? "YOUR CODE: " + g.settings.code
-                             : "JOIN CODE: " + g.join_code + std::string(kCodeLength - g.join_code.size(), '_'));
-    constexpr const char* kSwitchNames[] = {"NAMES: ", "RADAR: ", "AUTO MAP: "};
+    set_text(target(g.row_labels[kMode]), std::string("TRYB: ") + kModeNames[g.mode]);
+    set_text(target(g.row_labels[kCharacter]), "POSTAĆ: " + upper(display_name(g.bodies[g.body])));
+    set_text(target(g.row_labels[kVoice]), std::string("GŁOS: ") + kVoiceNames[g.voice]);
+    set_text(target(g.row_labels[kName]), "NAZWA: " + g.settings.name);
+    const bool local = g.settings.transport == "local";
+    set_text(target(g.row_labels[kCode]), local ? std::string("GRA LOKALNA (IP)") : g.mode == kHost ? "TWÓJ KOD:" : "KOD HOSTA:");
+    constexpr const char* kSwitchNames[] = {"NAZWY: ", "RADAR: ", "AUTO MAPA: "};
     for (int i = 0; i < 3; ++i)
-        set_text(target(g.row_labels[kSwitchRows[i]]), std::string(kSwitchNames[i]) + (g.hud[i] ? "ON" : "OFF"));
+        set_text(target(g.row_labels[kSwitchRows[i]]), std::string(kSwitchNames[i]) + (g.hud[i] ? "WŁ" : "WYŁ"));
     g.shown_status = lobby_status();
     set_text(target(g.description), g.notice.empty() ? row_help(g.selected) : g.notice);
     place_arrows(kMode);
     place_arrows(kCharacter);
     place_arrows(kVoice);
     for (int row : kSwitchRows) place_arrows(row);
+    show_code_cells(!local);
+    place_code_cells();
     set_active(target(g.mods_root), g.mode == kHost);  // the host's built-in mods; a friend has the host's
+    const bool quick = g.mode == kJoin && !local && !g.settings.last_host.empty() && g.settings.last_host_code.size() == kCodeLength;
+    set_active(target(g.quick_join_root), quick);
+    if (quick) set_text(target(g.quick_join_label), "DOŁĄCZ: " + upper(g.settings.last_host));
     move_highlight(g.highlight, g.rows[g.selected]);
     fit_highlight(g.highlight, g.row_labels[g.selected]);
     color_rows();
@@ -1281,8 +1422,9 @@ void change(int row, int step) {
 void copy_code() {
     if (g.mode != kHost) return;
     play(api.sound_click);
-    g.notice = clipboard_set(g.settings.code) ? "Copied " + g.settings.code + " to the clipboard. Send it to your friend!"
-                                              : std::string("Couldn't reach the clipboard; read the code out instead.");
+    g.notice = clipboard_set(g.settings.code)
+                   ? tint(kGood, "✓ Skopiowano " + g.settings.code + " do schowka.") + " Wyślij go znajomym."
+                   : tint(kBad, "✕ Nie udało się użyć schowka; podaj kod znajomym inaczej.");
     refresh();
 }
 
@@ -1290,7 +1432,7 @@ void paste_code() {
     if (g.mode != kJoin) return;
     play(api.sound_click);
     const std::string code = clean_code(clipboard_get());
-    g.notice = code.empty() ? "The clipboard doesn't hold a code." : std::string();
+    g.notice = code.empty() ? tint(kBad, "✕ W schowku nie ma kodu.") : std::string();
     if (!code.empty()) g.join_code = code;
     refresh();
 }
@@ -1369,6 +1511,17 @@ void release() {
     drop(g.confirm_label);
     drop(g.mods_button);
     drop(g.mods_root);
+    for (size_t i = 0; i < kCodeLength; ++i) {
+        drop(g.cells[i]);
+        drop(g.cell_roots[i]);
+        drop(g.cell_labels[i]);
+    }
+    drop(g.code_button);
+    drop(g.code_button_root);
+    drop(g.code_button_label);
+    drop(g.quick_join);
+    drop(g.quick_join_root);
+    drop(g.quick_join_label);
     g.mods = false;
     for (int i = 0; i < 2; ++i) {
         drop(g.actions[i]);
@@ -1442,9 +1595,18 @@ bool open_menu(Il2CppObject* screen_panel) {
     g.lobby = false;
     g.ready = false;
     g.shown_lobby.clear();
-    set_text(label_of(part(clone, m, kTitleSmall)), "SET UP");
+    set_text(label_of(part(clone, m, kTitleSmall)), "USTAWIENIA  ·  " + version_text());
     set_text(label_of(part(clone, m, kTitleBig)), "CO-OP");
     take_rows(clone, m, kRowCount, g.rows, g.row_labels);
+    // TLDCoop_DLC: NGUI's [rrggbb] colour codes in the rows and the help (the lobby's dots, errors in red)
+    g_colour_codes = api.label_set_encoding != nullptr;
+    if (g_colour_codes) {
+        bool on = true;
+        void* enc_args[] = {&on};
+        for (uintptr_t label : g.row_labels)
+            if (Il2CppObject* l = target(label)) il2::invoke(api.label_set_encoding, l, enc_args);
+        if (Il2CppObject* help = label_of(part(clone, m, kDescription))) il2::invoke(api.label_set_encoding, help, enc_args);
+    }
     // TLD draws its selected item white and the others in its dimmer menu colour (the dimmest row has it).
     float least = 1e9f;
     for (uintptr_t label : g.row_labels) {
@@ -1463,6 +1625,7 @@ bool open_menu(Il2CppObject* screen_panel) {
     }
     g.description = hold(label_of(part(clone, m, kDescription)));
     g.highlight = hold(part(clone, m, kHighlight));
+    make_code_cells();
     if (new_game) {
         set_active(part(clone, m, kConfirmRoot), true);
         set_active(part(clone, m, kBackRoot), true);
@@ -1476,16 +1639,17 @@ bool open_menu(Il2CppObject* screen_panel) {
         for (const char* extra : kSandboxExtras) set_active(find(clone, extra), false);
         set_active(part(clone, m, kBackHome), false);
         set_active(part(clone, m, kBackGroup), true);
-        g.confirm = hold(make_button(clone, m, "CONFIRM", kConfirmX, kConfirmY));
+        g.confirm = hold(make_button(clone, m, "ZATWIERDŹ", kConfirmX, kConfirmY));
     }
     g.back = hold(part(clone, m, kBackButton));
     if (Il2CppObject* confirm = target(g.confirm)) {
         Il2CppObject* label = new_game ? label_of(find(confirm, "Mouse_Button_Label")) : nullptr;
         g.confirm_label = hold(label ? label : label_of(find(confirm, "Mouse_Button_Label_BAck")));
+        set_text(target(g.confirm_label), "ZATWIERDŹ");
     }
     for (int i = 0; i < 2; ++i) {
         Il2CppObject *root = nullptr, *label = nullptr;
-        g.actions[i] = hold(make_button(clone, m, i == 0 ? "LET IN" : "TURN AWAY", kConfirmX - kActionGap * (i + 1),
+        g.actions[i] = hold(make_button(clone, m, i == 0 ? "WPUŚĆ" : "ODRZUĆ", kConfirmX - kActionGap * (i + 1),
                                         kConfirmY, &root, &label));
         g.action_roots[i] = hold(root);
         g.action_labels[i] = hold(label);
@@ -1493,9 +1657,27 @@ bool open_menu(Il2CppObject* screen_panel) {
     }
     {  // TLDCoop_DLC: MODS, where LET IN sits in the lobby
         Il2CppObject* root = nullptr;
-        g.mods_button = hold(make_button(clone, m, "MODS", kConfirmX - kActionGap, kConfirmY, &root));
+        g.mods_button = hold(make_button(clone, m, "MODY", kConfirmX - kActionGap, kConfirmY, &root));
         g.mods_root = hold(root);
     }
+    {  // TLDCoop_DLC: JOIN's "the last host" in the same place (MODS is the host's)
+        Il2CppObject *root = nullptr, *label = nullptr;
+        g.quick_join = hold(make_button(clone, m, "DOŁĄCZ", kConfirmX - kActionGap * 1.25f, kConfirmY, &root, &label));
+        g.quick_join_root = hold(root);
+        g.quick_join_label = hold(label);
+        set_active(root, false);
+        if (Il2CppObject* button = target(g.quick_join)) {  // wider: the host's name is in it
+            Il2CppObject* fill = component(find(button, "Background"), api.sprite_type);
+            set_int(api.widget_set_width, fill, 230);
+            if (Il2CppObject* box = component(button, api.box_type)) {
+                Vector3 size = {230, kConfirmHitBox.y, 0};
+                void* size_args[] = {&size};
+                il2::invoke(api.box_set_size, box, size_args);
+            }
+        }
+    }
+    // BACK in Polish too
+    set_text(label_of(find(target(g.back) ? target(g.back) : part(clone, m, kBackButton), "Mouse_Button_Label_BAck")), "WSTECZ");
 
     show_clone(clone, panel_go, part(clone, m, kGrid));
     g.open = true;
@@ -1516,7 +1698,7 @@ void close_menu(bool confirmed) {
     if (confirmed && g.mode == kJoin && by_code && g.join_code.size() != kCodeLength) {
         play(api.sound_error);
         g.selected = kCode;
-        g.notice = "Enter the 6-character code from your friend first (or paste it with CTRL+V).";
+        g.notice = tint(kBad, "✕ Najpierw wpisz 6-znakowy kod od znajomego (albo WKLEJ / CTRL+V).");
         refresh();
         return;
     }
@@ -1588,6 +1770,27 @@ bool setup_click(Il2CppObject* go) {
         if (!g.mods && g.mode == kHost) open_mods();
         return true;
     }
+    if (!g.mods && go) {  // TLDCoop_DLC: the code's boxes, COPY / PASTE, JOIN's last host
+        for (uintptr_t cell : g.cells)
+            if (cell && go == target(cell)) {
+                select(kCode);
+                return true;
+            }
+        if (go == target(g.code_button)) {
+            select(kCode);
+            if (g.mode == kHost) copy_code();
+            else paste_code();
+            return true;
+        }
+        if (go == target(g.quick_join)) {
+            if (g.mode == kJoin && g.settings.last_host_code.size() == kCodeLength) {
+                g.join_code = clean_code(g.settings.last_host_code);
+                logx::info("menu: joining the last host (%s) again", g.settings.last_host.c_str());
+                close_menu(true);
+            }
+            return true;
+        }
+    }
     int row = -1;
     for (int i = 0; i < kRowCount; ++i)
         if (go == target(g.rows[i])) row = i;
@@ -1653,6 +1856,11 @@ void setup_frame() {
 
     // Keep the lobby line current while it's on screen.
     const ULONGLONG now = GetTickCount64();
+    if (g.mode == kJoin && g.selected == kCode && now - g.blink_at >= kCursorBlinkMs) {  // TLDCoop_DLC: the cursor
+        g.blink_at = now;
+        g.blink = !g.blink;
+        place_code_cells();
+    }
     if (g.selected == kCode && g.notice.empty() && now - g.last_status_check >= kStatusRefreshMs) {
         g.last_status_check = now;
         if (lobby_status() != g.shown_status) refresh();
@@ -1716,7 +1924,7 @@ const net::PlayerInfo* lobby_host(const net::Status& st) {
 
 std::string host_name(const net::Status& st) {
     if (const net::PlayerInfo* h = lobby_host(st)) return h->name;
-    return st.peer_name.empty() ? std::string("your friend") : st.peer_name;
+    return st.peer_name.empty() ? std::string("znajomy") : st.peer_name;
 }
 
 std::vector<LobbyLine> lobby_lines(const net::Status& st) {
@@ -1745,6 +1953,7 @@ std::vector<LobbyLine> lobby_lines(const net::Status& st) {
         l.body = p.body;
         l.ready = p.ready;
         l.host = p.id == 0;
+        l.rtt_ms = p.linked ? p.rtt_ms : -1;
         out.push_back(l);
     }
     std::stable_sort(out.begin(), out.end(), [](const LobbyLine& a, const LobbyLine& b) { return a.id < b.id; });
@@ -1760,12 +1969,16 @@ std::vector<LobbyLine> lobby_lines(const net::Status& st) {
     return out;
 }
 
+// TLDCoop_DLC: a player's place: their colour's dot, name, character, ping and how they stand.
 std::string line_text(const LobbyLine& l) {
-    std::string s = upper(l.name) + (l.you ? " (YOU)" : "");
-    if (l.asking) return s + " - WANTS TO JOIN";
-    if (!l.body.empty()) s += " - " + upper(display_name(l.body));
-    if (l.host) return s + (l.ready ? " - PLAYING" : " - HOST");
-    return s + (l.ready ? " - READY" : " - NOT READY");
+    const bool known = l.id < net::kMaxPlayers && !l.asking;
+    std::string s = tint(known ? coop_hud::colour_hex(l.id, l.name).c_str() : kDim, "●") + "  " + upper(l.name) +
+                    (l.you ? " (TY)" : "");
+    if (l.asking) return s + "  ·  " + tint(kWarn, "CHCE DOŁĄCZYĆ");
+    if (!l.body.empty()) s += "  ·  " + upper(display_name(l.body));
+    if (l.rtt_ms >= 0) s += "  ·  " + std::to_string(static_cast<int>(l.rtt_ms + 0.5)) + " MS";
+    if (l.host) return s + "  ·  " + (l.ready ? tint(kGood, "GRA") : std::string("HOST"));
+    return s + "  ·  " + (l.ready ? tint(kGood, "GOTOWY") : tint(kWarn, "NIEGOTOWY"));
 }
 
 // Friends in the game who haven't pressed READY yet (hosting).
@@ -1778,7 +1991,7 @@ std::vector<std::string> not_ready(const net::Status& st) {
 
 std::string names(const std::vector<std::string>& list) {
     std::string s;
-    for (size_t i = 0; i < list.size(); ++i) s += (i == 0 ? "" : i + 1 == list.size() ? " and " : ", ") + list[i];
+    for (size_t i = 0; i < list.size(); ++i) s += (i == 0 ? "" : i + 1 == list.size() ? " i " : ", ") + list[i];
     return s;
 }
 
@@ -1793,82 +2006,129 @@ const LobbyLine* chosen_friend() {
     return g.mode == kHost && l && !l->you && !l->host ? l : nullptr;
 }
 
+// TLDCoop_DLC: "host speaks v47" (the host's detail) -> "v47"
+std::string host_version(const std::string& detail) {
+    const size_t v = detail.rfind('v');
+    return v == std::string::npos ? std::string("inną") : detail.substr(v);
+}
+
 std::string lobby_help(const net::Status& st) {
     if (g.mode == kHost) {
         std::vector<std::string> asking;
         for (const net::PlayerInfo& p : st.asking) asking.push_back(p.name);
         const std::string ask = asking.empty() ? std::string()
-                                               : "\n\n" + names(asking) + (asking.size() == 1 ? " wants" : " want") +
-                                                     " to join: select them to LET IN or TURN AWAY.";
+                                               : "\n\n" + tint(kWarn, names(asking) + (asking.size() == 1 ? " chce" : " chcą") +
+                                                     " dołączyć:") + " zaznacz i WPUŚĆ albo ODRZUĆ.";
         if (st.players.empty())
-            return "Send your friends your code; you choose who gets in.\n\nPress START to begin. Friends can still "
-                   "join while you play." + ask;
+            return "Wyślij znajomym swój kod; ty decydujesz, kogo wpuścić.\n\nSTART zaczyna grę. Znajomi mogą "
+                   "dołączyć też w trakcie." + ask;
         const auto waiting = not_ready(st);
-        if (!waiting.empty()) return "Waiting for " + names(waiting) + " to be READY.\n\nSTART loads the world once everyone is." + ask;
-        return "Everyone is READY. Press START to load the world together." + ask;
+        if (!waiting.empty())
+            return "Czekam, aż " + names(waiting) + (waiting.size() == 1 ? " będzie GOTOWY." : " będą GOTOWI.") +
+                   "\n\nSTART wczyta świat, gdy wszyscy będą gotowi." + ask;
+        return tint(kGood, "✓ Wszyscy GOTOWI.") + " START wczyta świat dla wszystkich." + ask;
     }
     const std::string host = host_name(st);
-    if (st.turned_away) return host + " didn't let you in.\n\nPress BACK, then you can ask again in a moment (15 s), or join someone else.";
+    if (st.turned_away)
+        return tint(kBad, "✕ " + host + " cię nie wpuścił.") +
+               "\n\nWSTECZ, a za chwilę (15 s) możesz poprosić jeszcze raz albo dołączyć do kogoś innego.";
     if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::MissingContent)) {
         if (st.reject_detail == net::kContentUnknown)
-            return "Couldn't join: your game couldn't tell which DLC it has installed, and " + host +
-                   "'s world uses DLC.\n\nRestart The Long Dark and try again. Press BACK.";
-        return "Couldn't join: " + host + "'s world uses DLC you don't have installed:\n" + st.reject_detail +
-               "\n\nInstall it on Steam, or ask " + host + " to set dlc_check=0 in coop.ini. Press BACK.";
+            return tint(kBad, "✕ Nie można dołączyć:") + " twoja gra nie rozpoznała zainstalowanych DLC, a świat " +
+                   host + " ich używa.\n\nUruchom The Long Dark jeszcze raz. WSTECZ.";
+        return tint(kBad, "✕ Brakuje DLC:") + " świat " + host + " używa DLC, których nie masz:\n" + st.reject_detail +
+               "\n\nZainstaluj je na Steamie albo niech host ustawi dlc_check=0 w coop.ini. WSTECZ.";
     }
+    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::Protocol))
+        return tint(kBad, "✕ Host ma inną wersję moda (" + host_version(st.reject_detail) + ", ty v" +
+                              std::to_string(net::kProtocolVersion) + ").") +
+               "\n\nWszyscy muszą mieć ten sam winhttp.dll. WSTECZ.";
+    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::GameVersion))
+        return tint(kBad, "✕ Host ma inną wersję The Long Dark.") + " Zaktualizujcie grę na Steamie. WSTECZ.";
     if (st.rejected)
-        return "Couldn't join: your friend's game is a different version (of The Long Dark, or of co-op).\n\nPress BACK.";
-    if (st.waiting) return "Waiting for " + host + " to let you in...";
-    if (!st.connected) return std::string("Joining your friend's game...") + (st.link.empty() ? "" : "\n\n" + st.link);
+        return tint(kBad, "✕ Nie można dołączyć: inna wersja gry albo moda.") + "\n\nWSTECZ.";
+    if (st.full) return tint(kWarn, "Gra jest pełna (" + std::to_string(net::kMaxPlayers) + " graczy).") +
+                        " Czekam na wolne miejsce...";
+    if (st.waiting) return tint(kWarn, "Czekam, aż " + host + " cię wpuści...");
+    if (!st.connected) {
+        if (st.link.find("no game with code") != std::string::npos)
+            return tint(kBad, "✕ Nie znaleziono gry z kodem " + g.join_code + ".") +
+                   " Sprawdź kod u hosta (szukam dalej...).";
+        return tint(kWarn, "○ ") + "Łączę z grą znajomego...";
+    }
     const net::PlayerInfo* h = lobby_host(st);
-    if (h && h->ready) return host + " is already playing. Press READY to join them.";
+    if (h && h->ready) return host + " już gra. GOTOWY, żeby dołączyć.";
     const std::string skip = g_purpose == Purpose::NewGame
-                                 ? "\n\n" + host + " chooses the difficulty and the map: your game skips those screens."
+                                 ? "\n\n" + host + " wybiera poziom trudności i mapę: twoja gra pominie te ekrany."
                                  : std::string();
-    if (!g.ready) return "Press READY when you are. The world loads when " + host + " starts the game." + skip;
-    return "READY. Waiting for " + host + " to start the game.";
+    if (!g.ready) return "Naciśnij GOTOWY, gdy będziesz gotowy. Świat wczyta się, gdy " + host + " zacznie grę." + skip;
+    return tint(kGood, "✓ GOTOWY.") + " Czekam, aż " + host + " zacznie grę.";
 }
 
 std::string friend_help(const LobbyLine& l) {
     if (l.asking)
-        return l.name + " wants to join your game.\n\nLET IN, or TURN AWAY? Turned away, they can't ask again until "
-                        "you host again.";
-    return l.name + (l.ready ? " is READY." : " isn't READY yet.") +
-           "\n\nKICK sends them back to their menu; they can't come back until you host again.";
+        return l.name + " chce dołączyć do twojej gry.\n\nWPUŚĆ czy ODRZUĆ? Odrzucony może poprosić jeszcze raz "
+                        "za 15 s.";
+    return l.name + (l.ready ? " jest GOTOWY." : " nie jest jeszcze GOTOWY.") +
+           "\n\nWYRZUĆ odsyła go do menu; wróci najwcześniej za minutę.";
 }
 
 std::string code_line(const net::Status& st) {
     const bool local = g.settings.transport == "local";
-    if (g.mode == kHost) return local ? std::string("LOCAL GAME") : "YOUR CODE: " + g.settings.code;
-    if (st.connected) return "IN " + upper(host_name(st)) + "'S GAME";
-    if (st.turned_away) return "NOT LET IN";
-    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::MissingContent)) return "MISSING DLC";
-    if (st.rejected) return "COULDN'T JOIN";
-    if (st.waiting) return "WAITING TO BE LET IN";
-    return "JOINING " + (local ? std::string("BY IP") : g.join_code) + "...";
+    if (g.mode == kHost) return local ? std::string("GRA LOKALNA") : "KOD: " + g.settings.code;
+    if (st.connected) return tint(kGood, "●") + "  W GRZE " + upper(host_name(st)) + "  ·  KOD " + g.join_code;
+    if (st.turned_away) return tint(kBad, "NIE WPUSZCZONO");
+    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::MissingContent)) return tint(kBad, "BRAKUJE DLC");
+    if (st.rejected && st.reject_reason == static_cast<uint8_t>(net::RejectReason::Protocol)) return tint(kBad, "INNA WERSJA MODA");
+    if (st.rejected) return tint(kBad, "NIE MOŻNA DOŁĄCZYĆ");
+    if (st.full) return tint(kWarn, "GRA PEŁNA, CZEKAM...");
+    if (st.waiting) return tint(kWarn, "CZEKAM NA WPUSZCZENIE");
+    if (!local && st.link.find("no game with code") != std::string::npos) return tint(kBad, "NIE MA GRY Z KODEM " + g.join_code);
+    return tint(kWarn, "○") + "  ŁĄCZĘ " + (local ? std::string("PO IP") : g.join_code) + "...";
+}
+
+// A place the lobby's selection can go to: a player's line or the code, not an empty place.
+bool lobby_row_usable(int row) {
+    if (row == kCode) return !g.row_text[row].empty();
+    return row >= 0 && row < kCode && static_cast<size_t>(row) < g.lines.size();
 }
 
 void refresh_lobby(bool force) {
     const net::Status st = netrt::status();
     g.lines = lobby_lines(st);
     const bool hosting = g.mode == kHost;
+    // TLDCoop_DLC: four places (the game's limit): the players, then empty ones in grey (not selectable)
     for (int i = 0; i < kCode; ++i)
         g.row_text[i] = static_cast<size_t>(i) < g.lines.size() ? line_text(g.lines[static_cast<size_t>(i)])
-                        : i == 1 && hosting && g.lines.size() == 1 ? "WAITING FOR FRIENDS..."
-                                                                   : "";
+                                                                 : tint(kDim, "○  WOLNE MIEJSCE");
     g.row_text[kCode] = code_line(st);
-    if (g.row_text[g.selected].empty() || (g.selected > 0 && g.selected < kCode && static_cast<size_t>(g.selected) >= g.lines.size()))
-        g.selected = 0;
+    if (!lobby_row_usable(g.selected)) g.selected = 0;
+    // The host we got into, for the setup's "DOŁĄCZ: <host>" next time.
+    if (!hosting && st.connected && g.join_code.size() == kCodeLength) {
+        const std::string h = host_name(st);
+        if (!h.empty() && (h != g.settings.last_host || g.join_code != g.settings.last_host_code)) {
+            g.settings.last_host = h;
+            g.settings.last_host_code = g.join_code;
+            config::save(g.settings);
+            logx::info("menu: %s remembered as the last host", h.c_str());
+        }
+    }
+    size_t in_game = 0;
+    for (const LobbyLine& l : g.lines) in_game += !l.asking;
+    const std::string title = "GRACZE " + std::to_string(std::min<size_t>(in_game, net::kMaxPlayers)) + "/" +
+                              std::to_string(net::kMaxPlayers) + "  ·  " + version_text();
     const LobbyLine* chosen = chosen_friend();
-    const char* first = chosen && chosen->asking ? "LET IN" : "";
-    const char* second = !chosen ? "" : chosen->asking ? "TURN AWAY" : "KICK";
+    const char* first = chosen && chosen->asking ? "WPUŚĆ" : "";
+    const char* second = !chosen ? "" : chosen->asking ? "ODRZUĆ" : "WYRZUĆ";
     const std::string help = !g.notice.empty() ? g.notice : chosen ? friend_help(*chosen) : lobby_help(st);
-    const char* button = hosting ? "START" : g.ready ? "CANCEL" : "READY";
+    const char* button = hosting ? "START" : g.ready ? "ANULUJ" : "GOTOWY";
     std::string shown;
     for (const auto& r : g.row_text) shown += r + "|";
-    shown += help + "|" + button + "|" + first + "|" + second + "|" + std::to_string(g.selected);
+    shown += help + "|" + button + "|" + first + "|" + second + "|" + std::to_string(g.selected) + "|" + title;
     if (!force && shown == g.shown_lobby) return;
     g.shown_lobby = shown;
+    if (Il2CppObject* root = target(g.root)) set_text(label_of(part(root, g.menu_path, kTitleSmall)), title);
+    show_code_cells(false);
     for (int i = 0; i < kLobbyRows; ++i) set_text(target(g.row_labels[i]), g.row_text[i]);
     set_text(target(g.description), help);
     set_text(target(g.confirm_label), button);
@@ -1894,14 +2154,16 @@ void show_setup_parts(bool setup) {
     for (uintptr_t label : g.row_labels) set_int(api.widget_set_width, target(label), setup ? kRowWidth : kLobbyRowWidth);
     for (uintptr_t root : g.action_roots) set_active(target(root), false);
     set_active(target(g.mods_root), setup && g.mode == kHost && !g.mods);
+    if (!setup) set_active(target(g.quick_join_root), false);
+    show_code_cells(setup && g.settings.transport != "local");
     Il2CppObject* root = target(g.root);
     // The lobby uses every row up to the code (VOICE too), not the HUD's switches: the grid lays them out again.
     if (!g.with_voice) set_active(target(g.rows[kVoice]), !setup);
     for (int row : kSwitchRows) set_active(target(g.rows[row]), setup);
     il2::invoke(api.grid_reposition, component(part(root, g.menu_path, kGrid), api.grid_type));
-    set_text(label_of(part(root, g.menu_path, kTitleSmall)), setup ? "SET UP" : "CO-OP");
+    set_text(label_of(part(root, g.menu_path, kTitleSmall)), "USTAWIENIA  ·  " + version_text());
     set_text(label_of(part(root, g.menu_path, kTitleBig)), setup ? "CO-OP" : "LOBBY");
-    set_text(target(g.confirm_label), "CONFIRM");
+    set_text(target(g.confirm_label), "ZATWIERDŹ");
 }
 
 void open_lobby() {
@@ -1927,7 +2189,7 @@ void leave_lobby() {
 }
 
 void lobby_select(int row) {
-    if (row == g.selected || g.row_text[row].empty()) return;
+    if (row == g.selected || !lobby_row_usable(row)) return;
     play(api.sound_scroll);
     g.selected = row;
     g.notice.clear();
@@ -1977,7 +2239,7 @@ void lobby_confirm() {
     const auto waiting = not_ready(st);
     if (!waiting.empty()) {
         play(api.sound_error);
-        lobby_notice("Not yet: " + names(waiting) + (waiting.size() == 1 ? " isn't" : " aren't") + " READY.");
+        lobby_notice(tint(kWarn, "Jeszcze nie: ") + names(waiting) + (waiting.size() == 1 ? " nie jest GOTOWY." : " nie są GOTOWI."));
         logx::info("menu: lobby: START waits for %s", names(waiting).c_str());
         return;
     }
@@ -1993,13 +2255,14 @@ void lobby_act(int which) {
     if (which == 0) {
         const bool in = netrt::admit(l.link);
         play(in ? api.sound_confirm : api.sound_error);
-        lobby_notice(in ? "You let " + l.name + " in." : "Couldn't let " + l.name + " in: the game is full (4 players).");
+        lobby_notice(in ? tint(kGood, "✓ Wpuszczono: " + l.name + ".")
+                        : tint(kBad, "✕ Nie można wpuścić " + l.name + ": gra jest pełna (" + std::to_string(net::kMaxPlayers) + " graczy)."));
         logx::info("menu: lobby: LET IN '%s'%s", l.name.c_str(), in ? "" : " (full)");
         return;
     }
     const bool out = netrt::turn_away(l.link);
     play(out ? api.sound_click : api.sound_error);
-    lobby_notice(!out ? l.name + " already left." : l.asking ? "You turned " + l.name + " away." : "You kicked " + l.name + ".");
+    lobby_notice(!out ? l.name + " już wyszedł." : l.asking ? "Odrzucono: " + l.name + "." : "Wyrzucono: " + l.name + ".");
     logx::info("menu: lobby: %s '%s'", l.asking ? "TURN AWAY" : "KICK", l.name.c_str());
 }
 
@@ -2054,7 +2317,7 @@ void lobby_frame() {
     auto next_row = [](int row, int step) {
         for (int n = 0; n < kLobbyRows; ++n) {
             row = (row + kLobbyRows + step) % kLobbyRows;
-            if (!g.row_text[row].empty()) break;
+            if (lobby_row_usable(row)) break;
         }
         return row;
     };
@@ -2265,6 +2528,7 @@ bool init() {
     api.label_set_font_size = il2::find_method(label, "set_fontSize", 1);
     api.label_set_alignment = il2::find_method(label, "set_alignment", 1);
     api.label_set_overflow = il2::find_method(label, "set_overflowMethod", 1);
+    api.label_set_encoding = il2::find_method(label, "set_supportEncoding", 1);
     api.widget_set_pivot = il2::find_method(widget, "set_pivot", 1);
     api.widget_get_color = il2::find_method(widget, "get_color", 0);
     api.widget_set_color = il2::find_method(widget, "set_color", 1);

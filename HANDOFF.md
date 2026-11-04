@@ -762,3 +762,14 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - session.cpp: okno niepotwierdzonych paczek 64 → 128; ponowne wysłanie zależne od pingu łącza: 2×rtt + 40 ms, w granicach 120–250 ms (bez pomiaru: 250). Steam (SendRateMax 4 MB/s, bufor 4 MB) bez zmian.
 - coop_report.cpp: „POBIERZ LOGI” — zip odsyłany po jednej części (192 KB) co 300 ms (kolejka g_paced, send_paced w on_frame), zamiast wszystkich naraz; zmiany świata idą między częściami. Log „one part every 300 ms” / „the last part of our logs sent”.
 - Protokół bez zmian (v48), ale dla porządku wszyscy ten sam dll. Nieprzetestowane w grze.
+
+## 2026-11-04 18:00 — ekran co-op i lobby: nowy wygląd, po polsku (prośba Karola, podgląd zaakceptowany)
+- coop_menu.cpp: setup i lobby po polsku (TRYB/POSTAĆ/GŁOS/NAZWA/NAZWY/RADAR/AUTO MAPA, WŁ/WYŁ, ZATWIERDŹ/WSTECZ/MODY, WPUŚĆ/ODRZUĆ/WYRZUĆ, START/GOTOWY/ANULUJ; opisy, komunikaty, ekran SOLO CZY CO-OP?). Strona MODS bez zmian (tylko przycisk „MODY”).
+- Wiersz kodu: „TWÓJ KOD:” / „KOD HOSTA:” + 6 kratek (kopie ramki przycisku WSTECZ, sprite menuButtonCenter_fill, bez poświaty) i KOPIUJ/WKLEJ za nimi, dzieci wiersza kodu (make_framed, make_code_cells, place_code_cells). DOŁĄCZ: migający kursor „_” w następnej kratce, pełny kod na zielono. Klik w kratkę = zaznacza wiersz kodu.
+- Nagłówek: „USTAWIENIA · MOD V48 · <commit>” (CMake: TLDCOOP_BUILD z git rev-parse), w lobby „GRACZE n/4 · MOD V48 · <commit>”.
+- Kolory w tekście: UILabel.set_supportEncoding na wierszach i opisie, tint() = [rrggbb]..[-] (zielony/ochra/czerwony/szary); gdy metody brak — sam tekst.
+- Lobby: 4 miejsca: kropka w kolorze gracza (coop_hud::colour_hex), imię, postać, ping (rtt linked), HOST/GRA/GOTOWY/NIEGOTOWY/CHCE DOŁĄCZYĆ; puste „WOLNE MIEJSCE” na szaro, niewybieralne (lobby_row_usable).
+- Ostatni host: coop.ini [net] last_host / last_host_code, zapisywane, gdy klient jest połączony; w trybie DOŁĄCZ przycisk „DOŁĄCZ: <HOST>” w miejscu MODY (wpisuje kod i zatwierdza).
+- Komunikaty błędów (opis + wiersz kodu w lobby): nie ma gry z kodem (link transportu „no game with code”), inna wersja moda (host vNN, ty v48), inna wersja gry, brak DLC, gra pełna (nowe Status.full z reported_busy), nie wpuszczono.
+- session.cpp: klient czyta Reject hosta także w innej wersji protokołu (wcześniej odrzucał go i łączył się w nieskończoność) → „Host ma inną wersję moda”. Działa dla przyszłych niezgodności (klient musi mieć ten build).
+- Niezrobione: „łączy się ponownie…” w lobby (sieć nie zgłasza takiego stanu). Wszystko NIEPRZETESTOWANE w grze; układ kratek liczony od tekstu wiersza — mogą wymagać poprawki po zrzucie (kCellWidth/Height/Gap/Lead, kCodeButtonWidth, kLobbyRowWidth 480).

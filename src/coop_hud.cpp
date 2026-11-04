@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <sstream>
@@ -1979,6 +1980,15 @@ bool dev(const std::string& action, const std::string& arg) {
     else return false;
     logx::info("hud: %s", describe().c_str());
     return true;
+}
+
+// TLDCoop_DLC: a player's colour as NGUI's [rrggbb] wants it (the co-op lobby's dots).
+std::string colour_hex(uint8_t player, const std::string& name) {
+    const Color c = colour_for(player, name);
+    auto byte = [](float v) { return static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    char hex[8];
+    snprintf(hex, sizeof(hex), "%02x%02x%02x", byte(c.r), byte(c.g), byte(c.b));
+    return hex;
 }
 
 }  // namespace coop_hud
