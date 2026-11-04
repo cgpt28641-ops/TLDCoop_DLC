@@ -134,19 +134,33 @@ void swing(DoorFace& f, bool open) {
     float best_w = 0;
     V3 best_c{};
     Il2CppObject* door_t = tf_of(door);
-    each_in(go, api.t_renderer, [&](Il2CppObject* r) {
-        if (tf_of(r) == door_t) return;  // (the door's own transform: its click box and where it is would move too)
-        UBounds b;
-        if (!il2::invoke_value(api.r_bounds, r, b)) return;
-        const float w = 2 * (std::fabs(b.extents.x * f.r.x) + std::fabs(b.extents.z * f.r.z));
-        const float d = 2 * (std::fabs(b.extents.x * f.n.x) + std::fabs(b.extents.z * f.n.z));
-        const float h = 2 * b.extents.y;
-        if (w < 0.4f * f.w || w > 1.1f * f.w || h < 0.6f * f.h || d > 0.25f || w <= best_w) return;
-        best = r, best_w = w, best_c = b.center;
-    });
+    auto look_in = [&](Il2CppObject* where, bool near_only) {
+        each_in(where, api.t_renderer, [&](Il2CppObject* r) {
+            if (tf_of(r) == door_t) return;  // (the door's own transform: its click box and where it is would move too)
+            UBounds b;
+            if (!il2::invoke_value(api.r_bounds, r, b)) return;
+            // TLDCoop_DLC: looking above the door's own object, only what stands in this doorway (not the next door's)
+            if (near_only && (std::fabs(w_dot(b.center - f.c, f.r)) > 0.6f * f.w || std::fabs(w_dot(b.center - f.c, f.n)) > 0.5f))
+                return;
+            const float w = 2 * (std::fabs(b.extents.x * f.r.x) + std::fabs(b.extents.z * f.r.z));
+            const float d = 2 * (std::fabs(b.extents.x * f.n.x) + std::fabs(b.extents.z * f.n.z));
+            const float h = 2 * b.extents.y;
+            if (w < 0.4f * f.w || w > 1.1f * f.w || h < 0.6f * f.h || d > 0.25f || w <= best_w) return;
+            best = r, best_w = w, best_c = b.center;
+        });
+    };
+    look_in(go, false);
+    // TLDCoop_DLC: the leaf is often beside the LoadScene, not under it (Shatsca: "skrzydla drzwi nie dzialaja", the
+    // log: "no door leaf found"): its parent's and grandparent's, near the doorway
+    Il2CppObject* up = parent_of(tf_of(go));
+    for (int i = 0; i < 2 && !best && alive(up); ++i, up = parent_of(up)) look_in(go_of(up), true);
     Il2CppObject* t = best ? tf_of(best) : nullptr;
     if (!alive(t)) {
-        if (g_swing_logged++ < 5) logx::info("interiors: doors: no door leaf found to swing open (the view shows the far side)");
+        if (g_swing_logged++ < 5) {
+            std::string chain;
+            for (Il2CppObject* x = tf_of(go); alive(x) && chain.size() < 200; x = parent_of(x)) chain += "/" + name_of(go_of(x));
+            logx::info("interiors: doors: no door leaf found to swing open (the view shows the far side) at %s", chain.c_str());
+        }
         return;
     }
     f.leaf = hold(t);

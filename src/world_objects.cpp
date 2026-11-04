@@ -110,6 +110,9 @@ struct Api {
     ptrdiff_t container_safe = -1;                // Container.m_Safe
     ptrdiff_t interaction_lock = -1;              // LockedInteraction.<Lock>k__BackingField (OpenClose, LoadScene)
     ptrdiff_t open_close_safe = -1;               // OpenClose.m_Safe
+    // TLDCoop_DLC: doors, closets and lockers inside interiors (OpenClose) open or shut for everyone
+    ptrdiff_t open_close_open = -1;               // OpenClose.m_IsOpen
+    const MethodInfo* oc_open = nullptr, *oc_close = nullptr;  // OpenClose.Open/Close(bool isImmediate, bool fromLink)
     ptrdiff_t lock_state = -1;                    // Lock.m_LockState (0 locked, 1 unlocked, 2 forced)
     const MethodInfo* unlock_companion = nullptr; // Lock.UnlockCompanionLock(): its other side (a door's) opens too
     const MethodInfo* force_lock = nullptr;       // Lock.FinishForceLock(bool complete)
@@ -301,6 +304,8 @@ void list_into(FieldInfo* field, Kind kind, std::vector<Object>& out) {
 }
 
 bool is_lock(Kind k) { return k == Kind::Lock || k == Kind::Safe || k == Kind::Repair; }  // (polled, not hooked)
+// TLDCoop_DLC: polled like the locks, but both ways (opened and shut again): an interior's door (OpenClose)
+bool is_polled(Kind k) { return is_lock(k) || k == Kind::Door; }
 
 // Locks and safes: on containers (Container.m_Lock / m_Safe), lockers and safes (OpenClose) and doors (LoadScene).
 void locks_into(std::vector<Object>& out) {
@@ -317,6 +322,7 @@ void locks_into(std::vector<Object>& out) {
     each_in(api.open_closers, [&](Il2CppObject* oc) {
         add(Kind::Lock, oc, api.interaction_lock);
         add(Kind::Safe, oc, api.open_close_safe);
+        if (api.open_close_open >= 0 && api.oc_open && api.oc_close && seen.insert(oc).second) out.push_back(Object{Kind::Door, oc});
     });
     each_in(api.doors, [&](Il2CppObject* door) { add(Kind::Lock, door, api.interaction_lock); });
     // TLDCoop_DLC: furniture to repair: found every few seconds (TLD keeps no list of them)
@@ -367,6 +373,7 @@ uint8_t value_of(const Object& x) {
         case Kind::Lock: return static_cast<uint8_t>(get<int32_t>(x.o, api.lock_state));
         case Kind::Safe: return get<bool>(x.o, api.safe_cracked) ? 1 : 0;
         case Kind::Repair: return get<bool>(x.o, api.repaired) ? 1 : 0;
+        case Kind::Door: return get<bool>(x.o, api.open_close_open) ? 1 : 0;
         default: break;
     }
     return 0;
@@ -375,7 +382,7 @@ bool done(const Object& x) { return value_of(x) != 0; }
 
 const char* kind_name(Kind k) {
     return k == Kind::BreakDown ? "breakdown" : k == Kind::Harvestable ? "plant" : k == Kind::Lock ? "lock"
-         : k == Kind::Safe ? "safe" : k == Kind::Body ? "body" : k == Kind::Repair ? "repairable" : "placeable";
+         : k == Kind::Safe ? "safe" : k == Kind::Body ? "body" : k == Kind::Repair ? "repairable" : k == Kind::Door ? "door" : "placeable";
 }
 const char* done_name(Kind k) {
     return k == Kind::BreakDown ? "broken down" : k == Kind::Harvestable ? "harvested" : k == Kind::Lock ? "open" : "cracked";
@@ -387,6 +394,7 @@ const char* state_name(Kind k, uint8_t v) {
     if (k == Kind::Lock) return v == 0 ? "locked" : v == 1 ? "unlocked" : "forced";
     if (k == Kind::Safe) return v ? "cracked" : "locked";
     if (k == Kind::Repair) return v ? "repaired" : "broken";
+    if (k == Kind::Door) return v ? "open" : "shut";
     if (k == Kind::Placement) return placement_name(v);
     return v ? done_name(k) : "whole";
 }
@@ -399,13 +407,14 @@ const char* verb(const net::ObjectState& s) {
         case Kind::Placement: return s.done == 0 ? "placed" : s.done == kRemoved ? "removed" : s.done == kOnPlayer ? "picked up" : "put away";
         case Kind::Body: return "died, leaving";
         case Kind::Repair: return s.done ? "repaired" : "left broken";
+        case Kind::Door: return s.done ? "opened" : "shut";
     }
     return "changed";
 }
 
 std::string key_of(Kind k, const std::string& id) {
     return (k == Kind::BreakDown ? "b/" : k == Kind::Harvestable ? "h/" : k == Kind::Lock ? "l/" : k == Kind::Safe ? "s/"
-            : k == Kind::Body ? "d/" : k == Kind::Repair ? "r/" : "p/") + id;
+            : k == Kind::Body ? "d/" : k == Kind::Repair ? "r/" : k == Kind::Door ? "o/" : "p/") + id;
 }
 
 net::ObjectState state_of(const Object& x, const std::string& id) {
@@ -498,7 +507,7 @@ void pass_on(uint8_t from, net::ObjectPutMsg m) {
 }
 
 void remember(const std::string& scene, const net::ObjectState& s) {
-    if (has_tld_id(s.id) || !s.done || is_lock(s.kind)) return;
+    if (has_tld_id(s.id) || !s.done || is_polled(s.kind)) return;
     auto& here = g_gone[scene];
     const std::string key = key_of(s.kind, s.id);
     // TLDCoop_DLC: bounded (a scene's breakdowns without an id are a few hundred at most)
@@ -531,7 +540,7 @@ void send_list(uint8_t to, bool light = false) {
     m.scene = g_scene;
     const auto members = set_members();
     for (const Object& x : all_objects()) {
-        if (is_lock(x.kind)) {  // every one: whether it's locked at all is rolled in each game (Lock.RollLockedState)
+        if (is_polled(x.kind)) {  // every one: whether it's locked at all is rolled in each game (Lock.RollLockedState)
             m.objects.push_back(state_of(x, id_of(x.o)));
             continue;
         }
@@ -731,6 +740,14 @@ bool apply_placement(const net::ObjectState& s) {
 // the yield, which the other player got), back as loading a save that has it whole does (BreakDown.Deserialize:
 // active), harvested or not as Harvestable.Deserialize does. False when it already was.
 bool apply(const Object& x, const net::ObjectState& s) {
+    if (x.kind == Kind::Door) {  // TLDCoop_DLC: as a player's click does (its linked doors too), animated
+        if (value_of(x) == s.done) return false;
+        bool immediate = false, from_link = false;
+        void* args[] = {&immediate, &from_link};
+        il2::invoke(s.done ? api.oc_open : api.oc_close, x.o, args);
+        g_lock_seen[reinterpret_cast<uintptr_t>(x.o)] = value_of(x);
+        return true;
+    }
     if (is_lock(x.kind)) {  // as loading a save does (Lock.Deserialize: the state; SafeCracking: cracked)
         if (value_of(x) == s.done) return false;
         if (x.kind == Kind::Repair) {  // TLDCoop_DLC: as loading a save does (RepairableInteractiveItem.Deserialize)
@@ -971,7 +988,7 @@ void apply_list(const net::ObjectListMsg& m) {
         const std::string id = id_of(x.o), key = key_of(x.kind, id);
         if (const auto it = host.find(key); it != host.end()) {
             ++matched;
-            if (is_lock(x.kind) && done(x) && !it->second->done) {
+            if ((is_lock(x.kind) && done(x) && !it->second->done) || (x.kind == Kind::Door && value_of(x) != it->second->done)) {
                 if (const auto ours = g_ours.find(key); ours != g_ours.end() && now - ours->second < kOursMs) {
                     ++kept;  // we just opened it: the host hasn't heard yet
                     continue;
@@ -984,7 +1001,7 @@ void apply_list(const net::ObjectListMsg& m) {
             }
             continue;
         }
-        if (!done(x) || !has_tld_id(id) || is_lock(x.kind)) continue;
+        if (!done(x) || !has_tld_id(id) || is_polled(x.kind)) continue;
         if (const auto ours = g_ours.find(key); ours != g_ours.end() && now - ours->second < kOursMs) {
             ++kept;
             continue;
@@ -1096,7 +1113,7 @@ void scan_locks() {
         const auto [it, fresh] = g_lock_seen.try_emplace(reinterpret_cast<uintptr_t>(x.o), v);
         if (fresh || it->second == v) continue;
         it->second = v;
-        if (v) changed_here(x, id_of(x.o), name_of(x.o));  // (locked again only by TLD loading: not a change)
+        if (v || x.kind == Kind::Door) changed_here(x, id_of(x.o), name_of(x.o));  // (locked again only by TLD loading: not a change)
     }
 }
 
@@ -1637,6 +1654,11 @@ bool init() {
     api.container_safe = il2::field_offset(container, "m_Safe");
     api.interaction_lock = il2::field_offset(il2::find_class(kGame, "", "LockedInteraction"), "<Lock>k__BackingField");
     api.open_close_safe = il2::field_offset(open_close, "m_Safe");
+    api.open_close_open = il2::field_offset(open_close, "m_IsOpen");
+    api.oc_open = il2::find_method_params(open_close, "Open", {"System.Boolean", "System.Boolean"});
+    api.oc_close = il2::find_method_params(open_close, "Close", {"System.Boolean", "System.Boolean"});
+    logx::info("objects: interiors' doors and closets (OpenClose) %s", api.open_close_open >= 0 && api.oc_open && api.oc_close
+                                                                            ? "shared open and shut" : "not shared (TLD's calls missing)");
     api.lock_state = il2::field_offset(lock, "m_LockState");
     api.unlock_companion = il2::find_method(lock, "UnlockCompanionLock", 0);
     api.force_lock = il2::find_method_params(lock, "FinishForceLock", {"System.Boolean"});
