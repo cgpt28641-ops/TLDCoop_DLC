@@ -802,3 +802,6 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 ## 2026-11-04 21:05 — przesuwanie mebli w trybie kryjówki niewidoczne dla innych (Karol)
 - Logi 20:28–20:29 FarmHouseA: Shatsca przestawiał INTERACTIVE_KingBedB (PLACED) 5×, u Kerela „the other player placed … same here now” 5× — ale łóżko zostawało. PlaceableManager.DeserializeScenePlacements jednego rekordu nie przesuwa placeable, który już stoi w scenie.
 - world_objects.cpp apply_placement: po wczytaniu, dla stanu 0 (stoi): Placeable.FindOrCreateAndDeserialize(m_Guid, m_Serialized) — ten sam placeable po id (albo nowy) ustawiony jak w rekordzie (pozycja/obrót/skala). Log „objects: <id> put where the other player put it”. Nieprzetestowane.
+
+## 2026-11-04 21:15 — suszenie skóry niewidoczne u znajomego (Karol, zrzuty: u hosta „stopień wysuszenia: 1%”, u niego nic)
+- world_items.cpp: load_evolve — z rekordu przedmiotu (m_EvolveItemSerialized → m_TimeSpentEvolvingGameHours) ustawiany czas suszenia (EvolveItem), przy obu ścieżkach wczytywania (obok load_lamp). Host co 30 s wysyła rekord leżącego przedmiotu, który się suszy („is curing”). Log, jeśli TLD mówi, że u nas nie może schnąć (CanEvolve false). Nieprzetestowane.

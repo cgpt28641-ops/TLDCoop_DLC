@@ -134,6 +134,9 @@ struct Api {
     ptrdiff_t pot_fire = -1;                       // CookingPotItem.m_FireBeingUsed
     ptrdiff_t pot_food = -1;                       // CookingPotItem.m_GearItemBeingCooked
     ptrdiff_t pot_hours = -1;                      // CookingPotItem.m_CookingElapsedHours
+    ptrdiff_t evolve = -1;                         // TLDCoop_DLC: GearItem.m_EvolveItem (curing hides, guts...)
+    ptrdiff_t evolve_hours = -1;                   // EvolveItem.m_TimeSpentEvolvingGameHours
+    const MethodInfo* evolve_can = nullptr;        // EvolveItem.CanEvolve()
     ptrdiff_t pot_state = -1;                      // CookingPotItem.m_CookingState (0 cooking, 1 ready, 2 ruined)
     ptrdiff_t pot_cooked = -1, pot_ruined = -1;    // CookingPotItem.m_PercentCooked, m_PercentRuined
     const MethodInfo* pot_take = nullptr;          // CookingPotItem.PickUpCookedItem()
@@ -716,6 +719,26 @@ void load_lamp(Il2CppObject* gi, const std::string& gear) {
         logx::info("items: the other player's lamp has %.0f%% fuel (ours said %.0f%%)", after, before);
 }
 
+// TLDCoop_DLC (Karol 04.11: a hide curing on the floor showed "stopień wysuszenia" in the host's game only): how long
+// the other player's has been curing (drying), as its record says; ours goes on from there.
+void load_evolve(Il2CppObject* gi, const std::string& gear) {
+    Il2CppObject* ev = api.evolve >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.evolve) : nullptr;
+    if (!alive(ev) || api.evolve_hours < 0) return;
+    const std::string text = json_string(gear, "m_EvolveItemSerialized");
+    if (text.empty()) return;
+    const double theirs = json_number(text, "m_TimeSpentEvolvingGameHours", -1);
+    if (theirs < 0) return;
+    const float ours = get<float>(ev, api.evolve_hours);
+    if (std::fabs(theirs - ours) < 0.05) return;
+    put<float>(ev, api.evolve_hours, static_cast<float>(theirs));
+    bool can = false;
+    if (api.evolve_can) il2::invoke_value(api.evolve_can, ev, can);
+    static int told = 0;
+    if (told++ < 20)
+        logx::info("items: the other player's %s has been curing %.1f h (ours said %.1f h)%s", name_of(gi).c_str(), theirs,
+                   ours, can ? "" : "; it can't cure here (TLD's CanEvolve: no)");
+}
+
 void load_opened(Il2CppObject* gi, const std::string& gear, Known& k) {
     if (!alive(gi)) return;
     bool changed = false;
@@ -1226,6 +1249,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         load_opened(gi, m.gear, k);
         load_burn(gi, m.gear, k);
         load_lamp(gi, m.gear);
+        load_evolve(gi, m.gear);
         load_pot(gi, m.gear, m.pdid);
         return;
     }
@@ -1258,6 +1282,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                 load_opened(gi, m.gear, k);
                 load_burn(gi, m.gear, k);
                 load_lamp(gi, m.gear);
+                load_evolve(gi, m.gear);
                 load_pot(gi, m.gear, m.pdid);
                 logx::info("items: the other player's %s (%s) was switched off here (our game rolled it away); shown at "
                            "(%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(), pos.x,
@@ -1640,6 +1665,14 @@ void scan(double now) {
             k.opened = opened;
             if (k.shared && opened) {
                 send_put(l.gi, l.pdid, k, now, 0, 0, "was opened");
+                continue;
+            }
+        }
+        // TLDCoop_DLC: the host says how a lying item that cures (a hide, gut) is getting on every 30 s
+        if (hosting() && k.shared && api.evolve >= 0 && api.evolve_hours >= 0 && now - k.changed_ms >= 30000) {
+            Il2CppObject* ev = get<Il2CppObject*>(l.gi, api.evolve);
+            if (alive(ev) && get<float>(ev, api.evolve_hours) > 0) {
+                send_put(l.gi, l.pdid, k, now, 0, 0, "is curing");
                 continue;
             }
         }
@@ -2174,6 +2207,11 @@ bool init() {
     }
     if (Il2CppClass* lamp = il2::find_class(kGame, "TLD.Gear", "KeroseneLampItem")) {
         api.lamp = il2::field_offset_quiet(gear, "m_KeroseneLampItem");
+        api.evolve = il2::field_offset_quiet(gear, "m_EvolveItem");  // TLDCoop_DLC: curing
+        if (Il2CppClass* evolve = il2::find_class(kGame, "", "EvolveItem")) {
+            api.evolve_hours = il2::field_offset_quiet(evolve, "m_TimeSpentEvolvingGameHours");
+            api.evolve_can = il2::find_method(evolve, "CanEvolve", 0);
+        }
         api.lamp_load = il2::find_method_params(lamp, "Deserialize", {"System.String"});
         api.lamp_pct = il2::find_method_quiet(lamp, "GetPercentFuelRemaining", 0);
         api.lamp_on = il2::find_method_quiet(lamp, "IsOn", 0);
