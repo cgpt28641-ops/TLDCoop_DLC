@@ -691,3 +691,9 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Screen: pnie i korony jednolicie kremowe, zero szczegółów tekstury, ziemia czarna, skały normalne. To nie "za dużo śniegu" w teksturze — wygląda na brak tekstury (biała) albo przepalone światło drzew.
 - Dodane logi raz na minutę: "trees: a tree material shows '<tekstura>'" i "interiors: sky's light r g b ... from the outdoors/a room's lighting manager". Następne logi rozstrzygną.
 - Ruch liści: z mojej strony nie widać gry; poproszony o krótkie nagranie. Parametry: _XZAnimScaleByH/R 0.15, _LocalPhaseScalars 0.1, _TrunkBendHeight 5, globalne _GlobalWindInfo/_GlobalBranchPhase.
+
+## 2026-11-04 08:50 — protokół v48: drzwi w interiorach, skrzydła drzwi SI, POBIERZ LOGI
+- Drzwi/szafy/szafki w zwykłych interiorach (OpenClose, np. szkoła): otwarcie/zamknięcie widzą wszyscy. world_objects: Kind::Door (ObjectKind 8, klucz "o/"), odpytywane jak zamki ale w obie strony (m_IsOpen), stosowane przez OpenClose.Open/Close(false,false) z animacją; lista hosta przy wejściu niesie stan każdych drzwi.
+- Skrzydło drzwi SI (Shatsca, raport 22:32 "skrzydla drzwi nie dzialaja", log "no door leaf found"): szukane też u rodzica i dziadka LoadScene (tylko w obrębie futryny); przy braku log z całą ścieżką obiektu.
+- ESC → "POBIERZ LOGI" (tylko w co-op): pakuje nasze logi i prosi resztę (LogsWant); każdy pakuje swoje i wysyła zip (LogsFile, części po 192 KB, host przekazuje) do TLDCoop\reports\<czas>_logi_wszystkich\<nick>_<plik>.zip.
+- v48: wszyscy muszą mieć ten sam dll.
