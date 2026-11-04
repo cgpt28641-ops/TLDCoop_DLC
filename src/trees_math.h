@@ -80,4 +80,9 @@ inline int texture_index(float snow, float r) {
     return s + static_cast<int>(r * 3) - 1;                // s-1 .. s+1
 }
 
+// TLDCoop_DLC (Karol 04.11, screenshot: whole forests flat white at snow 100): the snowiest sets shown are the
+// middle ones (Medium / HighMedium): full snow still leaves green and bark on the trees.
+constexpr int kWhitestShown = 4;
+inline int shown_index(float snow, float r) { return std::min(texture_index(snow, r), kWhitestShown); }
+
 }  // namespace trees
