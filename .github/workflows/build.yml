@@ -109,6 +109,9 @@ jobs:
           gh release download v0.13.1 -R ScarredVeins/TLDCo-Op -p "TLDCoop-v0.13.1.zip" -D upstream
           Expand-Archive upstream\TLDCoop-v0.13.1.zip upstream\zip
           Copy-Item -Recurse upstream\zip\TLDCoop pack\TLDCoop
+          # TLDCoop_DLC: no coop.ini in the zip: unpacked over a game it put everyone's back to name=Player (04.11); the mod
+          # writes its own on the first start
+          Get-ChildItem -Recurse pack\TLDCoop -Filter coop.ini | Remove-Item -Force
           Copy-Item build\winhttp.dll pack\
           Copy-Item third_party\dynamictrees\tldcoop_trees.bundle pack\TLDCoop\
           Copy-Item INSTALL_DLC.txt pack\INSTALL.txt

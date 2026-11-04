@@ -177,6 +177,7 @@ void coop_off(const char* why) {
 void apply_net_settings(const config::Settings& s, bool startup) {
     ambient_lights::set_settings(s);
     house_lights::set_settings(s);
+    coop_report::set_name(s.name);
     dynamic_trees::set_settings(s);
     seamless_interiors::set_settings(s);
     coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);
@@ -228,6 +229,7 @@ void start_networking() {
     if (!s.autostart) {
         ambient_lights::set_settings(s);
         house_lights::set_settings(s);
+        coop_report::set_name(s.name);
         dynamic_trees::set_settings(s);
         seamless_interiors::set_settings(s);
         coop_hud::set_switches(s.hud_names, s.hud_radar, s.hud_chart);

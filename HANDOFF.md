@@ -855,3 +855,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Pytania Karola (tylko czy się da): jeden kolor — zrobione; „maszyna hazardowa” (włożyć przedmiot, wylosować mnożnik) —
   da się, większa robota (model, interakcja, losuje host, zasady); czeka na decyzję i plan.
 
+### 2026-11-04 ~22:15 UTC — „logi wszystkich” bez logów innych; imię „Player”
+- Log 22:15–23:10 (3 graczy: Shatsca, Kerel, szymongrzyb2017; build 21:07): w folderach logi_wszystkich tylko log
+  Karola, a pliki i zgłoszenia podpisane „Player”. Przyczyna: zip z 22:00 rozpakowany na gry nadpisał coop.ini
+  (upstreamowe TLDCoop\coop.ini z name=Player) → wszyscy mieli na starcie „Player”; coop_report czytał imię tylko raz
+  przy starcie, a prośba o logi szła do „Player”, więc każda gra uznawała ją za swoją i pomijała.
+- Poprawki: coop_report: imię odświeżane z ustawień (set_name), prośba/odbiór logów adresowane „imię#numer gracza”;
+  build.yml: coop.ini usuwany z zipa (mod sam pisze domyślny).
+- Naprawa szafki: „0 thing(s) to repair” w FarmHouseA → to nie RepairableInteractiveItem; mechanizm nadal nieznany.
+

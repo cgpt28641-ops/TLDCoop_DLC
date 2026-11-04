@@ -5,6 +5,8 @@
 // other player's game makes its own report at the same moment, with the same id, so the logs line up. Nothing is
 // sent anywhere: the files stay on each PC.
 
+#include <string>
+
 namespace coop_report {
 
 void init();
@@ -12,5 +14,7 @@ void on_frame(bool in_game);  // in_game: the description box can show (TLD's HU
 // TLDCoop_DLC: ESC's "POBIERZ LOGI": our logs packed, and every other player's game packs its own and sends the zip
 // here, into TLDCoop\reports\<time>_logi_wszystkich\.
 void collect_all();
+// TLDCoop_DLC: our name now (the co-op screen's; it was read once at start)
+void set_name(const std::string& name);
 
 }  // namespace coop_report

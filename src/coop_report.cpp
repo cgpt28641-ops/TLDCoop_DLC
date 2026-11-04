@@ -255,7 +255,7 @@ void send_zip(const Done& d) {
         g_paced.push_back(m);
     }
     logx::info("report: our logs (%zu bytes, %u part(s)) going to %s, one part every %u ms", bytes.size(), m.parts,
-               d.want_to.c_str(), static_cast<unsigned>(kLogsPaceMs));
+               shown(d.want_to).c_str(), static_cast<unsigned>(kLogsPaceMs));
 }
 
 void send_paced() {
@@ -271,7 +271,7 @@ void send_paced() {
     net::write_logs_file(w, g_paced.front());
     netrt::send_packet(w, true);
     if (g_paced.front().part + 1 == g_paced.front().parts)
-        logx::info("report: the last part of our logs sent to %s", g_paced.front().to.c_str());
+        logx::info("report: the last part of our logs sent to %s", shown(g_paced.front().to).c_str());
     g_paced.pop_front();
 }
 
@@ -305,6 +305,15 @@ void send(uint32_t id, const std::string& who, int except = -1) {
         netrt::send_packet(w, true);
 }
 
+// TLDCoop_DLC: who asks for logs and who they go to: the name and the player's number (04.11 23:09: everyone's coop.ini
+// came back from the zip with name=Player, so "the one who asked" was everyone, and each game skipped the request
+// as its own: no logs came)
+std::string me_key() { return g_name + "#" + std::to_string(netrt::status().self_id); }
+std::string shown(const std::string& key) {
+    const size_t hash = key.rfind('#');
+    return hash == std::string::npos ? key : key.substr(0, hash);
+}
+
 void send_want(uint32_t id, const std::string& who, int except = -1) {
     net::Writer w(net::Msg::LogsWant, 128);
     net::write_report(w, id, who);
@@ -323,7 +332,7 @@ void collect_all() {
     g_incoming.clear();
     logx::info("==================== LOGS #%08x: we asked for everyone's logs ====================", g_collect_id);
     std::thread(pack, stamp_now(safe(g_name).c_str()), std::string(), 0u, std::string(), g_collect_dir).detach();
-    if (netrt::status().connected) send_want(g_collect_id, g_name);
+    if (netrt::status().connected) send_want(g_collect_id, me_key());
     coop_notices::tell("Zbieram logi wszystkich graczy...");
 }
 
@@ -338,6 +347,10 @@ void init() {
     g_name = config::load().name;
     logx::info("report: %s%s", g_key ? ("the report key is " + key).c_str() : "no report key ([report] key=off)",
                g_all ? "; in co-op everyone's game makes a report with it" : "");
+}
+
+void set_name(const std::string& name) {
+    if (!name.empty()) g_name = name;
 }
 
 void on_frame(bool in_game) {
@@ -373,9 +386,9 @@ void on_frame(bool in_game) {
         std::string who;
         if (!net::read_report(r, id, who)) continue;
         if (host) send_want(id, who, p.from);
-        if (who == g_name) continue;
+        if (who == me_key()) continue;
         logx::info("==================== LOGS #%08x: %s asked for everyone's logs; ours packed and sent ====================", id,
-                   who.c_str());
+                   shown(who).c_str());
         std::thread(pack, stamp_now(safe(g_name).c_str()), std::string(), id, who, std::string()).detach();
     }
     in.clear();
@@ -384,7 +397,7 @@ void on_frame(bool in_game) {
         net::Reader r = net::packet_body(p);
         net::LogsFileMsg m;
         if (!net::read_logs_file(r, m)) continue;
-        if (m.to == g_name) {
+        if (m.to == me_key()) {
             got_part(m);
         } else if (host) {  // on to the one who asked
             net::Writer w(net::Msg::LogsFile, net::kMaxMessage);
@@ -403,7 +416,7 @@ void on_frame(bool in_game) {
     for (const Done& d : done) {
         if (d.want_id && !d.want_to.empty() && !d.zip.empty() && netrt::status().connected) {
             send_zip(d);
-            coop_notices::tell(d.want_to + " pobiera logi: nasze wysłane");
+            coop_notices::tell(shown(d.want_to) + " pobiera logi: nasze wysłane");
         } else {
             const bool collected = !g_collect_dir.empty() && d.made.find(g_collect_dir) != std::string::npos;
             coop_notices::tell((collected ? "Nasze logi: " : "Bug report saved: ") + d.made);
