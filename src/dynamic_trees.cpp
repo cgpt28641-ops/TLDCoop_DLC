@@ -292,7 +292,7 @@ void apply() {
     for (auto& [ptr, t] : g_mats) {
         Il2CppObject* m = target(t.material);
         if (!alive(m)) continue;
-        const int idx = trees::shown_index(g_snow, t.r);  // TLDCoop_DLC: capped (Karol: too white)
+        const int idx = trees::shown_index(g_snow, t.r);
         if (idx == t.shown) continue;
         Il2CppObject* tex = texture(t.pine ? trees::kPine[idx] : trees::kCedar[idx]);
         if (!tex) continue;

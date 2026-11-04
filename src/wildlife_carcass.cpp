@@ -58,6 +58,7 @@ struct Api {
     const MethodInfo* find_object = nullptr;    // static Object.FindObjectOfType(Type)
     const MethodInfo* go_component = nullptr;   // GameObject.GetComponent(Type)
     const MethodInfo* go_active = nullptr;      // GameObject.get_activeInHierarchy
+    const MethodInfo* go_set_active = nullptr;  // GameObject.SetActive (TLDCoop_DLC: our own twin of a host's carcass)
     Il2CppObject* panel_type = nullptr;
     // Rabbits and ptarmigan (WildlifeItem)
     Il2CppObject* wildlife_item_type = nullptr;
@@ -336,6 +337,11 @@ std::unordered_map<uint32_t, uint32_t>& acks_of(uint8_t id, uint32_t link) {
 
 bool pay_owed(Il2CppObject* bh, uint32_t id, const std::string& scene, const std::string& prefab, const Vector3& pos);
 
+double g_last_skip_log = -1e18;
+int g_last_skipped = -1;
+constexpr double kSkipLogMs = 30000;
+std::unordered_map<uint32_t, double> g_dead_since;  // TLDCoop_DLC: when we first saw each of ours dead
+
 void send_carcasses(double now) {
     if (now - g_last_send < kSendMs) return;
     g_last_send = now;
@@ -346,11 +352,21 @@ void send_carcasses(double now) {
         for (auto it = g_listed.begin(); it != g_listed.end();)
             it = now - it->second.seen_ms > kListedMs ? g_listed.erase(it) : std::next(it);
     std::vector<net::CarcassRec> list;
+    // TLDCoop_DLC: dead ones we don't list, and why (Kerel 04.11 21:11: a stag carcass the host had harvested was whole
+    // in his game: none of the host's stags came as carcasses), now and then
+    int no_id = 0, no_body = 0, body_off = 0, away = 0;
+    const bool tell = now - g_last_skip_log > kSkipLogMs;
     for (Il2CppObject* ai : all_animals()) {
         if (get<int32_t>(ai, api.ai_mode) != kAiModeDead) continue;
         Il2CppObject* bh = get<Il2CppObject*>(ai, api.ai_body);
         const uint32_t id = wildlife_sync::host_animal_id(ai);
-        if (!id || !bh || !behaviour_enabled(bh)) continue;
+        if (!id || !bh || !behaviour_enabled(bh)) {
+            if (!in_world(ai)) ++away;
+            else if (!id) ++no_id;
+            else if (!bh) ++no_body;
+            else ++body_off;
+            continue;
+        }
         if (wildlife_item_of(ai)) continue;  // a rabbit or ptarmigan: an item soon (small_game_to_items)
         Il2CppObject* tf = il2::invoke(api.component_transform, ai);
         Vector3 pos{};
@@ -374,7 +390,18 @@ void send_carcasses(double now) {
         c.percent_frozen = a.percent_frozen;
         c.flags = a.flags;
         c.seconds_dead = get<float>(ai, api.ai_dead_time);
+        // TLDCoop_DLC: one made dead from its record (a body from a game before) shows as a carcass at once
+        auto first = g_dead_since.find(id);
+        if (first == g_dead_since.end()) first = g_dead_since.emplace(id, now).first;
+        c.seconds_dead = std::max(c.seconds_dead, static_cast<float>((now - first->second) / 1000.0));
         list.push_back(std::move(c));
+    }
+    if (g_dead_since.size() > 1024) g_dead_since.clear();
+    if (tell && (no_id || no_body || body_off) && no_id + no_body + body_off != g_last_skipped) {
+        g_last_skip_log = now;
+        g_last_skipped = no_id + no_body + body_off;
+        logx::info("wildlife: %zu carcass(es) listed for the others; not listed: %d without our id, %d without a body, "
+                   "%d with its body switched off (%d put away)", list.size(), no_id, no_body, body_off, away);
     }
     // Each friend's list says which of its own harvests are counted. A friend back from a dropped link gets it once
     // what it did meanwhile is in (caught up): before, our list would bring back a carcass it quartered offline.
@@ -556,6 +583,53 @@ bool make_local(const net::CarcassRec& c, double now) {
     return true;
 }
 
+// TLDCoop_DLC: a carcass of our own game where the host's lies, the same animal (Kerel 04.11 21:11: "I can harvest
+// again what Shatsca already took from the stag's carcass"): both games kept the body from a game before, ours whole,
+// the host's harvested. The host's is the one; ours goes (switched off, out of our save). Not one we run or one the
+// host's game made here.
+std::string kind_of_prefab(const std::string& prefab) {
+    std::string name = base_prefab(prefab);
+    if (const size_t us = name.rfind('_'); us != std::string::npos && us + 1 < name.size() &&
+                                          name.find_first_not_of("0123456789", us + 1) == std::string::npos)
+        name.erase(us);  // WILDLIFE_Wolf_1 -> WILDLIFE_Wolf
+    return name;
+}
+
+constexpr float kTwinMetres = 4.0f;
+
+int retire_own_twins(double now) {
+    if (!api.go_set_active || g_locals.empty()) return 0;
+    std::unordered_set<Il2CppObject*> ours;
+    for (auto& [id, l] : g_locals)
+        if (Il2CppObject* go = target(l.go)) ours.insert(go);
+    int retired = 0;
+    for (Il2CppObject* ai : all_animals()) {
+        if (get<int32_t>(ai, api.ai_mode) != kAiModeDead || !in_world(ai) || wildlife_sync::host_animal_id(ai)) continue;
+        Il2CppObject* go = il2::invoke(api.component_go, ai);
+        if (!go || ours.count(go) || wildlife_item_of(ai)) continue;
+        Il2CppObject* tf = il2::invoke(api.component_transform, ai);
+        Vector3 pos{};
+        if (!il2::invoke_value(api.get_position, tf, pos)) continue;
+        const std::string kind = kind_of_prefab(name_of(go));
+        for (auto& [id, l] : g_locals) {
+            const Vector3 at{l.host.pos[0], l.host.pos[1], l.host.pos[2]};
+            if (kind_of_prefab(l.host.prefab) != kind || distance(pos, at) > kTwinMetres) continue;
+            Il2CppObject* bh = get<Il2CppObject*>(ai, api.ai_body);
+            const Amounts mine = bh ? read_amounts(bh) : Amounts{};
+            if (bh) remove_from_save(bh);
+            bool off = false;
+            void* args[] = {&off};
+            il2::invoke(api.go_set_active, go, args);
+            ++retired;
+            logx::info("wildlife: our own %s carcass (%s) lay where the host's #%u does (%.1f m): the host's is the one, "
+                       "ours is gone", kind.c_str(), describe_amounts(mine).c_str(), id, distance(pos, at));
+            break;
+        }
+    }
+    (void)now;
+    return retired;
+}
+
 void drop_local(uint32_t id, Local& l, const char* why, bool destroy_it) {
     Il2CppObject* go = target(l.go);
     if (destroy_it && go && alive(go)) {
@@ -598,6 +672,9 @@ bool rekey_local(const net::CarcassRec& c, const std::unordered_set<uint32_t>& l
     return false;
 }
 
+double g_last_twins = -1e18;
+constexpr double kTwinsMs = 2000;
+
 void receive_carcasses(double now) {
     std::vector<net::Packet> packets;
     netrt::drain_packets(net::Msg::Carcasses, packets);
@@ -632,6 +709,10 @@ void receive_carcasses(double now) {
         }
         it->second.host = std::move(c);
         it->second.seen_ms = now;
+    }
+    if (now - g_last_twins > kTwinsMs) {
+        g_last_twins = now;
+        retire_own_twins(now);
     }
 }
 
@@ -937,6 +1018,7 @@ bool init() {
     api.go_component =
         il2::find_method_params(il2::find_class(kCore, "UnityEngine", "GameObject"), "GetComponent", {"System.Type"});
     api.go_active = il2::find_method(il2::find_class(kCore, "UnityEngine", "GameObject"), "get_activeInHierarchy", 0);
+    api.go_set_active = il2::find_method(il2::find_class(kCore, "UnityEngine", "GameObject"), "SetActive", 1);
     if (Il2CppClass* wildlife_item = il2::find_class(kGame, "", "WildlifeItem")) {
         api.wildlife_item_type = il2::type_object(wildlife_item);
         if (api.wildlife_item_type) il2::il2cpp_gchandle_new(api.wildlife_item_type, false);

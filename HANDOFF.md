@@ -814,3 +814,17 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - core.cpp: co minutę „frames: N fps on average…, co-op X ms a frame: najdroższe części” (Karol: FPS spada do 54 z ~104).
 - coop_hud.cpp: legenda graczy na mapie 150 px niżej (nachodziła na „MAPA”).
 - Nieprzetestowane w grze.
+
+### 2026-11-04 ~22:30 UTC — tusza jelenia (duplikat), realistyczne drzewa + pnie
+- Logi 20:57–21:36 (Kerel + Shatsca): Karol F11 21:11 „mogę zduplikować rzeczy z tuszy jelenia, które zebrał Shatsca”.
+  W logach: host miał martwe jelenie z rejestru (ciała „harvested in its last game”), ale u Karola żadna tusza jelenia hosta
+  się nie pojawiła (tylko wilki) — Karol miał w swojej grze WŁASNĄ, całą kopię tej tuszy (martwe zwierzęta z jego zapisu
+  nie są ukrywane).
+- Poprawka (wildlife_carcass.cpp): klient — nasza własna tusza tego samego zwierzęcia (ten sam gatunek, do 4 m od tuszy
+  hosta) jest wyłączana i usuwana z zapisu („our own … carcass … lay where the host's #… does”); host — martwa tusza
+  zrobiona z zapisu liczy się od razu jako tusza (seconds_dead od pierwszego zauważenia) + co 30 s log, ilu martwych NIE
+  wysłał i dlaczego (bez id / bez BodyHarvest / wyłączony). Jeśli jelenie dalej nie przyjdą — ten log powie czemu.
+- Drzewa: nowy tools/trees/realistic.py (z oryginalnego bundla 34babc2): pnie przemalowane na kolory kory (sosna
+  szarobrązowa z płatami, cedr czerwonobrązowy włóknisty), relief wzmocniony, śnieg na korze zostaje; gałęzie: śnieg
+  kępami na igłach, zieleń między, osobno dla każdego stanu (0–55% pokrycia). Limit shown_index (max Medium) cofnięty.
+  Bundle w third_party/dynamictrees + w zipie; podgląd pnie_podglad.jpg.

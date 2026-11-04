@@ -7,3 +7,6 @@ Do not redistribute this file separately from TLDCoop_DLC without the authors' p
 2ff105757a345264e8a553ab046b0f5376681841
 TLDCoop_DLC change (04.11.2026): the snowy pine/cedar sets (Lowest..Highest) blended back towards the Clear set
 (tools/trees/tone_snow.py, K=0.55) so the needles keep their green under the snow.
+TLDCoop_DLC change (04.11.2026, later): all pine/cedar sets remade from the original (tools/trees/realistic.py):
+bark recoloured to bark colours (pine grey-brown, cedar red-brown) from its own light and shade, snow on it kept;
+branch cards' snow in clumps on top of the needles, the green between, per snow state.

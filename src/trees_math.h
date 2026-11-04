@@ -80,9 +80,8 @@ inline int texture_index(float snow, float r) {
     return s + static_cast<int>(r * 3) - 1;                // s-1 .. s+1
 }
 
-// TLDCoop_DLC (Karol 04.11, screenshot: whole forests flat white at snow 100): the snowiest sets shown are the
-// middle ones (Medium / HighMedium): full snow still leaves green and bark on the trees.
-constexpr int kWhitestShown = 4;
-inline int shown_index(float snow, float r) { return std::min(texture_index(snow, r), kWhitestShown); }
+// TLDCoop_DLC: every snow set shown again (04.11 the snowiest were capped at Medium while the textures were flat
+// white; the bundle's own are realistic now: snow in clumps, green and bark between, tools/trees/realistic.py).
+inline int shown_index(float snow, float r) { return texture_index(snow, r); }
 
 }  // namespace trees
