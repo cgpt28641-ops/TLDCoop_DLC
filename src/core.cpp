@@ -8,6 +8,7 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <map>
 #include <string>
 
 #include "ambient_lights.h"
@@ -482,12 +483,17 @@ struct FrameCost {
 };
 std::vector<FrameCost> g_costs;
 double g_cost_t0 = 0;
+// TLDCoop_DLC (Karol 04.11: "FPS sometimes drop to 54 from ~104"): every part's time summed over a minute, logged with
+// the minute's average frame time, so a steady cost (not only the stalls above) shows.
+std::map<const char*, double> g_minute_costs;
+double g_minute_t0 = 0, g_minute_frames = 0, g_minute_worst = 0;
 #define TIMED(what, call)                                                    \
     do {                                                                     \
         const double t0_ = net::now_ms();                                    \
         call;                                                                \
         const double dt_ = net::now_ms() - t0_;                              \
         if (dt_ > 5) g_costs.push_back({what, dt_});                         \
+        g_minute_costs[what] += dt_;                                         \
     } while (0)
 
 void report_frame_costs() {
@@ -511,6 +517,28 @@ void report_frame_costs() {
             logx::info("frame: %.0f ms since the last frame (the game itself %.0f ms, co-op %.0f ms%s%s) [slow frames so far: %d]",
                        gap, gap - ours, ours, top.empty() ? "" : ": ", top.c_str(), slow);
         }
+    }
+    // TLDCoop_DLC: the minute's summary
+    ++g_minute_frames;
+    g_minute_worst = std::max(g_minute_worst, gap);
+    if (g_minute_t0 <= 0) g_minute_t0 = now;
+    if (now - g_minute_t0 >= 60000 && g_minute_frames > 0) {
+        const double span = now - g_minute_t0, per_frame = span / g_minute_frames;
+        double total = 0;
+        std::vector<std::pair<double, const char*>> parts;
+        for (const auto& [what, ms] : g_minute_costs) total += ms, parts.emplace_back(ms, what);
+        std::sort(parts.begin(), parts.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        std::string top;
+        for (size_t i = 0; i < parts.size() && i < 5; ++i) {
+            char b[96];
+            snprintf(b, sizeof(b), "%s%s %.2f", top.empty() ? "" : ", ", parts[i].second, parts[i].first / g_minute_frames);
+            top += b;
+        }
+        logx::info("frames: %.0f fps on average this minute (%.1f ms a frame, the worst %.0f ms); co-op %.2f ms a frame "
+                   "(%.0f%%): %s", 1000.0 / per_frame, per_frame, g_minute_worst, total / g_minute_frames,
+                   100.0 * total / span, top.c_str());
+        g_minute_costs.clear();
+        g_minute_t0 = now, g_minute_frames = 0, g_minute_worst = 0;
     }
     last_frame = now;
     g_costs.clear();
