@@ -36,10 +36,12 @@ constexpr double kBusyRetryMs = 1000;        // host full: ask again shortly (so
 constexpr double kWorldIntervalMs = 1000;    // the host's world, repeated (UDP can drop it)
 constexpr double kWorldChangeMs = 200;       // ...and sooner when the weather or clock jumps
 constexpr size_t kInboxLimit = 64;           // undrained states per player
-constexpr double kReliableResendMs = 250;   // a Reliable not acked yet goes again this often...
+constexpr double kReliableResendMs = 250;   // a Reliable not acked yet goes again this often (at most; sooner on a
+                                            // quick link: 2x its ping + 40 ms, not under kReliableResendMinMs)...
+constexpr double kReliableResendMinMs = 120;
 constexpr double kReliableGiveUpMs = 15000; // ...until the peer answers or this long has passed
 constexpr size_t kReliableSeen = 512;       // recent Reliable seqs remembered, so resends aren't handled twice
-constexpr size_t kReliableWindow = 64;      // Reliables in flight at once; the rest wait their turn
+constexpr size_t kReliableWindow = 128;     // Reliables in flight at once; the rest wait their turn
 constexpr size_t kReliableQueue = 4096;     // queued Reliables (a big message is many Chunks)
 constexpr size_t kReliableHeader = 7 + 4 + 2;               // Reliable: header, seq, blob length
 constexpr size_t kChunkHeader = 7 + 4 + 2 + 2 + 2;          // Chunk: header, transfer, index, count, blob length
@@ -986,6 +988,8 @@ struct Session::Impl {
         }
         // Only the oldest kReliableWindow go out (and count towards giving up); the rest wait for acks to free a slot.
         size_t in_window = 0;
+        const double resend_ms = l.rtt_ms < 0 ? kReliableResendMs
+                                              : std::clamp(l.rtt_ms * 2 + 40, kReliableResendMinMs, kReliableResendMs);
         for (auto it = l.reliable_out.begin(); it != l.reliable_out.end() && in_window < kReliableWindow;) {
             if (it->first_ms == 0) it->first_ms = now;
             if (now - it->first_ms > kReliableGiveUpMs) {
@@ -994,7 +998,7 @@ struct Session::Impl {
                 it = l.reliable_out.erase(it);
                 continue;
             }
-            if (now - it->last_ms >= kReliableResendMs) {
+            if (now - it->last_ms >= resend_ms) {
                 it->last_ms = now;
                 if (link && now >= cut_until) link->send(l.addr, it->data.data(), it->data.size());
             }

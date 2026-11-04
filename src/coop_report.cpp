@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <deque>
 #include <mutex>
 #include <random>
 #include <share.h>
@@ -46,6 +47,10 @@ struct Done {
 };
 std::mutex g_done_mutex;
 std::vector<Done> g_done;  // what the packing thread made, for a notice on the main thread
+// TLDCoop_DLC: parts of our logs' zip waiting to go out, one at a time
+std::deque<net::LogsFileMsg> g_paced;
+double g_paced_ms = 0;
+constexpr double kLogsPaceMs = 300;
 // TLDCoop_DLC: zips coming in for our "POBIERZ LOGI"
 struct Incoming {
     std::string from, name;
@@ -243,14 +248,31 @@ void send_zip(const Done& d) {
     m.name = d.zip.filename().string();
     if (m.name.empty() || m.name.size() > 150) m.name = "logs.zip";
     m.parts = static_cast<uint16_t>(std::max<size_t>(1, (bytes.size() + net::kLogsPart - 1) / net::kLogsPart));
+    // TLDCoop_DLC: one part every kLogsPaceMs (send_paced), so the game's own changes go out between them
     for (uint16_t i = 0; i < m.parts; ++i) {
         m.part = i;
         m.bytes = bytes.substr(static_cast<size_t>(i) * net::kLogsPart, net::kLogsPart);
-        net::Writer w(net::Msg::LogsFile, net::kMaxMessage);
-        net::write_logs_file(w, m);
-        netrt::send_packet(w, true);
+        g_paced.push_back(m);
     }
-    logx::info("report: our logs (%zu bytes, %u part(s)) sent to %s", bytes.size(), m.parts, d.want_to.c_str());
+    logx::info("report: our logs (%zu bytes, %u part(s)) going to %s, one part every %u ms", bytes.size(), m.parts,
+               d.want_to.c_str(), static_cast<unsigned>(kLogsPaceMs));
+}
+
+void send_paced() {
+    if (g_paced.empty()) return;
+    if (!netrt::status().connected) {
+        g_paced.clear();
+        return;
+    }
+    const double now = now_ms();
+    if (now - g_paced_ms < kLogsPaceMs) return;
+    g_paced_ms = now;
+    net::Writer w(net::Msg::LogsFile, net::kMaxMessage);
+    net::write_logs_file(w, g_paced.front());
+    netrt::send_packet(w, true);
+    if (g_paced.front().part + 1 == g_paced.front().parts)
+        logx::info("report: the last part of our logs sent to %s", g_paced.front().to.c_str());
+    g_paced.pop_front();
 }
 
 void got_part(const net::LogsFileMsg& m) {
@@ -370,6 +392,8 @@ void on_frame(bool in_game) {
             netrt::send_packet_except(p.from, w, true);
         }
     }
+
+    send_paced();
 
     std::vector<Done> done;
     {

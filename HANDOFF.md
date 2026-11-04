@@ -757,3 +757,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Szyba i szprosy: widoki rysowane w kolejce 2450 (przed szybą gry STR_WindowGlassMix, przezroczystą), więc jej szron, odcień i szprosy są na wierzchu; z zewnątrz płaszczyzna widoku 3 cm za szybą. Jeśli widok z zewnątrz zrobi się pusty/zasłonięty → cofnąć kOutsideInBehindGlass.
 - Półki: logi z problemem były z dll 21:20 (Shatsca), poprawka przekluczania (23:20) tego dotyczy; czekamy na nowe logi.
 - `near` to makro Windows — nie używać jako nazwy.
+
+## 2026-11-04 11:50 — szybszy przesył (prośba Karola)
+- session.cpp: okno niepotwierdzonych paczek 64 → 128; ponowne wysłanie zależne od pingu łącza: 2×rtt + 40 ms, w granicach 120–250 ms (bez pomiaru: 250). Steam (SendRateMax 4 MB/s, bufor 4 MB) bez zmian.
+- coop_report.cpp: „POBIERZ LOGI” — zip odsyłany po jednej części (192 KB) co 300 ms (kolejka g_paced, send_paced w on_frame), zamiast wszystkich naraz; zmiany świata idą między częściami. Log „one part every 300 ms” / „the last part of our logs sent”.
+- Protokół bez zmian (v48), ale dla porządku wszyscy ten sam dll. Nieprzetestowane w grze.
