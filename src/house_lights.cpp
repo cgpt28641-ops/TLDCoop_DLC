@@ -468,7 +468,7 @@ void update_lights(Il2CppObject* mngr) {
         Electro& e = *it++;
         const Vector3 p = get_vec(api.tf_position, il2::invoke(api.component_tf, o));
         const float dx = p.x - me.position.x, dy = p.y - me.position.y, dz = p.z - me.position.z;
-        const bool far = std::sqrt(dx * dx + dy * dy + dz * dz) > static_cast<float>(g_lv.cull);
+        const bool too_far = std::sqrt(dx * dx + dy * dy + dz * dz) > static_cast<float>(g_lv.cull);
         auto all_off = [&]() {
             if (e.simple) {
                 if (api.ls_intensity >= 0) *reinterpret_cast<float*>(reinterpret_cast<char*>(o) + api.ls_intensity) = 0;
@@ -484,7 +484,7 @@ void update_lights(Il2CppObject* mngr) {
                 call(api.me_audio, o);
             }
         };
-        if (far && !aurora) {
+        if (too_far && !aurora) {
             all_off();
             continue;
         }
