@@ -77,7 +77,9 @@ int main() {
     state.flags |= kStateEating | kStateBed;
     for (int i = 0; i < 7; ++i) state.bed[i] = 0.5f * static_cast<float>(i) - 1;
     state.place = "CampOffice";
-    round_trip("State", Msg::State, state, write_state, read_state);
+    state.activity = ActClimb;
+    // (builds before the activity byte end one byte sooner)
+    round_trip("State", Msg::State, state, write_state, read_state, 217);
 
     RoomsMsg rooms;
     rooms.region = "LakeRegion";
