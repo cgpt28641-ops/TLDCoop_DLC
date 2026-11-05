@@ -159,7 +159,7 @@ Il2CppObject* make_mesh(const AutPart& p) {
     memcpy(reinterpret_cast<char*>(verts) + kArrayData, kAutPos + static_cast<size_t>(p.v0) * 3, sizeof(float) * 3 * p.vn);
     memcpy(reinterpret_cast<char*>(uvs) + kArrayData, kAutUV + static_cast<size_t>(p.v0) * 2, sizeof(float) * 2 * p.vn);
     auto* t = reinterpret_cast<int32_t*>(reinterpret_cast<char*>(tris) + kArrayData);
-    for (int i = 0; i < p.in; ++i) t[i] = kAutIdx[p.i0 + i] - p.v0;
+    for (int i = 0; i < p.in; ++i) t[i] = kAutIdx[p.i0 + i];  // (each part's own, from 0)
     void* va[] = {verts};
     il2::invoke(api.mesh_vertices, mesh, va);
     void* ua[] = {uvs};
@@ -775,7 +775,7 @@ void hud_detour(Il2CppObject* self, Il2CppObject* hud, const MethodInfo* method)
     Machine* m = machine_under_crosshairs(self);
     if (!m) return;
     char text[96];
-    snprintf(text, sizeof(text), m->spinning ? "Automat — kręci się… (stan %d%%)" : "Automat — zagraj (stan %d%%)",
+    snprintf(text, sizeof(text), m->spinning ? "Automat — kręci się…, stan %d%%" : "Automat — zagraj, stan %d%%",
              static_cast<int>(std::lround(m->condition * 100)));
     int state = kHoverCanInteract;
     void* a[] = {il2::il2cpp_string_new(text), target(m->root), &state};

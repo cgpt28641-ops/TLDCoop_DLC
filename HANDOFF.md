@@ -940,4 +940,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - 18:34 Karol: bez wpisywania czegokolwiek → klawisz [automat] key (domyślnie F2; F3–F8 to emotki, F11 raport, F1
   konsola): F2 stawia automat przed graczem, Shift+F2 usuwa najbliższy. U Karola dopisane do coop.ini: [automat]
   test=1, key=F2 (zrobione przez bridge). Link do testu tylko Karolowi; na ICARUS dopiero po jego teście.
+- 18:50 test Karola (nagranie): automat stoi, hover/klik/losowanie/zużycie/lampka działają, ale widać tylko skrzynię
+  (Body). Błąd: indeksy trójkątów w .inc są już lokalne dla każdej części, a kod odejmował v0 → ujemne indeksy, Unity
+  odrzucało siatki wszystkich części poza pierwszą. Poprawione. Nawiasy w napisie hover nie wyświetlają się (czcionka
+  TLD) → „Automat — zagraj, stan N%”.
 
