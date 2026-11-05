@@ -896,4 +896,6 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   na całą stawkę (w sztukach); limit stawki 10 szt. albo 3 kg; tabela wygranych na automacie; ochrona przed
   wczytywaniem (wynik zapisany przy dźwigni, po wczytaniu ~2 min nieczynny); ZUŻYCIE automatu zamiast limitu 3/dzień
   (kilka % na losowanie, gorszy stan = częstsze zacięcia, naprawa ELEKTRONIKĄ — płytką elektroniczną, nie złomem). Efekty jackpota i „szczęście” — nie.
+- 2026-11-05 15:22 (Karol): jackpot (3 złote) ×5, nie ×10; tabela wygranych tylko w opisie automatu, po najechaniu
+  widać STAN automatu. Karol chce też model 3D automatu z generatora (z ikony) — wtedy bundle Unity 2021.3 w zipie.
 
