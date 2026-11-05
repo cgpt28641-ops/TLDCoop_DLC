@@ -903,4 +903,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   zielono-szary z wilkiem, KORBA z drewnianą rączką (nie dźwignia z kulką), ŻARÓWKA na górze — ma świecić w modzie
   (propozycja: miga przy kręceniu, świeci przy wygranej, szybko miga przy jackpocie, przy złym stanie czasem mruga).
 - 2026-11-05 15:39 (Karol): napis o wyniku (także jackpot) widzi TYLKO gracz, który losuje — bez napisu u innych.
+- 2026-11-05 15:39 (Karol: „reszta jest git”): bębny po 12 pól (czaszka ×3, wilk/mięso/zapałka/ognisko ×2, złoty
+  samorodek ×1); czaszka na ŚRODKOWYM bębnie = przegrana, para czaszek nic. Zużycie −3%/losowanie, zacięcie 2% (100%)
+  → 40% (10%), 0% = nie działa, płytka +25%, naprawa bez narzędzi. Wynik zablokowany do wyjęcia wszystkiego. Nie da się
+  podnieść pełnego automatu; rozbieranie → mechanizm + połowa złomu. Płytka ~1 na 3 rozebrane urządzenia elektroniczne;
+  mechanizm na frezarce. MODS wyłączone → zwykła skrzynia; bez połączenia z hostem nie kręci.
+  TESTY: coop.ini [automat] test=1 (domyślnie 0 — u innych nic nie widać); command.txt: give TLDCOOP_Plytka /
+  TLDCOOP_Mechanizm / TLDCOOP_Automat, „automat stan N”, „automat wynik jackpot|para|...”; spróbować gear_add (F1).
+  PLAN KOMPLETNY — czeka na „zaczynamy”.
 
