@@ -902,4 +902,5 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   przezroczystością; automat_przod_do_modelu — białe tło, pod Meshy/Tripo). Złoty symbol = złoty samorodek. Automat
   zielono-szary z wilkiem, KORBA z drewnianą rączką (nie dźwignia z kulką), ŻARÓWKA na górze — ma świecić w modzie
   (propozycja: miga przy kręceniu, świeci przy wygranej, szybko miga przy jackpocie, przy złym stanie czasem mruga).
+- 2026-11-05 15:39 (Karol): napis o wyniku (także jackpot) widzi TYLKO gracz, który losuje — bez napisu u innych.
 
