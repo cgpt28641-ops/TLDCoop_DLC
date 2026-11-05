@@ -1055,3 +1055,19 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   podnieś)”.
 - Wszystko nadal tylko przy [automat] test=1. Zostało: ochrona przed wczytaniem (2 min), MODS „AUTOMAT”, płytki w
   szufladach, rozbieranie automatu (mechanizm + połowa złomu).
+
+### 2026-11-05 ~21:35 UTC — logi 21:08 (Shatsca + Szymon, build 20:36)
+- #288cb9d5 (surowy królik Szymona w garnku niewidoczny u hosta): pętla 2×/s — obie gry przy rekordzie garnka
+  uznawały mięso za „w naszym plecaku” (flaga m_InPlayerInventory zostaje przy jedzeniu w garnku) → garnek pusty →
+  pusty CookingPotDummy znika → druga gra robi go znowu… load_pot: jedzenie, które jest w którymś naszym garnku,
+  nie jest „w plecaku”; g_took liczy się tylko 3 s (Took.at).
+- #da347649 (tusza zdublowana przy skręceniu karku przez Szymona): Szymon miał tuszę z TLD (podniesienie
+  ogłuszonego), a host z martwego zwierzaka zrobił drugą (small_game_to_items). Teraz host pamięta swoje świeże
+  tusze (g_made, 20 s); nowa tusza przyjaciela < 3 m od niej → nasza znika (world_items apply_put →
+  wildlife_carcass::remote_carcass_near).
+- #dd5b4dcf (świeża tusza od razu zamarznięta): żywe zwierzę z rekordu rejestru niosło stary stan BodyHarvest
+  (m_PercentFrozen/m_Frozen). Teraz: żywe zwierzę przejęte (hp>0) → unfreeze; świeżo zabity (dead_time < 300 s)
+  mały zwierzak przed zamianą w przedmiot → unfreeze.
+- #a766225b/#3a26a171 (mięso „na pauzie” na ognisku): Shatsca sam: krzak przy ognisku — zachowanie gry, bez zmian.
+- #eee3022f (Szymon dokłada przy silnym wietrze): wiatr zgadza się kategorią (VeryWindy), prędkość z porywów różna
+  (31 vs 45–49 mph); TLD pozwala dokładać do ogniska przy wietrze (blokuje rozpalanie). Bez zmian.

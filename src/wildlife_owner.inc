@@ -1250,6 +1250,7 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             // Made for it: TLD's Start gave it its own health meanwhile.
             own.reapplied = true;
             if (own.state.hp > 0) write_field<float>(ai, api.ai_hp, own.state.hp);
+            if (own.state.hp > 0) wildlife_carcass::unfreeze(ai);  // TLDCoop_DLC: alive: its body isn't frozen
             write_field<bool>(ai, api.ai_bleeding, (own.state.flags & net::kAnimalBleeding) != 0);
             write_field<float>(ai, api.ai_bleed_elapsed, own.state.bleed_elapsed);
             write_field<float>(ai, api.ai_bleed_limit, own.state.bleed_limit);

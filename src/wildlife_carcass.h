@@ -18,6 +18,8 @@
 
 #include <string>
 
+#include "il2cpp_api.h"
+
 namespace wildlife_carcass {
 
 bool init();
@@ -26,6 +28,11 @@ void on_frame(bool in_game);
 // Test helpers (dev commands), either side: take this much from the nearest carcass through TLD's harvest panel (as
 // if harvested by hand), or quarter it; describe the carcasses around.
 bool harvest(float meat_kg, int hide, int gut);
+// TLDCoop_DLC: a live (or just killed) animal's carcass isn't frozen (a stale record made fresh kills frozen)
+void unfreeze(Il2CppObject* ai);
+// TLDCoop_DLC: a friend's new carcass item lies where we've just made one of a dead small animal (they snapped its neck,
+// TLD gave them one): ours goes. True if one went.
+bool remote_carcass_near(const std::string& prefab, float x, float y, float z);
 bool quarter();
 void describe();
 

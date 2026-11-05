@@ -27,6 +27,7 @@
 #include "net_runtime.h"
 #include "paths.h"
 #include "seamless_interiors.h"
+#include "wildlife_carcass.h"
 #include "world_keep.h"
 
 namespace wildlife_sync {

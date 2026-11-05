@@ -232,6 +232,13 @@ struct Spot {
 // So both players see one rabbit, and either may pick it up. Its BodyHarvest goes with it (BaseAi.SpawnCarcassPickup).
 
 std::unordered_map<Il2CppObject*, Vector3> g_small_seen;  // dead ones at the last look, and where
+// TLDCoop_DLC: carcass items we made of dead small game, lately: a friend who snapped its neck has one already
+struct Made {
+    uintptr_t item = 0;
+    Vector3 pos{};
+    double at = 0;
+};
+std::vector<Made> g_made;
 double g_last_small = 0;
 
 Il2CppObject* wildlife_item_of(Il2CppObject* ai) {
@@ -253,6 +260,14 @@ bool runs_scene() {
     if (hosting()) return true;
     const auto host = netrt::remote_state();
     return joined() && !wildlife_sync::mirroring() && !(host && host->valid && host->scene == game::active_scene());
+}
+
+void unfreeze_body(Il2CppObject* bh) {
+    if (!bh || api.frozen_pct < 0) return;
+    if (get<float>(bh, api.frozen_pct) <= 0 && !(api.frozen >= 0 && get<bool>(bh, api.frozen))) return;
+    put<float>(bh, api.frozen_pct, 0.0f);
+    if (api.frozen >= 0) put<bool>(bh, api.frozen, false);
+    if (api.frozen_shader) il2::invoke(api.frozen_shader, bh);
 }
 
 void small_game_to_items(double now) {
@@ -292,8 +307,18 @@ void small_game_to_items(double now) {
             continue;
         }
         wildlife_sync::small_game_taken(ai);
+        // TLDCoop_DLC: a fresh kill isn't frozen (Shatsca 05.11 20:58: Szymon's rabbit, frozen the moment it was a carcass)
+        if (get<float>(ai, api.ai_dead_time) < 300.0f) unfreeze_body(bh);
         il2::invoke(api.despawn, ai);
         seen.erase(ai);
+        if (alive(gi)) {
+            g_made.erase(std::remove_if(g_made.begin(), g_made.end(), [&](const Made& m) {
+                              if (now - m.at < 30000) return false;
+                              il2::il2cpp_gchandle_free(m.item);
+                              return true;
+                          }), g_made.end());
+            g_made.push_back(Made{il2::il2cpp_gchandle_new(gi, false), pos, now});
+        }
         logx::info("wildlife: the dead %s at (%.1f, %.1f, %.1f) is a %s item now (as picking it up makes it), for every "
                    "player", animal.c_str(), pos.x, pos.y, pos.z, name_of(il2::invoke(api.component_go, gi)).c_str());
     }
@@ -972,6 +997,33 @@ void run_test(double now) {
 }
 
 }  // namespace
+
+void unfreeze(Il2CppObject* ai) {
+    if (!alive(ai) || api.ai_body < 0) return;
+    unfreeze_body(get<Il2CppObject*>(ai, api.ai_body));
+}
+
+bool remote_carcass_near(const std::string& prefab, float x, float y, float z) {
+    if (prefab.find("Carcass") == std::string::npos) return false;
+    const double now = now_ms();
+    const Vector3 at{x, y, z};
+    for (auto it = g_made.begin(); it != g_made.end(); ++it) {
+        if (now - it->at > 20000 || distance(it->pos, at) > 3.0f) continue;
+        Il2CppObject* gi = il2::il2cpp_gchandle_get_target(it->item);
+        il2::il2cpp_gchandle_free(it->item);
+        g_made.erase(it);
+        if (!alive(gi)) return false;
+        Il2CppObject* go = il2::invoke(api.component_go, gi);
+        static const MethodInfo* destroy =
+            il2::find_method_params(il2::find_class("UnityEngine.CoreModule.dll", "UnityEngine", "Object"), "Destroy", {"UnityEngine.Object"});
+        void* a[] = {go};
+        if (go && destroy) il2::invoke(destroy, nullptr, a);
+        logx::info("wildlife: a friend's %s came at (%.1f, %.1f, %.1f), where we'd just made one of the dead animal: ours "
+                   "goes (they picked it up: one carcass, not two)", prefab.c_str(), x, y, z);
+        return true;
+    }
+    return false;
+}
 
 bool harvest(float meat_kg, int hide, int gut) {
     uint32_t id = 0;

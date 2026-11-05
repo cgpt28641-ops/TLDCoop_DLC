@@ -26,6 +26,7 @@
 #include "net/uniques.h"
 #include "net_runtime.h"
 #include "seamless_interiors.h"
+#include "wildlife_carcass.h"
 
 namespace world_items {
 namespace {
@@ -477,6 +478,7 @@ struct Took {
     std::string ours;                // our id for it
     std::string prefab;
     int units = 0;                   // what it added to a stack in our pack
+    double at = 0;                   // TLDCoop_DLC: when
 };
 std::unordered_map<std::string, Took> g_took;   // wire pdid -> what we took (until the host refuses it, or someone's
                                                 // take at the same moment wins the toss)
@@ -851,10 +853,19 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
     if (!food_ours.empty()) {
         // (or that we just took: Shatsca 05.11 20:19, Szymon's tea, a pot record 50 ms after our take put it back in
         // the pot, whose removal then destroyed it: gone from the pack)
+        // (in a pot it isn't in the pack, whatever its flag says: Shatsca 05.11 21:05, Szymon's rabbit meat in a pot, both
+        // games "not put back" and the empty pot gone, again and again, twice a second)
         Il2CppObject* f = gear_on(object_by_pdid(food_ours));
-        const bool just_took = g_took.count(food_wire) ||
-                               std::any_of(g_took.begin(), g_took.end(), [&](const auto& t) { return t.second.ours == food_ours; });
-        if ((f && in_pack(f)) || just_took) {
+        const double t_now = now_ms();
+        const bool just_took = std::any_of(g_took.begin(), g_took.end(), [&](const auto& t) {
+            return (t.first == food_wire || t.second.ours == food_ours) && t_now - t.second.at < 3000;
+        });
+        bool in_a_pot = false;
+        if (f)
+            for (const auto& [id, known] : g_known)
+                if (Il2CppObject* other = gear_on(object_by_pdid(id)))
+                    if (Il2CppObject* p = pot_of(other); p && food_in(p) == f) in_a_pot = true;
+        if (f && !in_a_pot && (in_pack(f) || just_took)) {
             logx::info("items: the other player's %s (%s) still cooks %s, which is in our pack now; not put back",
                        name_of(gi).c_str(), short_id(wire).c_str(), f ? name_of(f).c_str() : short_id(food_ours).c_str());
             const std::string was = text;
@@ -1000,7 +1011,7 @@ void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) 
     net::Writer w(net::Msg::ItemGone);
     net::write_item_gone(w, m);
     netrt::send_packet(w, true);
-    if (taken) g_took[m.pdid] = Took{pdid, k.prefab, k.units};  // it may go to someone's take at the same moment
+    if (taken) g_took[m.pdid] = Took{pdid, k.prefab, k.units, now_ms()};  // it may go to someone's take at the same moment
     if (taken && hosting()) g_claims.taken_by_host(g_scene, m.pdid, now_ms());
     if (hosting())  // TLDCoop_DLC: (also when a door's scan doesn't keep the list)
         if (const auto kept = g_scene_items.find(g_scene); kept != g_scene_items.end()) kept->second.erase(net::pdid_hash(m.pdid));
@@ -1398,6 +1409,8 @@ void apply_put(const net::ItemPutMsg& m, double now) {
             gi = nullptr;
         }
     }
+    // TLDCoop_DLC: a friend's fresh carcass where our game just made one of the same dead animal: ours goes
+    wildlife_carcass::remote_carcass_near(m.prefab, pos.x, pos.y, pos.z);
     // Make it from TLD's save record, under the same id unless something here already goes by it.
     std::string id = m.pdid, gear = m.gear;
     forget_alias(ours);
