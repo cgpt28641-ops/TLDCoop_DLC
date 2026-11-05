@@ -45,6 +45,7 @@ add_library(tldcoop SHARED
   src/ambient_lights.cpp
   src/house_lights.cpp  # TLDCoop_DLC: House Lights (DemonBunnyBon / Xpazeman), with permission
   src/slot_machine.cpp  # TLDCoop_DLC: the automat (slot machine), test builds
+  src/automat_items.cpp  # TLDCoop_DLC: the automat's items (board, mechanism, automat)
   src/coop_features.cpp
   src/dynamic_trees.cpp
   src/seamless_interiors.cpp  # TLDCoop_DLC: Seamless Interiors (karsontr13), with permission

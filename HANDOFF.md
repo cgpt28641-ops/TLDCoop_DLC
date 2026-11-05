@@ -976,3 +976,21 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Bez kontenera (coś nie znalezione) → log „the stake (container) is unavailable”, klik kręci jak w buildzie 1.
 - Jeszcze nie: przedmioty płytka/mechanizm/automat, przepisy, stawianie/noszenie, naprawa płytką, ochrona przed
   wczytaniem (2 min), przełącznik MODS „AUTOMAT”.
+
+### 2026-11-05 ~20:30 UTC — AUTOMAT build 3a: przedmioty, naprawa płytką, płytki z elektroniki
+- Karol 19:37 (screen: „Automat — otwórz, stan 97%”, stawka działa): „bierz się za dalsze etapy”. Plan podany:
+  3a przedmioty + naprawa, 3b przepisy (frezarka, stół), 3c stawianie/podnoszenie.
+- src/automat_items.cpp/.h: GEAR_TLDCOOP_Plytka (0,2 kg), GEAR_TLDCOOP_Mechanizm (1,5 kg), GEAR_TLDCOOP_Automat
+  (15 kg, w opisie tabela wygranych). TLD nie ma dodawania przedmiotów → hook GearItem.InstantiateGearItem(string)
+  i obu InstantiateAndDeserializeGearItem(string, …): nasza nazwa → TLD robi bazowy GEAR_ScrapMetal, potem zmiana
+  nazwy GameObjectu, własna kopia GearItemData (Object.Instantiate; m_LocalizedName/Description = LocalizedString
+  „TLDCOOP_x_Name/_Desc”, m_BaseWeight), <WeightKG>k__BackingField, m_DisplayName/DescriptionOverrideLocID. Teksty z
+  hooka Localization.Get (klucze „TLDCOOP_”, sprawdzane na UTF-16 bez konwersji). Hooki ZAWSZE włączone (save z
+  naszymi przedmiotami musi się wczytać także przy test=0). Ikony na razie złomu.
+- Płytki: hook Panel_BreakDown.BreakDownFinished (tylko własne rozbieranie, nie synchronizowane od innych): nazwa
+  obiektu + LocalizationID z BreakDown.m_LocalizedDisplayName; słowa radio/tv/computer/monitor/register/microwave/…
+  → 1 na 3 płytka do plecaka („Znalazłeś płytkę elektroniczną”). Tylko przy [automat] test=1. Log „broke down X” przy
+  każdym rozbieraniu (do dostrojenia słów).
+- Naprawa: płytka włożona do automatu (jak stawka) = +25% każda, zużywane tyle ile trzeba (Container.DestroyGear),
+  stan przez OpCondition/decide_condition; nadmiar wraca do plecaka jako zakazany („części automatu”).
+- command.txt: „automat daj plytka|mechanizm|automat [N]” (do plecaka, przez nasz hook).

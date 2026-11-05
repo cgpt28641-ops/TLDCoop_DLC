@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "automat_items.h"
 #include "coop_notices.h"
 #include "game_state.h"
 #include "hooks.h"
@@ -392,7 +393,7 @@ struct BoxApi {
     Il2CppClass* lstring = nullptr;
     const MethodInfo *lstring_ctor = nullptr, *find_all = nullptr, *from_kg = nullptr;
     const MethodInfo *serialize = nullptr, *deserialize = nullptr, *deserialize_add = nullptr, *destroy_all = nullptr;
-    const MethodInfo *show = nullptr, *remove_gear = nullptr, *total_weight = nullptr;
+    const MethodInfo *show = nullptr, *remove_gear = nullptr, *total_weight = nullptr, *destroy_gear = nullptr;
     const MethodInfo *load_panel = nullptr, *panel_enable = nullptr, *player_manager = nullptr, *to_pack = nullptr;
     Il2CppObject* panel_type = nullptr;
     ptrdiff_t panel_container = -1, lstring_id = -1;
@@ -1069,6 +1070,33 @@ void on_closed(Machine& m) {
     Il2CppObject* c = target(m.box);
     if (!alive(c)) return;
     std::vector<Il2CppObject*> gear = gear_in(c);
+    // A circuit board put in repairs it (+25% each, as many as it needs; the rest stay in, then go back as forbidden)
+    if (m.condition < 1.0f) {
+        int used = 0;
+        for (Il2CppObject* gi : gear) {
+            if (base_name(gi) != automat_items::kBoard || m.condition + 0.25f * used >= 1.0f) continue;
+            void* da[] = {gi};
+            il2::invoke(box.destroy_gear, c, da);
+            ++used;
+        }
+        if (used) {
+            const float now_condition = std::min(1.0f, m.condition + 0.25f * used);
+            logx::info("automat: #%u repaired with %d board(s): %.0f%% -> %.0f%%", m.id, used, m.condition * 100, now_condition * 100);
+            m.condition = now_condition;
+            if (authority()) {
+                decide_condition(g_scene, m.id, now_condition);
+            } else {
+                net::Writer w = message(OpCondition, g_scene);
+                w.put<uint32_t>(m.id);
+                w.put<float>(now_condition);
+                netrt::send_packet(w, true);
+            }
+            char t[64];
+            snprintf(t, sizeof(t), "Automat naprawiony — stan %d%%", static_cast<int>(std::lround(now_condition * 100)));
+            coop_notices::tell(t);
+            gear = gear_in(c);
+        }
+    }
     if (m.locked) {  // the winnings: taken (all of them, or not yet)
         if (gear.empty()) m.locked = false;
         logx::info("automat: #%u closed; %s", m.id, gear.empty() ? "emptied, it can spin again" : "winnings still inside");
@@ -1262,6 +1290,7 @@ bool resolve_box() {
     box.show = il2::find_method(container, "ShowContainerContents", 1);
     box.remove_gear = il2::find_method_params(container, "RemoveGear", {"GearItem", "System.Boolean"});
     box.total_weight = il2::find_method(container, "GetTotalWeightKG", 0);
+    box.destroy_gear = il2::find_method(container, "DestroyGear", 1);
     box.load_panel = il2::find_method_params(il2::find_class(kGame, "", "InterfaceManager"), "LoadPanel", {"System.Type"});
     box.panel_type = il2::type_object(panel);
     box.panel_enable = il2::find_method(panel, "Enable", 3);
@@ -1302,7 +1331,7 @@ bool resolve_box() {
     const bool all = box.t_container && box.lstring_ctor && box.lstring_id >= 0 && box.find_all && box.serialize &&
                      box.deserialize && box.deserialize_add && box.destroy_all && box.show && box.remove_gear &&
                      box.total_weight && box.panel_type && box.panel_enable && box.panel_container >= 0 &&
-                     box.player_manager && box.to_pack && box.items >= 0 && box.name >= 0 && box.panel_ref >= 0 &&
+                     box.player_manager && box.to_pack && box.destroy_gear && box.items >= 0 && box.name >= 0 && box.panel_ref >= 0 &&
                      box.no_save >= 0;
     if (!all) return false;
     return hooks::install_method("Panel_Container.Enable (automat)", box.panel_enable,
@@ -1408,6 +1437,7 @@ void init() {
     std::string k;
     for (const wchar_t* c = key; *c; ++c) k += static_cast<char>(*c);
     g_key = net::virtual_key(k);
+    automat_items::init(g_test);  // (always: a save with our items must load; boards from electronics only in test)
     if (!g_test) {
         logx::info("automat: off (coop.ini [automat] test=0)");
         return;
@@ -1536,12 +1566,18 @@ void command(const std::string& args) {
     } else if (what == "wynik") {
         in >> g_forced;
         logx::info("dev: automat: the next spin: %s", g_forced.c_str());
+    } else if (what == "daj") {  // automat daj plytka|mechanizm|automat [N]
+        std::string which;
+        int n = 1;
+        in >> which >> n;
+        if (!automat_items::give(which, n))
+            logx::warn("dev: automat daj: plytka | mechanizm | automat [N] (%s)", automat_items::ready() ? "unknown name" : "items unavailable");
     } else if (what == "lista") {
         for (const Machine& m : g_machines)
             logx::info("dev: automat #%u at (%.2f, %.2f, %.2f), condition %.0f%%%s", m.id, m.pos.x, m.pos.y, m.pos.z,
                        m.condition * 100, m.spinning ? ", spinning" : "");
     } else {
-        logx::warn("dev: automat: postaw | usun | stan N | wynik jackpot|trojka|para|zwrot|czaszka|zaciecie | lista");
+        logx::warn("dev: automat: postaw | usun | stan N | wynik jackpot|trojka|para|zwrot|czaszka|zaciecie | daj plytka|mechanizm|automat [N] | lista");
     }
 }
 
