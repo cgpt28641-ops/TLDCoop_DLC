@@ -78,9 +78,13 @@ std::map<uint32_t, Owned> g_owned;
 struct Dying {
     uintptr_t ai = 0;
     double since_ms = 0;
+    bool small = false;  // TLDCoop_DLC: a rabbit or ptarmigan (the host makes it an item for everyone)
 };
 std::unordered_map<uint32_t, Dying> g_dying;
 constexpr double kDyingKeepMs = 20000;  // ...or this long at most (small game becomes an item on the host instead)
+// TLDCoop_DLC: a dead rabbit or ptarmigan of ours goes after its fall (Shatsca 04.11 22:53, "the rabbit doubles after the
+// kill": ours lay here 20 s beside the host's carcass item, and TLD lets anyone pick a dead rabbit up)
+constexpr double kDyingSmallMs = 1500;
 // This visit's animals that were already ours when we came (TLD's save, restored over the first seconds): where we
 // spawn but the registry already knows the scene, they're hidden like everyone else's, not shared twice.
 std::unordered_set<uintptr_t> g_initial;
@@ -1309,7 +1313,8 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                 t.text = body_text(ai);  // v45: as harvested here
                 if (!t.text.empty()) t.flags |= net::kTakeBody;
                 send_ctl(t);
-                g_dying[id] = Dying{hold(ai), now};
+                const char* kind = kind_name(t.state.kind);
+                g_dying[id] = Dying{hold(ai), now, !strcmp(kind, "rabbit") || !strcmp(kind, "ptarmigan")};
                 logx::info("wildlife: our #%u (%s) died: the host keeps its carcass", id, kind_name(t.state.kind));
             }
             g_ids.erase(key);
@@ -1347,7 +1352,7 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
     }
     // Ours that died, kept until the host's carcass (or item) takes their place.
     for (auto it = g_dying.begin(); it != g_dying.end();) {
-        if (now - it->second.since_ms < kDyingKeepMs) {
+        if (now - it->second.since_ms < (it->second.small ? kDyingSmallMs : kDyingKeepMs)) {
             ++it;
             continue;
         }

@@ -3,6 +3,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <initializer_list>
+#include <tuple>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -136,6 +138,8 @@ struct Api {
     ptrdiff_t pot_food = -1;                       // CookingPotItem.m_GearItemBeingCooked
     ptrdiff_t pot_hours = -1;                      // CookingPotItem.m_CookingElapsedHours
     ptrdiff_t evolve = -1;                         // TLDCoop_DLC: GearItem.m_EvolveItem (curing hides, guts...)
+    ptrdiff_t clothing = -1, wet = -1, frozen = -1;  // TLDCoop_DLC: GearItem.m_ClothingItem, its m_PercentWet/Frozen
+    ptrdiff_t hp = -1;                               // TLDCoop_DLC: GearItem.m_CurrentHP
     ptrdiff_t evolve_hours = -1;                   // EvolveItem.m_TimeSpentEvolvingGameHours
     const MethodInfo* evolve_can = nullptr;        // EvolveItem.CanEvolve()
     ptrdiff_t pot_state = -1;                      // CookingPotItem.m_CookingState (0 cooking, 1 ready, 2 ruined)
@@ -740,6 +744,45 @@ void load_evolve(Il2CppObject* gi, const std::string& gear) {
                    ours, can ? "" : "; it can't cure here (TLD's CanEvolve: no)");
 }
 
+// TLDCoop_DLC: how wet (frozen) a piece of clothing is and any item's condition, as the other player has it, on our
+// copy of it (Shatsca 04.11 23:25: a dry shirt he dropped was soaked for the one who picked it up: their game showed
+// its own copy from before, wet, where he'd put his).
+double json_first(const std::string& text, std::initializer_list<const char*> keys) {
+    for (const char* key : keys)
+        if (const double v = json_number(text, key, -1); v >= 0) return v;
+    return -1;
+}
+
+void load_wear(Il2CppObject* gi, const std::string& gear) {
+    if (!alive(gi)) return;
+    std::string changed;
+    if (api.hp >= 0) {
+        const double theirs = json_first(gear, {"m_CurrentHPProxy", "m_CurrentHP"});
+        if (theirs >= 0 && std::fabs(theirs - get<float>(gi, api.hp)) > 0.01) {
+            put<float>(gi, api.hp, static_cast<float>(theirs));
+            changed += " condition";
+        }
+    }
+    Il2CppObject* cl = api.clothing >= 0 ? get<Il2CppObject*>(gi, api.clothing) : nullptr;
+    if (alive(cl)) {
+        const std::string text = json_string(gear, "m_ClothingItemSerialized");
+        if (!text.empty()) {
+            for (auto [off, keys, what] : {std::tuple{api.wet, std::initializer_list<const char*>{"m_PercentWet"}, " wet"},
+                                           std::tuple{api.frozen, std::initializer_list<const char*>{"m_PercentFrozen"}, " frozen"}}) {
+                if (off < 0) continue;
+                const double theirs = json_first(text, keys);
+                if (theirs >= 0 && std::fabs(theirs - get<float>(cl, off)) > 0.5) {
+                    put<float>(cl, off, static_cast<float>(theirs));
+                    changed += what;
+                }
+            }
+        }
+    }
+    static int told = 0;
+    if (!changed.empty() && told++ < 30)
+        logx::info("items: the other player's %s:%s as theirs", name_of(gi).c_str(), changed.c_str());
+}
+
 void load_opened(Il2CppObject* gi, const std::string& gear, Known& k) {
     if (!alive(gi)) return;
     bool changed = false;
@@ -1251,6 +1294,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         load_burn(gi, m.gear, k);
         load_lamp(gi, m.gear);
         load_evolve(gi, m.gear);
+        load_wear(gi, m.gear);
         load_pot(gi, m.gear, m.pdid);
         return;
     }
@@ -1284,6 +1328,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                 load_burn(gi, m.gear, k);
                 load_lamp(gi, m.gear);
                 load_evolve(gi, m.gear);
+        load_wear(gi, m.gear);
                 load_pot(gi, m.gear, m.pdid);
                 logx::info("items: the other player's %s (%s) was switched off here (our game rolled it away); shown at "
                            "(%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(), pos.x,
@@ -1324,6 +1369,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                 load_burn(gi, m.gear, k);
                 load_lamp(gi, m.gear);
                 load_evolve(gi, m.gear);
+        load_wear(gi, m.gear);
                 load_pot(gi, m.gear, m.pdid);
                 logx::info("items: the other player's %s (%s) lay here too but not as a loose item (under %s%s); shown "
                            "at (%.1f, %.1f, %.1f) instead of a second copy", m.prefab.c_str(), short_id(m.pdid).c_str(),
@@ -1429,6 +1475,8 @@ bool take_held_at_same_moment(const std::string& ours, double now) {
     return report_our_take(ours, true);
 }
 
+constexpr double kOursWinsMs = 8000;  // TLDCoop_DLC (see apply_gone)
+
 void apply_gone(const net::ItemGoneMsg& m, double now, bool waited_room = false) {
     const std::string ours = our_id(m.pdid);
     if (const auto k = g_known.find(ours); k != g_known.end() && k->second.unique) {
@@ -1463,6 +1511,25 @@ void apply_gone(const net::ItemGoneMsg& m, double now, bool waited_room = false)
             logx::info("items: the other player's %s of %s waited for the Seamless Interiors rooms; they are all up here and "
                        "it isn't in any: nothing to remove (dropped)",
                        m.reason == net::ItemGoneReason::Taken ? "take" : "removal", short_id(m.pdid).c_str());
+            return;
+        }
+    }
+    // TLDCoop_DLC: removed in the other player's game a moment after we changed it ourselves (Shatsca 04.11 22:59: his
+    // wolf meat put on the fire, Szymon cooking at the same spot the same moment: Szymon's game dropped ours and said
+    // so, and the host's meat was gone): ours stays, and goes to everyone again (the food first: the pot finds it by id)
+    if (m.reason != net::ItemGoneReason::Taken) {
+        const auto k = g_known.find(ours);
+        Il2CppObject* gi = gear_on(object_by_pdid(ours));
+        if (k != g_known.end() && gi && !get<bool>(gi, api.in_inventory) && now - k->second.changed_ms < kOursWinsMs) {
+            if (Il2CppObject* pot = pot_of(gi)) {
+                if (Il2CppObject* food = food_in(pot)) {
+                    const std::string fid = pdid_of(food);
+                    if (auto fk = g_known.find(fid); fk != g_known.end()) send_put(food, fid, fk->second, now, 0, 0, "went into a pot");
+                }
+                send_put(gi, ours, k->second, now, 0, 0, describe_pot(pot).c_str());
+            }
+            logx::info("items: the other player's game removed our %s (%s) a moment after we changed it; ours stays%s",
+                       k->second.prefab.c_str(), short_id(ours).c_str(), pot_of(gi) ? ", told everyone again" : "");
             return;
         }
     }
@@ -2255,6 +2322,15 @@ bool init() {
     if (Il2CppClass* lamp = il2::find_class(kGame, "TLD.Gear", "KeroseneLampItem")) {
         api.lamp = il2::field_offset_quiet(gear, "m_KeroseneLampItem");
         api.evolve = il2::field_offset_quiet(gear, "m_EvolveItem");  // TLDCoop_DLC: curing
+        api.hp = il2::field_offset_quiet(gear, "m_CurrentHP");
+        api.clothing = il2::field_offset_quiet(gear, "m_ClothingItem");
+        Il2CppClass* cloth = il2::find_class(kGame, "", "ClothingItem");
+        if (!cloth) cloth = il2::find_class(kGame, "TLD.Gear", "ClothingItem");
+        if (cloth) {
+            api.wet = il2::field_offset_quiet(cloth, "m_PercentWet");
+            api.frozen = il2::field_offset_quiet(cloth, "m_PercentFrozen");
+        }
+        logx::info("items: wetness and condition %s", api.clothing >= 0 && api.wet >= 0 && api.hp >= 0 ? "shared" : "partly shared (fields missing)");
         if (Il2CppClass* evolve = il2::find_class(kGame, "", "EvolveItem")) {
             api.evolve_hours = il2::field_offset_quiet(evolve, "m_TimeSpentEvolvingGameHours");
             api.evolve_can = il2::find_method(evolve, "CanEvolve", 0);

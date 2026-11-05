@@ -864,3 +864,17 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   build.yml: coop.ini usuwany z zipa (mod sam pisze domyślny).
 - Naprawa szafki: „0 thing(s) to repair” w FarmHouseA → to nie RepairableInteractiveItem; mechanizm nadal nieznany.
 
+### 2026-11-05 ~07:30 UTC — logi Shatscy (22:14–23:26, 3 graczy): królik, mięso na ognisku, mokre ubranie, tusze bez id
+- Zgłoszone: (1) włącznik po wyjściu — na buildzie 22:08 już działa (FarmHouseA/Basement przy każdym wejściu);
+  (2) „dubluje się królik po zabiciu”: królik Kerela zabity kamieniem przez Szymona → host robi z niego przedmiot
+  GEAR_RabbitCarcass, a u Kerela jego martwy królik leżał jeszcze 20 s (g_dying) i dało się go podnieść → mały
+  zwierz (królik) teraz znika u właściciela po 1,5 s; (3) „Szymonowi nie widać mięsa wilka na ognisku”: gra Szymona
+  usunęła mięso+garnek hosta (prawdopodobnie gotował w tym samym miejscu) i host je skasował → usunięcie przez innego
+  gracza do 8 s po naszej zmianie jest ignorowane, nasz garnek i jedzenie wysłane wszystkim ponownie;
+  (4) „suche ubranie u drugiego całkiem przemoczone”: przy ponownym pokazaniu istniejącej kopii przedmiotu brano jej
+  stary stan → load_wear: mokrość/zamarznięcie ubrania i stan (HP) z zapisu drugiego gracza (log raz przy starcie
+  „wetness and condition shared”).
+- Niezgłoszone: host nie wysyłał tusz bez id zwierzęcia (z zapisu sprzed co-op; „not listed: 6 without our id”) →
+  stąd całe kopie u innych (tusza jelenia). Teraz dostają id kExtraIdBase|n i są dzielone (u klienta jego własna kopia
+  w tym miejscu znika). Szybkie przełączanie światła co 0,2 s w logu = ktoś klikał, nie pętla.
+

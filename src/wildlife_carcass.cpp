@@ -341,11 +341,33 @@ double g_last_skip_log = -1e18;
 int g_last_skipped = -1;
 constexpr double kSkipLogMs = 30000;
 std::unordered_map<uint32_t, double> g_dead_since;  // TLDCoop_DLC: when we first saw each of ours dead
+// TLDCoop_DLC: carcasses of ours with no animal id (from the save, before co-op shared it: Shatsca 04.11 22:26 "not
+// listed: 6 without our id"; the friends kept their own whole copies, harvested twice) get one of these, for sharing
+std::unordered_map<uintptr_t, uint32_t> g_extra_ids;
+std::unordered_map<uint32_t, uintptr_t> g_extra_ai;
+uint32_t g_extra_next = 0;
+constexpr uint32_t kExtraIdBase = 0xFE000000u;
+
+uint32_t carcass_id(Il2CppObject* ai) {
+    if (const uint32_t id = wildlife_sync::host_animal_id(ai)) return id;
+    const auto key = reinterpret_cast<uintptr_t>(ai);
+    if (const auto it = g_extra_ids.find(key); it != g_extra_ids.end()) return it->second;
+    const uint32_t id = kExtraIdBase | (++g_extra_next & 0xFFFFFF);
+    g_extra_ids[key] = id;
+    g_extra_ai[id] = key;
+    return id;
+}
 
 void send_carcasses(double now) {
     if (now - g_last_send < kSendMs) return;
     g_last_send = now;
     const std::string scene = game::active_scene();
+    static std::string extra_scene;
+    if (extra_scene != scene) {  // TLDCoop_DLC: (carcass_id: another scene's objects)
+        extra_scene = scene;
+        g_extra_ids.clear();
+        g_extra_ai.clear();
+    }
     for (auto it = g_owed.begin(); it != g_owed.end();)
         it = now - it->since_ms > kOwedMs ? g_owed.erase(it) : std::next(it);
     if (g_listed.size() > 512)
@@ -359,7 +381,7 @@ void send_carcasses(double now) {
     for (Il2CppObject* ai : all_animals()) {
         if (get<int32_t>(ai, api.ai_mode) != kAiModeDead) continue;
         Il2CppObject* bh = get<Il2CppObject*>(ai, api.ai_body);
-        const uint32_t id = wildlife_sync::host_animal_id(ai);
+        const uint32_t id = in_world(ai) ? carcass_id(ai) : wildlife_sync::host_animal_id(ai);
         if (!id || !bh || !behaviour_enabled(bh)) {
             if (!in_world(ai)) ++away;
             else if (!id) ++no_id;
@@ -424,6 +446,11 @@ void send_carcasses(double now) {
 
 Il2CppObject* host_carcass(uint32_t id) {
     Il2CppObject* ai = wildlife_sync::host_animal(id);
+    if (!ai)
+        if (const auto it = g_extra_ai.find(id); it != g_extra_ai.end()) {  // TLDCoop_DLC (carcass_id)
+            for (Il2CppObject* a : all_animals())
+                if (reinterpret_cast<uintptr_t>(a) == it->second) ai = a;
+        }
     if (!ai || get<int32_t>(ai, api.ai_mode) != kAiModeDead) return nullptr;
     return get<Il2CppObject*>(ai, api.ai_body);
 }
