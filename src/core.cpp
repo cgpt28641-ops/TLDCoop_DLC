@@ -13,6 +13,7 @@
 
 #include "ambient_lights.h"
 #include "house_lights.h"
+#include "slot_machine.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
@@ -603,6 +604,7 @@ void on_frame() {
     TIMED("coop_features::on_frame", coop_features::on_frame());
     TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
     TIMED("house_lights::on_frame", house_lights::on_frame(scene, in_game));  // TLDCoop_DLC
+    TIMED("slot_machine::on_frame", slot_machine::on_frame(scene, in_game));  // TLDCoop_DLC: the automat (test)
     TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
     TIMED("seamless_interiors::on_frame", seamless_interiors::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("custom_pictures::on_frame", custom_pictures::on_frame(scene, in_game));
@@ -821,6 +823,7 @@ void on_runtime_ready() {
     world_spray::init();
     ambient_lights::init();
     house_lights::init();  // TLDCoop_DLC
+    slot_machine::init();  // TLDCoop_DLC: the automat (coop.ini [automat] test=1)
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC
     custom_pictures::init();

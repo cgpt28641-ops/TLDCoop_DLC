@@ -76,7 +76,8 @@ struct Il2CppThread;
 #define TLDCOOP_IL2CPP_API_OPTIONAL(X)                                                                  \
     X(il2cpp_gc_wbarrier_set_field, void, (Il2CppObject*, void**, void*))                              \
     X(il2cpp_field_set_value, void, (Il2CppObject*, FieldInfo*, void*))                                \
-    X(il2cpp_class_from_type, Il2CppClass*, (const Il2CppType*))
+    X(il2cpp_class_from_type, Il2CppClass*, (const Il2CppType*))                                       \
+    X(il2cpp_array_new, Il2CppObject*, (Il2CppClass*, uintptr_t))
 
 namespace il2 {
 

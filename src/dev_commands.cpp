@@ -26,6 +26,7 @@
 #include "coop_lapse.h"
 #include "coop_sleep.h"
 #include "coop_menu.h"
+#include "slot_machine.h"
 #include "coop_notices.h"
 #include "paths.h"
 #include "test_harness.h"
@@ -701,6 +702,12 @@ void run(const std::string& line) {
     const game::PlayerState me = game::read_player();
     if (!me.valid) {
         logx::warn("dev: not in game; command ignored");
+        return;
+    }
+    if (cmd == "automat") {  // TLDCoop_DLC: the slot machine (test): postaw, usun, stan N, wynik X, lista
+        std::string rest;
+        std::getline(in >> std::ws, rest);
+        slot_machine::command(rest);
         return;
     }
     if (cmd == "doors") {
