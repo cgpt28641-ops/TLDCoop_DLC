@@ -415,6 +415,7 @@ void flush(double now) {
 
 void ask(Il2CppObject* c) {
     if (!tracking() || hosting() || !alive(c) || !netrt::status().connected) return;  // offline: ours stands
+    if (get<bool>(c, api.no_save)) return;  // TLDCoop_DLC: (the slot machine's: its own sync)
     const std::string id = id_of(c);
     const double now = now_ms();
     if (const auto it = g_asked.find(id); it != g_asked.end() && now - it->second < kAnswerMs) return;
@@ -781,6 +782,7 @@ void release_mine(const char* why);
 // told), or (client) while we wait for the host to say it's ours (the call is made then: g_lock_wait).
 bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
     if (!locking() || !alive(c)) return true;
+    if (get<bool>(c, api.no_save)) return true;  // TLDCoop_DLC: not one the game saves (the slot machine's: its own sync)
     const std::string id = id_of(c);
     const std::string key = net::lock_key(g_scene, id);
     const uint8_t me = self_player();

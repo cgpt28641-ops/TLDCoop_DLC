@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -21,6 +22,7 @@
 #include "log.h"
 #include "net/emotes.h"
 #include "net/protocol.h"
+#include "net/uniques.h"
 #include "net_runtime.h"
 #include "paths.h"
 
@@ -39,6 +41,7 @@ constexpr int kHoverCanInteract = 3;    // HoverTextState.CanInteract
 constexpr int kRGBA32 = 4;              // TextureFormat.RGBA32
 constexpr int kDontUnload = 32;         // HideFlags.DontUnloadUnusedAsset
 constexpr const char* kName = "MOD_TLDCoopAutomat";
+constexpr const char* kBoxName = "MOD_TLDCoopAutomatBox";  // the stake's container (a child, not interactive)
 constexpr float kReach = 2.5f;
 
 // The reels' symbols (kAutStrip's numbers)
@@ -54,7 +57,7 @@ struct Api {
     Il2CppClass *go_class = nullptr, *mesh_class = nullptr, *material_class = nullptr, *texture_class = nullptr;
     Il2CppClass *vec3_class = nullptr, *vec2_class = nullptr, *int_class = nullptr;
     Il2CppObject *t_mesh_filter = nullptr, *t_mesh_renderer = nullptr, *t_light = nullptr, *t_box = nullptr;
-    const MethodInfo *go_ctor = nullptr, *go_tf = nullptr, *go_add = nullptr, *go_set_layer = nullptr;
+    const MethodInfo *go_ctor = nullptr, *go_tf = nullptr, *go_add = nullptr, *go_set_layer = nullptr, *go_set_active = nullptr;
     const MethodInfo *set_name = nullptr, *object_name = nullptr, *destroy = nullptr, *hide_flags = nullptr;
     const MethodInfo *tf_set_parent = nullptr, *tf_set_local_pos = nullptr, *tf_set_local_euler = nullptr;
     const MethodInfo *tf_set_pos = nullptr, *tf_set_euler = nullptr, *tf_get_pos = nullptr;
@@ -215,7 +218,22 @@ bool build_shared() {
 // Co-op: the host's game keeps every machine of every scene (its file automat_test.txt) and decides each spin; the
 // others ask (Msg::Automat) and show what the host says. Alone, our game is its own host.
 
-enum Op : uint8_t { OpList = 1, OpWant = 2, OpPlace = 3, OpRemove = 4, OpSpinWant = 5, OpSpin = 6, OpCondition = 7, OpBusy = 8 };
+enum Op : uint8_t {
+    OpList = 1, OpWant = 2, OpPlace = 3, OpRemove = 4, OpSpinWant = 5, OpSpin = 6, OpCondition = 7, OpBusy = 8,
+    OpOpenWant = 9, OpOpenOk = 10, OpContents = 11  // build 2: the stake
+};
+// Why the host said no (OpBusy)
+enum Busy : uint8_t { BusySpinning = 0, BusyBroken = 1, BusyUsed = 2, BusyLocked = 3, BusyEmpty = 4 };
+const char* busy_text(uint8_t why) {
+    switch (why) {
+        case BusyBroken: return "Automat jest zepsuty — trzeba go naprawić płytką elektroniczną";
+        case BusyUsed: return "Ktoś inny używa tego automatu";
+        case BusyLocked: return "Najpierw odbierz wygraną z automatu";
+        case BusyEmpty: return "Włóż stawkę do automatu";
+        default: return "Automat jest zajęty";
+    }
+}
+constexpr uint8_t kNobody = 0xFF;
 constexpr size_t kSceneMax = 64;
 constexpr double kBusyMs = 3600;  // a spin, as the host counts it (the reels take 3.2 s)
 
@@ -224,6 +242,10 @@ struct Rec {  // the host's record of one machine
     Vector3 pos{};
     float yaw = 0, condition = 1.0f;
     double busy_until = 0;
+    bool locked = false;          // winnings inside: no spin until it's emptied
+    std::string text;             // what's inside (Container.Serialize)
+    uint8_t holder = kNobody;     // who has it open (or is spinning it)
+    double held_until = 0;
 };
 std::map<std::string, std::vector<Rec>> g_store;  // scene -> machines (host / alone)
 uint32_t g_next_id = 1;
@@ -243,6 +265,11 @@ struct Machine {  // one shown in our scene
     std::string outcome;
     int light_mode = 0;       // 0 off, 1 spinning (blinks), 2 win (on), 3 jackpot (fast blinks)
     double light_until = 0;
+    uintptr_t box = 0;        // its Container (the stake)
+    bool locked = false;      // winnings inside
+    bool open = false;        // its panel is open here
+    double hold_at = 0;       // when we last told the host we still have it open
+    int mult = 1;             // the spin's outcome: 0 lost, 1 back, 2, 3, 5
 };
 std::vector<Machine> g_machines;
 std::string g_scene;
@@ -260,6 +287,28 @@ bool authority() { return !connected() || hosting(); }  // decides (host, or alo
 uint8_t self_id() { return netrt::status().self_id; }
 
 std::filesystem::path save_file() { return paths::instance_dir() / L"automat_test.txt"; }
+// One machine's contents: "0" or "1" (locked), then Container.Serialize's text
+std::filesystem::path contents_file(uint32_t id) {
+    return paths::instance_dir() / (L"automat_items_" + std::to_wstring(id) + L".txt");
+}
+
+void load_contents(Rec& r) {
+    std::ifstream in(contents_file(r.id), std::ios::binary);
+    std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (all.empty()) return;
+    r.locked = all[0] == '1';
+    r.text = all.substr(1);
+}
+
+void save_contents(const Rec& r) {
+    std::error_code ec;
+    if (r.text.empty() && !r.locked) {
+        std::filesystem::remove(contents_file(r.id), ec);
+        return;
+    }
+    std::ofstream out(contents_file(r.id), std::ios::binary | std::ios::trunc);
+    out << (r.locked ? '1' : '0') << r.text;
+}
 
 void load_store() {
     g_store.clear();
@@ -272,6 +321,7 @@ void load_store() {
         if (std::getline(s, scene, '|') && (s >> r.pos.x >> r.pos.y >> r.pos.z >> r.yaw >> r.condition)) {
             if (!(s >> r.id) || !r.id) r.id = g_next_id;
             g_next_id = std::max(g_next_id, r.id + 1);
+            load_contents(r);
             g_store[scene].push_back(r);
         }
     }
@@ -324,6 +374,182 @@ void parent(Il2CppObject* child, Il2CppObject* to) {
     il2::invoke(api.tf_set_parent, tf_of(child), a);
 }
 
+// --- the stake: a container inside the machine (build 2, Karol: "jak do skrzynki") -----------------------------------
+// A Container on a child object (not on the interactive layer, so TLD never opens it by itself): our click opens TLD's
+// own container panel on it; when the panel closes, what's inside is the stake (one kind, at most 10 units or 3 kg,
+// nothing forbidden) and the crank is pulled. The winnings stay inside; no spin until it has been emptied. The host
+// keeps every machine's contents (Container.Serialize's text) and who has it open.
+
+constexpr ptrdiff_t kListItems = 0x10, kListSize = 0x18;
+constexpr size_t kItemEntry = 16;  // TLD.Gear.GearItemObject: GearItem, then its name
+constexpr int kMaxUnits = 10;
+constexpr float kMaxKg = 3.0f;
+constexpr double kHoldMs = 60000, kHoldRefreshMs = 20000, kSpinHoldMs = 20000;
+
+struct BoxApi {
+    bool ok = false;
+    Il2CppObject* t_container = nullptr;
+    Il2CppClass* lstring = nullptr;
+    const MethodInfo *lstring_ctor = nullptr, *find_all = nullptr, *from_kg = nullptr;
+    const MethodInfo *serialize = nullptr, *deserialize = nullptr, *deserialize_add = nullptr, *destroy_all = nullptr;
+    const MethodInfo *show = nullptr, *remove_gear = nullptr, *total_weight = nullptr;
+    const MethodInfo *load_panel = nullptr, *panel_enable = nullptr, *player_manager = nullptr, *to_pack = nullptr;
+    Il2CppObject* panel_type = nullptr;
+    ptrdiff_t panel_container = -1, lstring_id = -1;
+    // Container
+    ptrdiff_t items = -1, name = -1, empty_pf = -1, searched_pf = -1, capacity = -1, spawn_chance = -1, no_save = -1;
+    ptrdiff_t start_inspected = -1, inspected = -1, rolled = -1, not_populated = -1, chance_empty = -1;
+    ptrdiff_t min_items = -1, max_items = -1, panel_ref = -1, open_audio = -1, close_audio = -1, search_audio = -1;
+    ptrdiff_t filter_name = -1, sort_name = -1, default_filter = -1, selection_mode = -1, is_corpse = -1;
+    // GearItem
+    ptrdiff_t stack = -1, stack_units = -1, food = -1, food_meat = -1, food_fish = -1;
+    std::vector<std::pair<ptrdiff_t, const char*>> deny;  // GearItem components that make it forbidden
+} box;
+uintptr_t g_template = 0;  // a game container whose panel and sounds ours copies
+std::vector<uint32_t> g_closed;  // machines whose panel closed (seen in Panel_Container.Enable, handled next frame)
+std::map<uint32_t, std::pair<bool, std::string>> g_contents;  // this scene's machines: locked, contents (as last heard)
+
+template <typename T>
+void put(Il2CppObject* o, ptrdiff_t off, T v) {
+    if (o && off >= 0) memcpy(reinterpret_cast<char*>(o) + off, &v, sizeof(T));
+}
+
+void set_active(Il2CppObject* go, bool on) {
+    void* a[] = {&on};
+    il2::invoke(api.go_set_active, go, a);
+}
+
+Il2CppObject* box_template() {
+    Il2CppObject* t = target(g_template);
+    if (alive(t)) return t;
+    drop(g_template);
+    void* a[] = {box.t_container};
+    Il2CppObject* all = il2::invoke(box.find_all, nullptr, a);
+    for (size_t i = 0; i < il2::array_length(all); ++i) {
+        Il2CppObject* c = il2::array_object_at(all, i);
+        if (!alive(c) || !il2::read_field<Il2CppObject*>(c, box.panel_ref) || il2::read_field<bool>(c, box.is_corpse) ||
+            name_of(c) == kBoxName)
+            continue;
+        g_template = hold(c);
+        logx::info("automat: the stake's container is set up like %s", name_of(c).c_str());
+        return c;
+    }
+    return nullptr;
+}
+
+Il2CppObject* new_lstring(const char* id) {
+    Il2CppObject* s = il2::il2cpp_object_new(box.lstring);
+    if (!s) return nullptr;
+    il2::invoke(box.lstring_ctor, s);
+    il2::store_ref(s, box.lstring_id, il2::il2cpp_string_new(id));
+    return s;
+}
+
+// The machine's Container, made inactive, set up, then switched on (its Awake and Start see our settings).
+Il2CppObject* make_box(Il2CppObject* root) {
+    if (!box.ok) return nullptr;
+    Il2CppObject* tmpl = box_template();
+    if (!tmpl) {
+        logx::warn("automat: no game container to copy the panel from; the stake can't go in");
+        return nullptr;
+    }
+    Il2CppObject* go = new_go(kBoxName);
+    if (!go) return nullptr;
+    set_active(go, false);
+    parent(go, root);
+    Il2CppObject* c = add(go, box.t_container);
+    if (!c) {
+        logx::warn("automat: the stake's container couldn't be added");
+        return nullptr;
+    }
+    for (ptrdiff_t off : {box.panel_ref, box.open_audio, box.close_audio, box.search_audio, box.filter_name, box.sort_name,
+                          box.empty_pf, box.searched_pf})
+        if (off >= 0) il2::store_ref(c, off, il2::read_field<Il2CppObject*>(tmpl, off));
+    put<int32_t>(c, box.default_filter, il2::read_field<int32_t>(tmpl, box.default_filter));
+    put<int32_t>(c, box.selection_mode, il2::read_field<int32_t>(tmpl, box.selection_mode));
+    if (Il2CppObject* n = new_lstring("Automat")) il2::store_ref(c, box.name, n);
+    int64_t cap = 0;
+    float kg = kMaxKg;
+    void* ka[] = {&kg};
+    if (box.from_kg && il2::invoke_value(box.from_kg, nullptr, cap, ka) && cap > 0) put<int64_t>(c, box.capacity, cap);
+    put<float>(c, box.spawn_chance, 100.0f);
+    put<float>(c, box.chance_empty, 100.0f);
+    put<int32_t>(c, box.min_items, 0);
+    put<int32_t>(c, box.max_items, 0);
+    put<bool>(c, box.no_save, true);  // (not in TLD's save, nor in the co-op's container sync: ours)
+    put<bool>(c, box.start_inspected, true);
+    put<bool>(c, box.inspected, true);
+    put<bool>(c, box.rolled, true);
+    put<bool>(c, box.not_populated, false);
+    set_active(go, true);
+    return c;
+}
+
+std::vector<Il2CppObject*> gear_in(Il2CppObject* c) {
+    std::vector<Il2CppObject*> out;
+    Il2CppObject* list = alive(c) ? il2::read_field<Il2CppObject*>(c, box.items) : nullptr;
+    if (!list) return out;
+    Il2CppObject* items = il2::read_field<Il2CppObject*>(list, kListItems);
+    const int32_t count = il2::read_field<int32_t>(list, kListSize);
+    for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i) {
+        Il2CppObject* gi = *reinterpret_cast<Il2CppObject* const*>(reinterpret_cast<const char*>(items) + kArrayData +
+                                                                   static_cast<size_t>(i) * kItemEntry);
+        if (alive(gi)) out.push_back(gi);
+    }
+    return out;
+}
+
+std::string serialize(Il2CppObject* c) {
+    auto* s = alive(c) ? reinterpret_cast<Il2CppString*>(il2::invoke(box.serialize, c)) : nullptr;
+    return s ? il2::to_utf8(s) : std::string();
+}
+
+std::string base_name(Il2CppObject* gi) { return std::string(net::gear_base_name(name_of(gi))); }
+
+int units_of(Il2CppObject* gi) {
+    Il2CppObject* st = il2::read_field<Il2CppObject*>(gi, box.stack);
+    return alive(st) ? std::max(1, il2::read_field<int32_t>(st, box.stack_units)) : 1;
+}
+
+// Why it can't be a stake ("" = it can): the spec's forbidden list (HANDOFF 05.11.2026)
+std::string why_not(Il2CppObject* gi) {
+    const std::string name = base_name(gi);
+    if (net::is_unique_gear(name)) return "przedmiot fabularny";
+    for (const auto& [off, what] : box.deny)
+        if (alive(il2::read_field<Il2CppObject*>(gi, off))) return what;
+    if (Il2CppObject* food = il2::read_field<Il2CppObject*>(gi, box.food);
+        alive(food) && (il2::read_field<bool>(food, box.food_meat) || il2::read_field<bool>(food, box.food_fish)))
+        return "mięso i ryby";
+    std::string low = name;
+    for (char& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (low == "gear_leather" || low == "gear_leatherdried") return "skóry";
+    static const std::pair<const char*, const char*> kWords[] = {
+        {"hide", "skóry"}, {"pelt", "skóry"}, {"gut", "jelita"}, {"skin", "ubrania ze skór"}, {"bedroll", "śpiwór"},
+        {"medkit", "apteczka"}, {"firstaidkit", "apteczka"}, {"hatchet", "narzędzia"}, {"knife", "narzędzia"},
+        {"prybar", "narzędzia"}, {"hacksaw", "narzędzia"}, {"hammer", "narzędzia"}, {"whetstone", "narzędzia"},
+        {"sewingkit", "narzędzia"}, {"cleaningkit", "narzędzia"}, {"firestriker", "narzędzia"},
+        {"magnifyinglens", "narzędzia"}, {"binoculars", "narzędzia"}, {"tldcoop_", "części automatu"}};
+    for (const auto& [word, what] : kWords)
+        if (low.find(word) != std::string::npos) return what;
+    if (name.size() > 3 && name.compare(name.size() - 3, 3, "Key") == 0) return "klucze";
+    return {};
+}
+
+void apply_contents(Machine& m, bool locked, const std::string& text) {
+    m.locked = locked;
+    g_contents[m.id] = {locked, text};
+    if (m.open) return;  // (ours, open here: what we have is newer)
+    Il2CppObject* c = target(m.box);
+    if (!alive(c)) return;
+    il2::invoke(box.destroy_all, c);
+    if (!text.empty()) {
+        void* a[] = {il2::il2cpp_string_new(text.c_str()), nullptr};
+        il2::invoke(box.deserialize, c, a);
+    }
+}
+
+void open_panel(uint32_t id);  // below
+
 float strip_angle(int cell) {  // the reel's X rotation that puts that cell in the window's middle
     return (0.5f - (static_cast<float>(cell) + 0.5f) / kAutReelCells) * 360.0f;
 }
@@ -335,12 +561,12 @@ bool spawn(Machine& m) {
     int32_t layer = kLayerInteractive;
     void* la[] = {&layer};
     il2::invoke(api.go_set_layer, root, la);
-    if (Il2CppObject* box = add(root, api.t_box)) {
+    if (Il2CppObject* collider = add(root, api.t_box)) {
         Vector3 size{0.42f, 0.66f, 0.38f}, center{0, 0.33f, 0};
         void* sa[] = {&size};
-        il2::invoke(api.box_size, box, sa);
+        il2::invoke(api.box_size, collider, sa);
         void* ca[] = {&center};
-        il2::invoke(api.box_center, box, ca);
+        il2::invoke(api.box_center, collider, ca);
     }
     for (size_t i = 0; i < std::size(kAutParts); ++i) {
         const AutPart& p = kAutParts[i];
@@ -388,6 +614,7 @@ bool spawn(Machine& m) {
             }
         }
     }
+    m.box = hold(make_box(root));
     void* pa[] = {&m.pos};
     il2::invoke(api.tf_set_pos, tf_of(root), pa);
     Vector3 e{0, m.yaw, 0};
@@ -398,7 +625,7 @@ bool spawn(Machine& m) {
 }
 
 void forget(Machine& m) {
-    for (uintptr_t* h : {&m.root, &m.reel[0], &m.reel[1], &m.reel[2], &m.crank, &m.light}) drop(*h);
+    for (uintptr_t* h : {&m.root, &m.reel[0], &m.reel[1], &m.reel[2], &m.crank, &m.light, &m.box}) drop(*h);
 }
 
 void despawn(Machine& m) {
@@ -441,7 +668,14 @@ void show_list(const std::vector<Rec>& recs) {
         if (shown(r.id)) continue;
         Machine m;
         m.id = r.id, m.pos = r.pos, m.yaw = r.yaw, m.condition = r.condition;
-        if (spawn(m)) g_machines.push_back(m), ++made;
+        if (!spawn(m)) continue;
+        g_machines.push_back(m), ++made;
+        if (!r.text.empty() || r.locked) {
+            apply_contents(g_machines.back(), r.locked, r.text);  // (the host's own)
+        } else if (const auto c = g_contents.find(r.id); c != g_contents.end()) {
+            const auto kept = c->second;
+            apply_contents(g_machines.back(), kept.first, kept.second);  // (as the host last told us)
+        }
     }
     if (made) logx::info("automat: %d machine(s) shown in %s (%zu here)", made, g_scene.c_str(), g_machines.size());
 }
@@ -460,8 +694,8 @@ Machine* nearest(float max_m) {
 
 // --- the network ----------------------------------------------------------------------------------------------------
 
-net::Writer message(Op op, const std::string& scene) {
-    net::Writer w(net::Msg::Automat, 512);
+net::Writer message(Op op, const std::string& scene, size_t max = 512) {
+    net::Writer w(net::Msg::Automat, max);
     w.put<uint8_t>(op);
     w.put_blob(scene, kSceneMax);
     return w;
@@ -533,7 +767,77 @@ void show_spin(uint32_t id, const int stop[3], bool jam, float condition, uint8_
     m->result_at = now + (jam ? 1800 : 3200);
     m->ours = spinner == self_id();
     m->outcome = outcome_text(m->stop, jam);
+    m->mult = jam ? 0 : multiplier(symbol_at(m->stop[0]), symbol_at(m->stop[1]), symbol_at(m->stop[2]));
     m->light_mode = 1;
+}
+
+// Host / alone: a "no" for player `who` (told here, or sent)
+void refuse(const std::string& scene, uint32_t id, uint8_t who, uint8_t why, const char* what) {
+    logx::info("automat: #%u: player %u's %s refused (%s)", id, who, what, busy_text(why));
+    if (who == self_id()) {
+        coop_notices::tell(busy_text(why));
+    } else if (connected()) {
+        net::Writer w = message(OpBusy, scene);
+        w.put<uint32_t>(id);
+        w.put<uint8_t>(why);
+        netrt::send_packet_to(who, w, true);
+    }
+}
+
+// Host / alone: player `who` wants to open machine `id` (refresh: it's still open there)
+void decide_open(const std::string& scene, uint32_t id, uint8_t who, bool refresh) {
+    Rec* r = find_rec(scene, id);
+    if (!r) return;
+    const double now = now_ms();
+    if (refresh) {
+        if (r->holder == who) r->held_until = now + kHoldMs;
+        return;
+    }
+    if (now < r->busy_until) return refuse(scene, id, who, BusySpinning, "opening");
+    if (r->holder != kNobody && r->holder != who && now < r->held_until) return refuse(scene, id, who, BusyUsed, "opening");
+    r->holder = who;
+    r->held_until = now + kHoldMs;
+    if (who == self_id()) {
+        if (scene == g_scene) open_panel(id);
+    } else if (connected()) {
+        net::Writer w = message(OpOpenOk, scene);
+        w.put<uint32_t>(id);
+        netrt::send_packet_to(who, w, true);
+    }
+}
+
+// Host / alone: machine `id`'s new contents from player `from` (who let go of it)
+void decide_contents(const std::string& scene, uint32_t id, bool locked, const std::string& text, uint8_t from) {
+    Rec* r = find_rec(scene, id);
+    if (!r) return;
+    r->locked = locked;
+    r->text = text;
+    if (r->holder == from) r->holder = kNobody, r->held_until = 0;
+    save_contents(*r);
+    logx::info("automat: #%u contents from player %u: %zu characters%s", id, from, text.size(), locked ? ", winnings (locked)" : "");
+    if (from != self_id() && scene == g_scene)
+        if (Machine* m = shown(id)) apply_contents(*m, locked, text);
+    if (!connected() || !hosting()) return;
+    net::Writer w = message(OpContents, scene, net::kMaxMessage);
+    w.put<uint32_t>(id);
+    w.put<uint8_t>(locked ? 1 : 0);
+    w.put_long_blob(text);
+    if (from == self_id()) netrt::send_packet(w, true);
+    else netrt::send_packet_except(from, w, true);
+}
+
+// Host: a friend's copy of every machine's contents in a scene (after its list)
+void send_contents_to(const std::string& scene, uint8_t to) {
+    const auto it = g_store.find(scene);
+    if (it == g_store.end()) return;
+    for (const Rec& r : it->second) {
+        if (r.text.empty() && !r.locked) continue;
+        net::Writer w = message(OpContents, scene, net::kMaxMessage);
+        w.put<uint32_t>(r.id);
+        w.put<uint8_t>(r.locked ? 1 : 0);
+        w.put_long_blob(r.text);
+        netrt::send_packet_to(to, w, true);
+    }
 }
 
 // Host / alone: a spin of machine `id` in `scene`, asked by player `spinner`
@@ -541,20 +845,12 @@ void decide_spin(const std::string& scene, uint32_t id, const std::string& force
     Rec* r = find_rec(scene, id);
     if (!r) return;
     const double now = now_ms();
-    auto busy = [&](const char* why) {
-        logx::info("automat: #%u: player %u's spin refused (%s)", id, spinner, why);
-        if (spinner == self_id()) {
-            coop_notices::tell(r->condition <= 0 ? "Automat jest zepsuty — trzeba go naprawić płytką elektroniczną"
-                                                 : "Automat jest zajęty");
-        } else if (connected()) {
-            net::Writer w = message(OpBusy, scene);
-            w.put<uint32_t>(id);
-            w.put<uint8_t>(r->condition <= 0 ? 1 : 0);
-            netrt::send_packet_to(spinner, w, true);
-        }
-    };
-    if (now < r->busy_until) return busy("busy");
-    if (r->condition <= 0) return busy("broken");
+    auto busy = [&](uint8_t why) { refuse(scene, id, spinner, why, "spin"); };
+    if (now < r->busy_until) return busy(BusySpinning);
+    if (r->holder != kNobody && r->holder != spinner && now < r->held_until) return busy(BusyUsed);
+    if (r->condition <= 0) return busy(BusyBroken);
+    if (box.ok && r->locked) return busy(BusyLocked);
+    if (box.ok && r->text.empty()) return busy(BusyEmpty);
     const bool jam = forced == "zaciecie" || (forced.empty() && std::uniform_real_distribution<float>(0, 1)(g_rng) < jam_chance(r->condition));
     int stop[3];
     for (int& s : stop) s = static_cast<int>(g_rng() % kAutReelCells);
@@ -566,6 +862,8 @@ void decide_spin(const std::string& scene, uint32_t id, const std::string& force
     else if (forced == "czaszka") set(Wolf, Skull, Fire);
     r->condition = std::max(0.0f, r->condition - kWearPerSpin);
     r->busy_until = now + kBusyMs;
+    r->holder = spinner;  // the one who spins has it until the winnings are in (OpContents)
+    r->held_until = now + kSpinHoldMs;
     save_store();
     logx::info("automat: #%u spin for player %u: %s | %s | %s%s -> %s; condition %.0f%%", id, spinner,
                kSymbolName[symbol_at(stop[0])], kSymbolName[symbol_at(stop[1])], kSymbolName[symbol_at(stop[2])],
@@ -597,6 +895,8 @@ void decide_remove(const std::string& scene, uint32_t id) {
     if (it == g_store.end()) return;
     auto& v = it->second;
     v.erase(std::remove_if(v.begin(), v.end(), [&](const Rec& r) { return r.id == id; }), v.end());
+    std::error_code ec;
+    std::filesystem::remove(contents_file(id), ec);
     save_store();
     logx::info("automat: #%u removed from %s", id, scene.c_str());
     send_list(scene);
@@ -622,8 +922,32 @@ void receive() {
         if (!r.ok()) continue;
         switch (op) {
             case OpWant:
-                if (host) send_list(scene, p.from);
+                if (host) send_list(scene, p.from), send_contents_to(scene, p.from);
                 break;
+            case OpOpenWant: {
+                const uint32_t id = r.get<uint32_t>();
+                const bool refresh = r.get<uint8_t>() != 0;
+                if (host && r.ok()) decide_open(scene, id, p.from, refresh);
+                break;
+            }
+            case OpOpenOk: {
+                const uint32_t id = r.get<uint32_t>();
+                if (!host && r.ok() && scene == g_scene) open_panel(id);
+                break;
+            }
+            case OpContents: {
+                const uint32_t id = r.get<uint32_t>();
+                const bool locked = r.get<uint8_t>() != 0;
+                const std::string text = r.get_long_blob(net::kMaxMessage);
+                if (!r.ok()) break;
+                if (host) {
+                    decide_contents(scene, id, locked, text, p.from);
+                } else if (scene == g_scene) {
+                    if (Machine* m = shown(id)) apply_contents(*m, locked, text);
+                    else g_contents[id] = {locked, text};
+                }
+                break;
+            }
             case OpPlace: {
                 Vector3 pos{r.get<float>(), r.get<float>(), r.get<float>()};
                 const float yaw = r.get<float>();
@@ -677,8 +1001,8 @@ void receive() {
             }
             case OpBusy: {
                 r.get<uint32_t>();
-                const bool broken = r.get<uint8_t>() != 0;
-                if (r.ok()) coop_notices::tell(broken ? "Automat jest zepsuty — trzeba go naprawić płytką elektroniczną" : "Automat jest zajęty");
+                const uint8_t why = r.get<uint8_t>();
+                if (r.ok()) coop_notices::tell(busy_text(why));
                 break;
             }
             default:
@@ -689,8 +1013,8 @@ void receive() {
 
 // Asks for, or does, a change: alone or as the host it's done here; a friend asks the host.
 void ask_spin(Machine& m) {
-    if (m.spinning) return coop_notices::tell("Automat jest zajęty");
-    if (m.condition <= 0) return coop_notices::tell("Automat jest zepsuty — trzeba go naprawić płytką elektroniczną");
+    if (m.spinning) return coop_notices::tell(busy_text(BusySpinning));
+    if (m.condition <= 0) return coop_notices::tell(busy_text(BusyBroken));
     const std::string forced = g_forced;
     g_forced.clear();
     if (authority()) return decide_spin(g_scene, m.id, forced, self_id());
@@ -698,6 +1022,112 @@ void ask_spin(Machine& m) {
     w.put<uint32_t>(m.id);
     w.put_blob(forced, 16);
     netrt::send_packet(w, true);
+}
+
+void ask_open(Machine& m, bool refresh) {
+    if (!refresh && m.spinning) return coop_notices::tell(busy_text(BusySpinning));
+    m.hold_at = now_ms();
+    if (authority()) return decide_open(g_scene, m.id, self_id(), refresh);
+    net::Writer w = message(OpOpenWant, g_scene);
+    w.put<uint32_t>(m.id);
+    w.put<uint8_t>(refresh ? 1 : 0);
+    netrt::send_packet(w, true);
+}
+
+// Ours, now: the contents to the host (and so to everyone), letting go of the machine
+void send_contents(Machine& m) {
+    const std::string text = serialize(target(m.box));
+    g_contents[m.id] = {m.locked, text};
+    if (authority()) return decide_contents(g_scene, m.id, m.locked, text, self_id());
+    net::Writer w = message(OpContents, g_scene, net::kMaxMessage);
+    w.put<uint32_t>(m.id);
+    w.put<uint8_t>(m.locked ? 1 : 0);
+    w.put_long_blob(text);
+    netrt::send_packet(w, true);
+}
+
+// The host said yes: TLD's container panel on the machine's stake (as TLD does: the panel loaded, then shown)
+void open_panel(uint32_t id) {
+    Machine* m = shown(id);
+    if (!m) return;
+    Il2CppObject* c = target(m->box);
+    if (!alive(c)) return coop_notices::tell("Automat: nie da się go otworzyć (zobacz log)");
+    if (box.load_panel && box.panel_type) {
+        void* la[] = {box.panel_type};
+        il2::invoke(box.load_panel, nullptr, la);
+    }
+    m->open = true;
+    m->hold_at = now_ms();
+    void* a[] = {nullptr};
+    il2::invoke(box.show, c, a);
+    logx::info("automat: #%u opened (%s)", id, m->locked ? "winnings inside" : "the stake goes in");
+}
+
+// Its panel closed here: forbidden items back to the pack, then the stake checked and the crank pulled.
+void on_closed(Machine& m) {
+    m.open = false;
+    Il2CppObject* c = target(m.box);
+    if (!alive(c)) return;
+    std::vector<Il2CppObject*> gear = gear_in(c);
+    if (m.locked) {  // the winnings: taken (all of them, or not yet)
+        if (gear.empty()) m.locked = false;
+        logx::info("automat: #%u closed; %s", m.id, gear.empty() ? "emptied, it can spin again" : "winnings still inside");
+        return send_contents(m);
+    }
+    std::string back;  // forbidden: back to the pack
+    Il2CppObject* pm = il2::invoke(box.player_manager, nullptr);
+    for (Il2CppObject* gi : gear) {
+        const std::string why = why_not(gi);
+        if (why.empty() || !pm) continue;
+        logx::info("automat: #%u: %s can't be a stake (%s); back to the pack", m.id, name_of(gi).c_str(), why.c_str());
+        bool track = false, notify = true, to_inventory = true;
+        void* pa[] = {gi, &track, &notify};
+        il2::invoke(box.to_pack, pm, pa);
+        void* ra[] = {gi, &to_inventory};
+        il2::invoke(box.remove_gear, c, ra);
+        if (back.find(why) == std::string::npos) back += (back.empty() ? "" : ", ") + why;
+    }
+    if (!back.empty()) coop_notices::tell("Automat tego nie przyjmuje (" + back + ") — oddane do plecaka");
+    gear = gear_in(c);
+    if (gear.empty()) return send_contents(m);
+    std::string kind;
+    int units = 0;
+    bool mixed = false;
+    for (Il2CppObject* gi : gear) {
+        const std::string n = base_name(gi);
+        if (kind.empty()) kind = n;
+        else if (n != kind) mixed = true;
+        units += units_of(gi);
+    }
+    int64_t weight = 0, limit = 0;
+    float kg = kMaxKg;
+    void* ka[] = {&kg};
+    const bool weighed = il2::invoke_value(box.total_weight, c, weight) && box.from_kg &&
+                         il2::invoke_value(box.from_kg, nullptr, limit, ka) && limit > 0;
+    send_contents(m);  // (what's inside now: the stake, or what stays there)
+    if (mixed) return coop_notices::tell("Automat: tylko jeden rodzaj przedmiotu naraz");
+    if (units > kMaxUnits || (weighed && weight > limit))
+        return coop_notices::tell("Automat: za duża stawka — najwyżej 10 sztuk albo 3 kg");
+    logx::info("automat: #%u stake: %d x %s; the crank pulled", m.id, units, kind.c_str());
+    ask_spin(m);
+}
+
+// We pulled the crank: the result is put in the machine here (the host decided it), then sent.
+void apply_result(Machine& m) {
+    Il2CppObject* c = target(m.box);
+    if (!alive(c)) return;
+    if (m.mult <= 0) {
+        il2::invoke(box.destroy_all, c);
+    } else if (m.mult >= 2) {  // the stake again, as it is (condition, wetness, units): k-1 more times
+        const std::string stake = serialize(c);
+        for (int i = 1; i < m.mult && !stake.empty(); ++i) {
+            void* a[] = {il2::il2cpp_string_new(stake.c_str()), nullptr};
+            il2::invoke(box.deserialize_add, c, a);
+        }
+    }
+    m.locked = !gear_in(c).empty();
+    logx::info("automat: #%u result x%d put in (%zu item(s) inside)", m.id, m.mult, gear_in(c).size());
+    send_contents(m);
 }
 
 // The angle of reel r at a time: fast, then easing into its stop (value and speed continuous)
@@ -733,7 +1163,10 @@ void animate(Machine& m, double now) {
         }
         if (now >= m.result_at) {
             m.spinning = false;
-            if (m.ours) coop_notices::tell(m.outcome);  // only the one who played is told
+            if (m.ours) {  // only the one who played is told; and puts the result in
+                coop_notices::tell(m.outcome);
+                if (box.ok) apply_result(m);
+            }
             const bool jackpot = m.outcome.rfind("JACKPOT", 0) == 0, win = m.outcome.rfind("Wygrana", 0) == 0;
             m.light_mode = jackpot ? 3 : win ? 2 : 0;
             m.light_until = now + (jackpot ? 4000 : 3000);
@@ -775,8 +1208,8 @@ void hud_detour(Il2CppObject* self, Il2CppObject* hud, const MethodInfo* method)
     Machine* m = machine_under_crosshairs(self);
     if (!m) return;
     char text[96];
-    snprintf(text, sizeof(text), m->spinning ? "Automat — kręci się…, stan %d%%" : "Automat — zagraj, stan %d%%",
-             static_cast<int>(std::lround(m->condition * 100)));
+    const char* what = m->spinning ? "kręci się…" : !box.ok ? "zagraj" : m->locked ? "odbierz wygraną" : "otwórz";
+    snprintf(text, sizeof(text), "Automat — %s, stan %d%%", what, static_cast<int>(std::lround(m->condition * 100)));
     int state = kHoverCanInteract;
     void* a[] = {il2::il2cpp_string_new(text), target(m->root), &state};
     il2::invoke(api.set_hover, hud, a);
@@ -787,8 +1220,93 @@ bool interact_detour(Il2CppObject* self, const MethodInfo* method) {
     if (!g_test) return r;
     Machine* m = machine_under_crosshairs(self);
     if (!m) return r;
-    ask_spin(*m);
+    if (box.ok) ask_open(*m, false);
+    else ask_spin(*m);  // (no container: build 1's click)
     return true;
+}
+
+using PanelEnableFn = void (*)(Il2CppObject*, bool, bool, Il2CppObject*, const MethodInfo*);
+PanelEnableFn g_panel_enable = nullptr;
+void panel_enable_detour(Il2CppObject* self, bool enable, bool reset_filter, Il2CppObject* on_closed, const MethodInfo* method) {
+    if (!enable && g_test && self) {
+        Il2CppObject* c = il2::read_field<Il2CppObject*>(self, box.panel_container);
+        for (const Machine& m : g_machines)
+            if (m.open && c && target(m.box) == c && std::find(g_closed.begin(), g_closed.end(), m.id) == g_closed.end())
+                g_closed.push_back(m.id);
+    }
+    g_panel_enable(self, enable, reset_filter, on_closed, method);
+}
+
+bool resolve_box() {
+    Il2CppClass* container = il2::find_class(kGame, "", "Container");
+    Il2CppClass* panel = il2::find_class(kGame, "", "Panel_Container");
+    Il2CppClass* gear = il2::find_class(kGame, "", "GearItem");
+    Il2CppClass* lstring = il2::find_class(kGame, "", "LocalizedString");
+    Il2CppClass* resources = il2::find_class(kCore, "UnityEngine", "Resources");
+    Il2CppClass* weight = il2::find_class("TLD.IntBackedUnit.dll", "TLD.IntBackedUnit", "ItemWeight");
+    Il2CppClass* gm = il2::find_class(kGame, "", "GameManager");
+    Il2CppClass* pm = il2::find_class(kGame, "", "PlayerManager");
+    Il2CppClass* stack = il2::find_class(kGame, "", "StackableItem");
+    Il2CppClass* food = il2::find_class(kGame, "", "FoodItem");
+    if (!container || !panel || !gear || !lstring || !resources || !gm || !pm || !api.go_set_active) return false;
+    box.t_container = il2::type_object(container);
+    box.lstring = lstring;
+    box.lstring_ctor = il2::find_method(lstring, ".ctor", 0);
+    box.lstring_id = il2::field_offset(lstring, "m_LocalizationID");
+    box.find_all = il2::find_method_params(resources, "FindObjectsOfTypeAll", {"System.Type"});
+    box.from_kg = weight ? il2::find_method_quiet(weight, "FromKilograms", 1) : nullptr;
+    box.serialize = il2::find_method(container, "Serialize", 0);
+    box.deserialize = il2::find_method(container, "Deserialize", 2);
+    box.deserialize_add = il2::find_method(container, "DeserializeAdditive", 2);
+    box.destroy_all = il2::find_method(container, "DestroyAllGear", 0);
+    box.show = il2::find_method(container, "ShowContainerContents", 1);
+    box.remove_gear = il2::find_method_params(container, "RemoveGear", {"GearItem", "System.Boolean"});
+    box.total_weight = il2::find_method(container, "GetTotalWeightKG", 0);
+    box.load_panel = il2::find_method_params(il2::find_class(kGame, "", "InterfaceManager"), "LoadPanel", {"System.Type"});
+    box.panel_type = il2::type_object(panel);
+    box.panel_enable = il2::find_method(panel, "Enable", 3);
+    box.panel_container = il2::field_offset(panel, "m_Container");
+    box.player_manager = il2::find_method(gm, "GetPlayerManagerComponent", 0);
+    box.to_pack = il2::find_method(pm, "AddItemToPlayerInventory", 3);
+    struct F { ptrdiff_t* at; const char* name; };
+    for (const F& f : {F{&box.items, "m_Items"}, F{&box.name, "m_LocalizedDisplayName"}, F{&box.empty_pf, "m_EmptyPostfixOverride"},
+                       F{&box.searched_pf, "m_SearchedPostfixOverride"}, F{&box.capacity, "m_Capacity"},
+                       F{&box.spawn_chance, "m_SpawnChance"}, F{&box.no_save, "m_DisableSerialization"},
+                       F{&box.start_inspected, "m_StartInspected"}, F{&box.inspected, "m_Inspected"},
+                       F{&box.rolled, "m_RolledSpawnChance"}, F{&box.not_populated, "m_NotPopulated"},
+                       F{&box.chance_empty, "m_ChanceEmpty"}, F{&box.min_items, "m_MinRandomItems"},
+                       F{&box.max_items, "m_MaxRandomItems"}, F{&box.panel_ref, "m_ContainerPanel"},
+                       F{&box.open_audio, "m_OpenAudio"}, F{&box.close_audio, "m_CloseAudio"},
+                       F{&box.search_audio, "m_SearchAudio"}, F{&box.filter_name, "m_ContainerFilterName"},
+                       F{&box.sort_name, "m_ContainerSortName"}, F{&box.default_filter, "m_DefaultFilter"},
+                       F{&box.selection_mode, "m_StartSelectionMode"}, F{&box.is_corpse, "m_IsCorpse"}})
+        *f.at = il2::field_offset_quiet(container, f.name);
+    box.stack = il2::field_offset_quiet(gear, "m_StackableItem");
+    box.stack_units = stack ? il2::field_offset_quiet(stack, "m_Units") : -1;
+    box.food = il2::field_offset_quiet(gear, "m_FoodItem");
+    box.food_meat = food ? il2::field_offset_quiet(food, "m_IsMeat") : -1;
+    box.food_fish = food ? il2::field_offset_quiet(food, "m_IsFish") : -1;
+    static const std::pair<const char*, const char*> kDeny[] = {
+        {"m_AmmoItem", "naboje"}, {"m_ArrowItem", "gotowe strzały"}, {"m_BearSpearItem", "broń"},
+        {"m_BodyHarvestItem", "zwierzęta"}, {"m_BowItem", "broń"}, {"m_GunItem", "broń"},
+        {"m_FlareGunRoundItem", "naboje"}, {"m_FlareItem", "flary"}, {"m_FlashlightItem", "narzędzia"},
+        {"m_HandheldShortwaveItem", "narzędzia"}, {"m_KeroseneLampItem", "narzędzia"}, {"m_TorchItem", "narzędzia"},
+        {"m_NarrativeCollectibleItem", "przedmiot fabularny"}, {"m_ShowOnMapItem", "mapy i notatki"},
+        {"m_ResearchItem", "książki"}, {"m_ToolsItem", "narzędzia"}, {"m_ForceLockItem", "narzędzia"},
+        {"m_CanOpeningItem", "narzędzia"}, {"m_Travois", "narzędzia"}, {"m_WildlifeItem", "zwierzęta"},
+        {"m_InProgressCraftItem", "niedokończone"}, {"m_IceFishingHoleClearItem", "narzędzia"},
+        {"m_SnareItem", "narzędzia"}, {"m_NoiseMakerItem", "broń"}, {"m_Bed", "śpiwór"},
+        {"m_BlueprintItemUnlock", "mapy i notatki"}, {"m_Respirator", "narzędzia"}};
+    for (const auto& [field, what] : kDeny)
+        if (const ptrdiff_t off = il2::field_offset_quiet(gear, field); off >= 0) box.deny.emplace_back(off, what);
+    const bool all = box.t_container && box.lstring_ctor && box.lstring_id >= 0 && box.find_all && box.serialize &&
+                     box.deserialize && box.deserialize_add && box.destroy_all && box.show && box.remove_gear &&
+                     box.total_weight && box.panel_type && box.panel_enable && box.panel_container >= 0 &&
+                     box.player_manager && box.to_pack && box.items >= 0 && box.name >= 0 && box.panel_ref >= 0 &&
+                     box.no_save >= 0;
+    if (!all) return false;
+    return hooks::install_method("Panel_Container.Enable (automat)", box.panel_enable,
+                                 reinterpret_cast<void*>(&panel_enable_detour), reinterpret_cast<void**>(&g_panel_enable));
 }
 
 bool resolve() {
@@ -805,11 +1323,11 @@ bool resolve() {
     Il2CppClass* tex2d = il2::find_class(kCore, "UnityEngine", "Texture2D");
     Il2CppClass* light = il2::find_class(kCore, "UnityEngine", "Light");
     Il2CppClass* behaviour = il2::find_class(kCore, "UnityEngine", "Behaviour");
-    Il2CppClass* box = il2::find_class(kPhysics, "UnityEngine", "BoxCollider");
+    Il2CppClass* box_collider = il2::find_class(kPhysics, "UnityEngine", "BoxCollider");
     Il2CppClass* pm = il2::find_class(kGame, "", "PlayerManager");
     Il2CppClass* hud = il2::find_class(kGame, "", "Panel_HUD");
     if (!object || !go || !tf || !mesh || !filter || !mrenderer || !renderer || !material || !shader || !tex2d || !light ||
-        !box || !pm || !hud)
+        !box_collider || !pm || !hud)
         return false;
     api.go_class = go;
     api.mesh_class = mesh;
@@ -821,11 +1339,12 @@ bool resolve() {
     api.t_mesh_filter = il2::type_object(filter);
     api.t_mesh_renderer = il2::type_object(mrenderer);
     api.t_light = il2::type_object(light);
-    api.t_box = il2::type_object(box);
+    api.t_box = il2::type_object(box_collider);
     api.go_ctor = il2::find_method_params(go, ".ctor", {"System.String"});
     api.go_tf = il2::find_method(go, "get_transform", 0);
     api.go_add = il2::find_method_params(go, "AddComponent", {"System.Type"});
     api.go_set_layer = il2::find_method(go, "set_layer", 1);
+    api.go_set_active = il2::find_method(go, "SetActive", 1);
     api.set_name = il2::find_method(object, "set_name", 1);
     api.object_name = il2::find_method(object, "get_name", 0);
     api.destroy = il2::find_method_params(object, "Destroy", {"UnityEngine.Object"});
@@ -856,8 +1375,8 @@ bool resolve() {
     api.light_range = il2::find_method(light, "set_range", 1);
     api.light_intensity = il2::find_method(light, "set_intensity", 1);
     api.behaviour_enabled = il2::find_method(behaviour, "set_enabled", 1);
-    api.box_size = il2::find_method(box, "set_size", 1);
-    api.box_center = il2::find_method(box, "set_center", 1);
+    api.box_size = il2::find_method(box_collider, "set_size", 1);
+    api.box_center = il2::find_method(box_collider, "set_center", 1);
     api.under_crosshairs = il2::find_method_params(pm, "GetInteractiveObjectUnderCrosshairs", {"System.Single"});
     api.set_hover = il2::find_method(hud, "SetHoverText", 3);
     const bool all = api.vec3_class && api.vec2_class && api.int_class && il2::il2cpp_array_new && api.go_ctor && api.go_tf &&
@@ -894,6 +1413,8 @@ void init() {
         return;
     }
     api.ok = resolve();
+    box.ok = api.ok && resolve_box();
+    if (api.ok && !box.ok) logx::warn("automat: the stake (container) is unavailable; a click just spins");
     load_store();
     size_t n = 0;
     for (const auto& [scene, recs] : g_store) n += recs.size();
@@ -918,6 +1439,8 @@ void on_frame(const std::string& scene, bool in_game) {
     }
     if (scene != g_scene) {
         clear_scene();
+        g_contents.clear();
+        g_closed.clear();
         g_scene = scene;
         g_spawn_at = now + 1500;
         g_listed = false;
@@ -940,6 +1463,14 @@ void on_frame(const std::string& scene, bool in_game) {
         g_want_at = now;
     }
     for (Machine& m : g_machines) animate(m, now);
+    if (!g_closed.empty()) {  // panels closed last frame
+        const std::vector<uint32_t> closed = std::move(g_closed);
+        g_closed.clear();
+        for (uint32_t id : closed)
+            if (Machine* m = shown(id); m && m->open) on_closed(*m);
+    }
+    for (Machine& m : g_machines)  // still open here: still ours (the host lets go after a minute without word)
+        if (m.open && now - m.hold_at > kHoldRefreshMs) ask_open(m, true);
     // TLDCoop_DLC: the key (no command.txt needed): places one in front of us; with Shift, removes the nearest
     static bool was_down = false;
     DWORD pid = 0;

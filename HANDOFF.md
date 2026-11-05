@@ -949,3 +949,30 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   Reel_1/2/3. (2) Trójkąty modelu ChatGPT skierowane w różne strony (GLB double-sided), shader TLD rysuje jedną stronę
   → deski boczne itp. niewidoczne z zewnątrz. Generator robi teraz każdy trójkąt z obu stron (3196 trójkątów).
 
+
+### 2026-11-05 ~19:45 UTC — AUTOMAT build 2: stawka „jak do skrzynki”
+- Karol: „wprowadź drugi etap”, stawka „jak do skrzynki” (nie tacka). W automacie dziecko „MOD_TLDCoopAutomatBox” z
+  komponentem Container (nie na warstwie 19, bez collidera → TLD sam go nie otwiera). Robiony nieaktywny, pola
+  ustawione (panel/dźwięki/filtry kopiowane z pierwszego kontenera gry z Resources.FindObjectsOfTypeAll, nazwa
+  LocalizedString „Automat”, m_Capacity = ItemWeight.FromKilograms(3), m_DisableSerialization = true → nie w zapisie
+  TLD i world_containers go pomija (dodane strażniki w may_open/ask), inspected/rolled, bez losowego łupu), potem
+  SetActive(true).
+- Klik: prośba do hosta (OpOpenWant) → host daje jednemu graczowi naraz (holder, 60 s, odświeżane co 20 s; inni
+  „Ktoś inny używa tego automatu”; w trakcie kręcenia „zajęty”) → OpOpenOk → LoadPanel + ShowContainerContents.
+- Zamknięcie panelu (hook Panel_Container.Enable(false), m_Container = nasz): zakazane → do plecaka
+  (AddItemToPlayerInventory + RemoveGear) z napisem; zawartość (Serialize) → host (OpContents, zwalnia automat);
+  jeśli w środku jeden rodzaj, ≤10 sztuk (StackableItem.m_Units) i ≤3 kg → pociągnięcie korby (OpSpinWant).
+  Mieszane/za dużo → napis, bez losowania. Host odmawia gdy: zajęty, zepsuty, zablokowany wygraną, pusty.
+- Wynik wkłada grający (host decyduje o symbolach): ×0 / zacięcie = DestroyAllGear, ×1 nic, ×2/3/5 =
+  DeserializeAdditive(tekst stawki) k−1 razy (ten sam stan, mokrość, sztuki). Potem zablokowany (locked) dopóki ktoś
+  nie opróżni; hover „odbierz wygraną”. Host trzyma zawartość: TLDCoop\automat_items_<id>.txt (1. znak 0/1 = locked),
+  wysyła ją przyjaciołom po liście (OpWant) i po każdej zmianie (relay bez nadawcy).
+- Zakazane (why_not): komponenty GearItem (Ammo, Arrow, BearSpear, BodyHarvest, Bow, Gun, FlareGunRound, Flare,
+  Flashlight, Shortwave, KeroseneLamp, Torch, NarrativeCollectible, ShowOnMap, Research, Tools, ForceLock, CanOpening,
+  Travois, Wildlife, InProgressCraft, IceFishingHoleClear, Snare, NoiseMaker, Bed, BlueprintItemUnlock, Respirator),
+  FoodItem m_IsMeat/m_IsFish, uniques, nazwy (hide, pelt, gut, skin, bedroll, medkit, hatchet, knife, prybar, hacksaw,
+  hammer, whetstone, sewingkit, cleaningkit, firestriker, magnifyinglens, binoculars, tldcoop_, GEAR_Leather(Dried),
+  …Key). Łuski/proch/groty/brzechwy dozwolone (bez słów „ammo”/„arrow”).
+- Bez kontenera (coś nie znalezione) → log „the stake (container) is unavailable”, klik kręci jak w buildzie 1.
+- Jeszcze nie: przedmioty płytka/mechanizm/automat, przepisy, stawianie/noszenie, naprawa płytką, ochrona przed
+  wczytaniem (2 min), przełącznik MODS „AUTOMAT”.
