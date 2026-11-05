@@ -1116,3 +1116,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
     kucania.
 - DO TESTU (co-op, po 1 osobie patrzącej na drugą): wspinanie po linie, patroszenie/gotowanie (klęczenie), rozpalanie,
   łamanie gałęzi/mebli, szperanie w szafce, warsztat, siedzenie (łowienie), skok/upadek, niesienie ciała.
+
+### 2026-11-05 ~23:05 UTC — crash u szymona przy ubraniach (411cf9e, CI zielone)
+- Logi 22:33 (Shatsca + szymongrzyb2017, build 41cdce2): u szymona 2× FAULT 0xC0000005 (WINHTTP+0x2c7840 / +0x2c7861,
+  w CRT memcpy/strlen) zaraz po „items: the other player's GEAR_InsulatedVest / GEAR_BasicShoes moved to …”
+  (Prybar przesunięty bez crasha → tylko ubrania).
+- Przyczyna: world_items.cpp load_wear (z ef0ffb0): `for (auto [off, keys, what] : {std::tuple{..., std::initializer_list
+  <const char*>{"m_PercentWet"}, ...}})` — tablica wewnętrznej initializer_list umierała przed ciałem pętli, json_first
+  czytał zwolniony stos jako wskaźniki kluczy. Teraz zwykła tablica struktur.
+- Reszta logów: tylko znane ostrzeżenia (animator differs, m_LocalizedDisplayName, DynamicGI, pojedyncze NRE).
+- Na Discorda jeszcze nie wysłane (Karol wyłączał komputer) — wysłać przy następnej okazji razem z mocap.
