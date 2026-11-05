@@ -77,7 +77,7 @@ struct Api {
     const MethodInfo* object_name = nullptr;
     // GearItem
     Il2CppObject* gear_type = nullptr;
-    ptrdiff_t in_inventory = -1, no_save = -1, object_guid = -1, radial_parent = -1;
+    ptrdiff_t in_inventory = -1, no_save = -1, object_guid = -1, radial_parent = -1, place_point = -1;
     ptrdiff_t narrative = -1;                      // m_NarrativeCollectibleItem: a note, key, postcard... (one of a kind)
     const MethodInfo* create_save_data = nullptr;  // GearItem.CreateSaveData(): TLD's save record for it
     ptrdiff_t sd_prefab = -1, sd_gear = -1;        // GearSaveData.m_PrefabName / m_SearializedGear
@@ -849,9 +849,14 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
     // TLDCoop_DLC: their record names food that's in our pack now (we took it out; theirs is older): the pot mustn't
     // take it back from the pack (the next record would destroy it there), so it's loaded as not cooking it
     if (!food_ours.empty()) {
-        if (Il2CppObject* f = gear_on(object_by_pdid(food_ours)); f && in_pack(f)) {
+        // (or that we just took: Shatsca 05.11 20:19, Szymon's tea, a pot record 50 ms after our take put it back in
+        // the pot, whose removal then destroyed it: gone from the pack)
+        Il2CppObject* f = gear_on(object_by_pdid(food_ours));
+        const bool just_took = g_took.count(food_wire) ||
+                               std::any_of(g_took.begin(), g_took.end(), [&](const auto& t) { return t.second.ours == food_ours; });
+        if ((f && in_pack(f)) || just_took) {
             logx::info("items: the other player's %s (%s) still cooks %s, which is in our pack now; not put back",
-                       name_of(gi).c_str(), short_id(wire).c_str(), name_of(f).c_str());
+                       name_of(gi).c_str(), short_id(wire).c_str(), f ? name_of(f).c_str() : short_id(food_ours).c_str());
             const std::string was = text;
             replace_all(text, "\"m_GearItemBeingCookedGUID\":\"" + food_ours + "\"", "\"m_GearItemBeingCookedGUID\":\"\"");
             if (text == was) replace_all(text, food_ours, "");
@@ -1279,8 +1284,18 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         if (held_now(ours)) return;
         Known& k = g_known[ours];
         const bool moved = distance(k.pos, pos) > kStillMetres;
-        set_pose(gi, pos, rot);
-        seamless_interiors::settle_in_room(gi);  // TLDCoop_DLC: into a room closed here
+        // TLDCoop_DLC: on a place point here (a pot in a fire's cooking slot) and still about there in theirs: ours stays
+        // put (Shatsca 05.11 20:21: back from a cabin, his cans on the fire were moved to Szymon's spot for them, under
+        // the fire and no longer cooking)
+        Vector3 here{};
+        Quaternion here_rot{};
+        pose_of(gi, here, here_rot);
+        const bool placed = api.place_point >= 0 && !text(get<Il2CppString*>(gi, api.place_point)).empty() &&
+                            distance(here, pos) < 1.0f;
+        if (!placed) {
+            set_pose(gi, pos, rot);
+            seamless_interiors::settle_in_room(gi);  // TLDCoop_DLC: into a room closed here
+        }
         k.prefab = m.prefab;
         k.pos = k.told = pos;
         k.rot = rot;
@@ -1520,7 +1535,18 @@ void apply_gone(const net::ItemGoneMsg& m, double now, bool waited_room = false)
     if (m.reason != net::ItemGoneReason::Taken) {
         const auto k = g_known.find(ours);
         Il2CppObject* gi = gear_on(object_by_pdid(ours));
-        if (k != g_known.end() && gi && !get<bool>(gi, api.in_inventory) && now - k->second.changed_ms < kOursWinsMs) {
+        // (only a pot, or food cooking in one: that was the case. Anything else removed there was picked up there, or
+        // drunk: Shatsca 05.11 20:22, Szymon's water bottles, picked up by Shatsca (TLD pours them into the pack's water
+        // and destroys them, so it came as "gone", not "taken"), stayed on Szymon's side: picked up twice.)
+        auto cooking_here = [&](Il2CppObject* item) {
+            if (pot_of(item)) return true;
+            for (const auto& [id, known] : g_known)
+                if (Il2CppObject* other = gear_on(object_by_pdid(id)))
+                    if (Il2CppObject* pot = pot_of(other); pot && food_in(pot) == item) return true;
+            return false;
+        };
+        if (k != g_known.end() && gi && !get<bool>(gi, api.in_inventory) && now - k->second.changed_ms < kOursWinsMs &&
+            cooking_here(gi)) {
             if (Il2CppObject* pot = pot_of(gi)) {
                 if (Il2CppObject* food = food_in(pot)) {
                     const std::string fid = pdid_of(food);
@@ -2273,6 +2299,7 @@ bool init() {
     api.no_save = il2::field_offset(gear, "m_DisableSerialization");
     api.object_guid = il2::field_offset(gear, "m_ObjectGuid");
     api.radial_parent = il2::field_offset(gear, "m_RadialObjectSpawnerParent");
+    api.place_point = il2::field_offset_quiet(gear, "m_PlacePointGuid");
     api.narrative = il2::field_offset(gear, "m_NarrativeCollectibleItem");
     api.create_save_data = il2::find_method(gear, "CreateSaveData", 0);
     api.sd_prefab = il2::field_offset(save_data, "m_PrefabName");

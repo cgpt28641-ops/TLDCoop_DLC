@@ -1476,13 +1476,29 @@ void on_frame(bool in_game) {
     const auto file = paths::instance_dir() / L"command.txt";
     std::error_code ec;
     if (!std::filesystem::exists(file, ec)) return;
-    std::string line;
+    // TLDCoop_DLC: several commands, one a line, run in order. Read before it's all written (empty), or with the game
+    // not running: left for the next look, not lost.
+    std::vector<std::string> lines;
     {
         std::ifstream in(file);
-        std::getline(in, line);
+        for (std::string l; std::getline(in, l);) {
+            while (!l.empty() && (l.back() == '\r' || l.back() == ' ')) l.pop_back();
+            if (!l.empty()) lines.push_back(l);
+        }
     }
+    static int empty_looks = 0;
+    if (lines.empty() && ++empty_looks < 4) return;
+    empty_looks = 0;
+    if (!in_game && !lines.empty() && lines[0].rfind("menu", 0) != 0 && lines[0].rfind("at ", 0) != 0) return;
     std::filesystem::remove(file, ec);
-    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (lines.size() > 1) {
+        for (const std::string& l : lines) {
+            logx::info("dev: command.txt line '%s'", l.c_str());
+            if (in_game || l.rfind("menu", 0) == 0) run(l);
+        }
+        return;
+    }
+    std::string line = lines.empty() ? std::string() : lines[0];
     if (line.rfind("at ", 0) == 0) {
         std::istringstream at(line.substr(3));
         long long ms = 0;

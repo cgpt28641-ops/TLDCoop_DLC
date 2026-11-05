@@ -1021,3 +1021,20 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Przepisy były dodane do BlueprintManager.m_AllBlueprints (log 20:07:18, kopia BLUEPRINT_GEAR_Arrow_A), ale panel
   rzemiosła ma własną listę Panel_Crafting.m_Blueprints (zrobioną wcześniej) → hook RefreshAvailableBlueprints
   dopisuje nasze przed odświeżeniem.
+
+### 2026-11-05 ~20:45 UTC — logi Shatscy i Szymona (20:24, 5 zgłoszeń)
+- #d4bf2df1 (4 tusze królika w jednym miejscu) + 20:21 (14 tusz „new here” po powrocie hosta do RuralRegion):
+  martwy mały zwierzak zamieniony na przedmiot (wildlife_carcass small_game_to_items → Despawn) zostawał w rejestrze
+  jako martwy (dead_told → brak host_gone) → przy każdej wizycie rejestr robił go znowu i znowu był przedmiot.
+  Teraz wildlife_sync::small_game_taken(ai) → Owned.item_made → przy zniknięciu zapomniany (host_gone / Gone).
+- #54819a83 (herbata Szymona podniesiona przez Shatscę znika z plecaka): rekord garnka Szymona 50 ms po naszym
+  podniesieniu wkładał herbatę z powrotem do garnka, potem garnek zniknął razem z nią. load_pot: jedzenie, które
+  właśnie wzięliśmy (g_took), też „nie wraca”.
+- #bb33d179 (woda zdublowana): butelki wody po podniesieniu TLD wlewa do plecaka i niszczy → przychodziło jako „gone”,
+  a reguła kOursWinsMs (nasza świeża zmiana wygrywa) zostawiała ją u Szymona. Reguła teraz tylko dla garnka lub
+  jedzenia gotującego się w garnku (to był jej przypadek).
+- #57e727ab (puszki pod ogniskiem, nie gotują się po wejściu/wyjściu z budynku): zmiana Szymona przesuwała puszki
+  hosta z miejsca na ognisku. apply_put: przedmiot na place point (GearItem.m_PlacePointGuid) i < 1 m od pozycji z
+  rekordu zostaje na miejscu.
+- #7c4d0757 (brak skrytki pamiątkowej): nic w logach; najpewniej losowanie TLD — pytanie do Shatscy.
+- command.txt: kilka komend (po jednej w linii), plik pusty (w trakcie zapisu) albo gra nie w świecie → czeka.

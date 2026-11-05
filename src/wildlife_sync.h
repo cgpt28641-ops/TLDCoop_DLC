@@ -54,5 +54,8 @@ void save_kept(std::vector<world_keep::Record>& out);
 bool load_kept(const world_keep::Record& r);
 
 void carcass_gone(uint32_t id, Il2CppObject* carcass_go);
+// TLDCoop_DLC: a dead small animal of ours became a carcass item (wildlife_carcass): forgotten by the registry when TLD
+// puts it away, not kept as dead (made again, and one more carcass item, on every visit)
+void small_game_taken(Il2CppObject* ai);
 
 }  // namespace wildlife_sync

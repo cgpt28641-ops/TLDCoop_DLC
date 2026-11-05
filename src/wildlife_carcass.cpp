@@ -291,6 +291,7 @@ void small_game_to_items(double now) {
             logx::warn("wildlife: TLD made no carcass item of the dead %s; it stays an animal", animal.c_str());
             continue;
         }
+        wildlife_sync::small_game_taken(ai);
         il2::invoke(api.despawn, ai);
         seen.erase(ai);
         logx::info("wildlife: the dead %s at (%.1f, %.1f, %.1f) is a %s item now (as picking it up makes it), for every "

@@ -1830,6 +1830,14 @@ void carcass_made(uint32_t id, Il2CppObject* carcass_go) {
 
 bool host_away_here() { return !g_mirroring && !g_took_over_scene.empty(); }  // (cleared when we leave it too)
 
+void small_game_taken(Il2CppObject* ai) {
+    for (auto& [id, o] : g_owned)
+        if (target(o.ai) == ai) {
+            o.item_made = true;
+            logx::info("wildlife: #%u is a carcass item now; it's forgotten once it's put away", id);
+        }
+}
+
 void carcass_gone(uint32_t id, Il2CppObject* carcass_go) {
     g_carcasses.erase(std::remove(g_carcasses.begin(), g_carcasses.end(), carcass_go), g_carcasses.end());
     g_carcass_ids.erase(id);

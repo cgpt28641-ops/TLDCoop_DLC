@@ -71,6 +71,7 @@ struct Owned {
     double body_sent_ms = 0; // a friend: when the host last got our carcass of it
     bool moved = false;      // kTakeMoved: placed anew in its region once TLD has started it
     int rescued = 0;         // TLDCoop_DLC: times TLD switched it off right after we took it and we put it back
+    bool item_made = false;  // TLDCoop_DLC: a dead rabbit/ptarmigan made a carcass item: forgotten when it goes
 };
 std::map<uint32_t, Owned> g_owned;
 // A friend's animal that died here while the host was in the scene: the host runs its carcass; ours stays (dying) until
@@ -1381,7 +1382,10 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             continue;
         }
         logx::info("wildlife: our #%u is gone from our game (TLD %s it)", it->first, ai && alive(ai) ? "switched off" : "removed");
-        if (!it->second.dead_told) {  // v45: gone for everyone (the host forgets it)
+        // TLDCoop_DLC: a dead one that became a carcass item (wildlife_carcass) is gone too: kept as dead, the
+        // registry made it again on every visit and it became one more carcass item (Shatsca 05.11 19:45/20:21: four
+        // rabbits on one spot, fourteen made again on coming back to RuralRegion).
+        if (!it->second.dead_told || it->second.item_made) {  // v45: gone for everyone (the host forgets it)
             if (host) {
                 host_gone(it->first, me);
             } else {
