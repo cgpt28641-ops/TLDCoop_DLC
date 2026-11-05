@@ -186,6 +186,9 @@ struct Api {
     const MethodInfo* get_position = nullptr;        // Transform.get_position()
     const MethodInfo* get_rotation = nullptr;        // Transform.get_rotation()
     const MethodInfo* set_rotation = nullptr;        // Transform.set_rotation(Quaternion)
+    const MethodInfo* get_local_rotation = nullptr;  // TLDCoop_DLC: Transform.get_localRotation() (motion capture)
+    const MethodInfo* set_local_rotation = nullptr;  // TLDCoop_DLC: Transform.set_localRotation(Quaternion)
+    const MethodInfo* get_local_position = nullptr;  // TLDCoop_DLC: Transform.get_localPosition()
     const MethodInfo* get_forward = nullptr;         // Transform.get_forward()
     const MethodInfo* find_child = nullptr;          // Transform.Find(string)
     const MethodInfo* renderer_bounds = nullptr;     // Renderer.get_bounds()
@@ -337,6 +340,16 @@ constexpr const char* kBoneNames[kBoneCount] = {"RightUpArm_jnt", "RightElbow_jn
                                                 "LeftKnee_jnt",   "LeftFoot_jnt",   "RightHip_jnt",
                                                 "RightKnee_jnt",  "RightFoot_jnt",  "Head_jnt"};
 
+// TLDCoop_DLC: motion capture (tools/mocap: CMU's, retargeted onto the body pack's two rigs) for what their body is busy
+// with (net::Activity): kMocapClips, kMocapBones, kMocapBoneNames.
+#include "avatar_mocap.inc"
+
+struct MocapPlay {
+    const MocapClip* clip = nullptr;
+    double t = 0;   // seconds into it
+    float w = 0;    // how much of the body's pose it has (eased in and out)
+};
+
 // One other player as seen here. Everything of it lives under one root that survives scene loads; the root is only
 // hidden while they're elsewhere.
 struct Avatar {
@@ -398,6 +411,13 @@ struct Avatar {
     int view_layer = 0;
     std::string view_body;
     int view_layer_frames = 0;
+    // TLDCoop_DLC: motion capture: the rig's bones it poses, the hips' rest position, the clip shown and the one
+    // fading out under it, the activity they're for, when it last ran (our clock)
+    std::array<uintptr_t, kMocapBones> mocap_bones{};
+    float hips_rest[3] = {0, 1.0f, 0};
+    MocapPlay mocap, mocap_out;
+    uint8_t mocap_activity = 0;
+    double mocap_last = 0;
 };
 std::map<uint8_t, std::unique_ptr<Avatar>> g_avatars;  // by player id (host: the friends; a friend: the host, others)
 std::array<bool, net::kMaxPlayers> g_in_game{};  // the ids set_players last listed: states of anyone else are late
@@ -666,6 +686,8 @@ void drop_bones(Avatar& a) {
     for (uintptr_t& b : a.bones) drop(b);
     for (auto& [name, h] : a.rig) drop(h);  // TLDCoop_DLC
     a.rig.clear();
+    for (uintptr_t& b : a.mocap_bones) drop(b);  // TLDCoop_DLC
+    a.mocap = a.mocap_out = MocapPlay{};
 }
 
 // TLDCoop_DLC: the bones of the rig posed by name (fingers, clavicles, neck, Spine2).
@@ -685,6 +707,16 @@ void attach_bones(Avatar& a, Il2CppObject* body) {
         Il2CppObject* t = il2::array_object_at(transforms, i);
         const std::string name = name_of(t);
         if (rig_bone_wanted(name) && !a.rig.count(name)) a.rig[name] = hold(t);  // TLDCoop_DLC
+        for (int m = 0; m < kMocapBones; ++m)  // TLDCoop_DLC: motion capture
+            if (!a.mocap_bones[m] && name == kMocapBoneNames[m]) {
+                a.mocap_bones[m] = hold(t);
+                if (m == 0 && api.get_local_position) {  // the hips, still at rest (no clip has run yet)
+                    Vector3 p{};
+                    il2::invoke_value(api.get_local_position, t, p);
+                    if (p.y > 0.6f && p.y < 1.4f) a.hips_rest[0] = p.x, a.hips_rest[1] = p.y, a.hips_rest[2] = p.z;
+                    else a.hips_rest[0] = 0, a.hips_rest[1] = a.female ? 0.994f : 1.052f, a.hips_rest[2] = 0;
+                }
+            }
         for (int b = 0; b < kBoneCount; ++b)
             if (!a.bones[b] && name == kBoneNames[b]) {
                 a.bones[b] = hold(t);
@@ -2056,6 +2088,117 @@ bool gesture(Avatar& a) {
     return true;
 }
 
+// --- TLDCoop_DLC: motion capture for what their body is busy with (net::Activity) -----------------------------------
+// The clip's local rotations of the rig's bones (and the hips' height), eased over what the gait clips left for this
+// frame; a new activity's clip fades in over the old one's. Upper-body clips leave the hips and legs to the gait.
+
+const char* mocap_name(uint8_t activity) {
+    switch (activity) {
+        case net::ActClimb: return "climb";
+        case net::ActKneel: return "kneel";
+        case net::ActFire: return "fire";
+        case net::ActChop: return "chop";
+        case net::ActSearch: return "search";
+        case net::ActWork: return "work";
+        case net::ActSit: return "sit";
+        case net::ActAir: return "air";
+        case net::ActCarry: return "carry";
+        default: return nullptr;
+    }
+}
+
+const MocapClip* mocap_clip(uint8_t activity, bool female) {
+    const char* name = mocap_name(activity);
+    if (!name) return nullptr;
+    for (const MocapClip& c : kMocapClips)
+        if (c.rig == (female ? 'F' : 'M') && std::strcmp(c.name, name) == 0) return &c;
+    return nullptr;
+}
+
+bool mocap_leg(int bone) {  // the hips and legs (kept for the gait by upper-body clips)
+    const char* n = kMocapBoneNames[bone];
+    return std::strcmp(n, "Hips_jnt") == 0 || std::strstr(n, "Hip_jnt") || std::strstr(n, "Knee") || std::strstr(n, "Foot");
+}
+
+Quat qslerp(Quat a, Quat b, float t) {
+    float d = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+    if (d < 0) b = {-b.x, -b.y, -b.z, -b.w}, d = -d;
+    if (d > 0.9995f)
+        return net::pose::normalized({a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t});
+    const float th = std::acos(d), s = std::sin(th);
+    const float wa = std::sin((1 - t) * th) / s, wb = std::sin(t * th) / s;
+    return {a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb};
+}
+
+Quat mocap_rot(const MocapClip& c, int frame, int bone) {
+    const int16_t* q = c.rot + (static_cast<size_t>(frame) * kMocapBones + bone) * 4;
+    return net::pose::normalized({q[0] / 32767.0f, q[1] / 32767.0f, q[2] / 32767.0f, q[3] / 32767.0f});
+}
+
+void mocap_pose(Avatar& a, const MocapPlay& p) {
+    const MocapClip& c = *p.clip;
+    double f = p.t * 30.0;
+    if (c.loop) f = std::fmod(f, static_cast<double>(c.frames));
+    else f = std::fmin(f, c.frames - 1.0);
+    const int f0 = static_cast<int>(f), f1 = c.loop ? (f0 + 1) % c.frames : std::min(f0 + 1, c.frames - 1);
+    const float k = static_cast<float>(f - f0);
+    const float w = smooth01(p.w);
+    for (int b = 0; b < kMocapBones; ++b) {
+        if (c.upper && mocap_leg(b)) continue;
+        Il2CppObject* tf = target(a.mocap_bones[b]);
+        if (!tf) continue;
+        const Quat want = qslerp(mocap_rot(c, f0, b), mocap_rot(c, f1, b), k);
+        Quat now{};
+        if (w < 0.999f) il2::invoke_value(api.get_local_rotation, tf, now);
+        Quat q = w < 0.999f ? qslerp(now, want, w) : want;
+        void* args[] = {&q};
+        il2::invoke(api.set_local_rotation, tf, args);
+    }
+    if (c.upper) return;
+    if (Il2CppObject* hips = target(a.mocap_bones[0])) {
+        const int16_t* h0 = c.hips + f0 * 3;
+        const int16_t* h1 = c.hips + f1 * 3;
+        Vector3 want{a.hips_rest[0] + (h0[0] + (h1[0] - h0[0]) * k) / 1000.0f,
+                     a.hips_rest[1] + (h0[1] + (h1[1] - h0[1]) * k) / 1000.0f,
+                     a.hips_rest[2] + (h0[2] + (h1[2] - h0[2]) * k) / 1000.0f};
+        Vector3 now{};
+        il2::invoke_value(api.get_local_position, hips, now);
+        set_vec(api.set_local_position, hips, {now.x + (want.x - now.x) * w, now.y + (want.y - now.y) * w, now.z + (want.z - now.z) * w});
+    }
+}
+
+// Runs the clips; true while a whole-body clip has most of the body (no crouch pose under it then).
+bool mocap_step(Avatar& a) {
+    const double now = net::now_ms();
+    const float dt = a.mocap_last > 0 ? static_cast<float>(std::fmin(0.1, (now - a.mocap_last) / 1000.0)) : 0.0f;
+    a.mocap_last = now;
+    if (!api.get_local_rotation || !api.set_local_rotation || !api.get_local_position || !a.mocap_bones[0]) return false;
+    const uint8_t want = a.fresh && !a.lying && !a.shown_down ? a.last.activity : 0;
+    if (want != a.mocap_activity) {
+        a.mocap_activity = want;
+        const MocapClip* c = mocap_clip(want, a.female);
+        if (c != a.mocap.clip) {
+            if (a.mocap.clip && a.mocap.w > a.mocap_out.w) a.mocap_out = a.mocap;  // it fades out under the new one
+            a.mocap = MocapPlay{c, 0, 0};
+        }
+    }
+    // in quickly for a jump, a little slower for the rest; out over 0.3 s
+    const float in = a.mocap_activity == net::ActAir ? 8.0f : 4.0f;
+    if (a.mocap.clip) {
+        a.mocap.t += dt;
+        a.mocap.w = std::fmin(1.0f, a.mocap.w + dt * in);
+    }
+    if (a.mocap_out.clip) {
+        a.mocap_out.t += dt;
+        a.mocap_out.w -= dt * (a.mocap.clip ? in : 3.3f);
+        if (a.mocap_out.w <= 0) a.mocap_out = MocapPlay{};
+    }
+    if (a.mocap_out.clip) mocap_pose(a, a.mocap_out);
+    if (a.mocap.clip) mocap_pose(a, a.mocap);
+    const auto whole = [](const MocapPlay& p) { return p.clip && !p.clip->upper ? p.w : 0.0f; };
+    return std::fmax(whole(a.mocap), whole(a.mocap_out)) > 0.5f;
+}
+
 void late_one(Avatar& a) {
     if (!a.shown || a.visibility != "shown") return;
     if (has_bones(a)) {
@@ -2065,7 +2208,8 @@ void late_one(Avatar& a) {
         a.clip_hand[1] = d.y;
         a.clip_hand[2] = d.x * std::sin(yaw) + d.z * std::cos(yaw);
     }
-    if (a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch);
+    const bool mocap_whole = has_bones(a) && mocap_step(a);  // TLDCoop_DLC: what their body is busy with
+    if (!mocap_whole && a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch);
     if (gesture(a)) return;  // TLDCoop_DLC: (it placed what they hold too)
     if (!a.held.go) return;
     if (has_bones(a) && !a.shown_down && place_action_item(a)) return;
@@ -2810,6 +2954,9 @@ bool init() {
     api.get_position = il2::find_method(transform, "get_position", 0);
     api.get_rotation = il2::find_method(transform, "get_rotation", 0);
     api.set_rotation = il2::find_method(transform, "set_rotation", 1);
+    api.get_local_rotation = il2::find_method(transform, "get_localRotation", 0);
+    api.set_local_rotation = il2::find_method(transform, "set_localRotation", 1);
+    api.get_local_position = il2::find_method(transform, "get_localPosition", 0);
     api.get_forward = il2::find_method(transform, "get_forward", 0);
     api.find_child = il2::find_method_params(transform, "Find", {"System.String"});
     api.renderer_bounds = il2::find_method(renderer, "get_bounds", 0);

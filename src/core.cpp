@@ -1,5 +1,7 @@
 #include "core.h"
 
+#include "coop_activity.h"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -411,6 +413,7 @@ void push_local_state(const std::string& scene) {
         m.held_flags = held.flags;
         coop_emotes::current(m.emote, m.emote_seq);  // TLDCoop_DLC
         m.place = seamless_interiors::place();  // TLDCoop_DLC: the Seamless Interiors room we're in ("" outdoors)
+        m.activity = coop_activity::current(scene, m.y, now);  // TLDCoop_DLC: what our body is busy with
         {  // TLDCoop_DLC: how we're doing, read once a second
             static double health_read = -1e18;
             static uint8_t condition = 100;
@@ -829,6 +832,7 @@ void on_runtime_ready() {
     seamless_interiors::init();  // TLDCoop_DLC
     custom_pictures::init();
     loading_screen::init();  // TLDCoop_DLC: Karol's picture instead of TLD's warnings at start
+    coop_activity::init();   // TLDCoop_DLC: what our body is busy with, for our avatar
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC
     coop_save::init();    // TLDCoop_DLC: ZAPISZ GRĘ in ESC's menu

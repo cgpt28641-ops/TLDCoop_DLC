@@ -17,3 +17,7 @@ clothespack/*.bundle
 clothespack/*.log
 staging/
 *.bodycut
+
+# TLDCoop_DLC: motion capture: the rig dumped from the body pack (local only, like its assets); the lz4 helper build
+tools/mocap/rig_local.json
+tools/bodycut/lz4d

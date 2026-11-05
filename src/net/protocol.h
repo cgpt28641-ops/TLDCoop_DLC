@@ -255,6 +255,22 @@ struct StateMsg {
     // TLDCoop_DLC: the Seamless Interiors building they're inside ("" outdoors). With Seamless Interiors a building's
     // room stands in the region scene, parked 80 m above the building: same scene is no longer same place.
     std::string place;
+    uint8_t activity = 0;  // TLDCoop_DLC: what their body is busy with (net::Activity), 0 nothing special
+};
+// TLDCoop_DLC: what a player's body is busy with, shown on their avatar with motion capture (avatar.cpp). Appended to
+// State: older builds stop reading before it.
+enum Activity : uint8_t {
+    ActNone = 0,
+    ActClimb = 1,      // on a rope
+    ActKneel = 2,      // harvesting, cooking, feeding a fire, a rope (deploying/taking)
+    ActFire = 3,       // lighting a fire
+    ActChop = 4,       // breaking something down
+    ActSearch = 5,     // in a container
+    ActWork = 6,       // crafting, repairing
+    ActSit = 7,        // a seat, a snow shelter, ice fishing
+    ActAir = 8,        // jumping, falling
+    ActCarry = 9,      // carrying a big load (a body)
+    ActCount = 10,
 };
 constexpr uint8_t kStateStruggling = 1;  // in a fight with an animal (TLD's PlayerStruggle)
 constexpr uint8_t kStateDead = 2;        // dead, choosing their next survivor (their body lies where they died)
@@ -578,6 +594,7 @@ inline void write_state(Writer& w, const StateMsg& s) {
     w.put(s.condition);
     w.put(s.afflictions);
     w.put_str(s.place, kSceneLen);
+    w.put(s.activity);
 }
 
 inline bool read_state(Reader& r, StateMsg& s) {
@@ -604,6 +621,8 @@ inline bool read_state(Reader& r, StateMsg& s) {
     s.condition = r.get<uint8_t>();
     s.afflictions = r.get<uint32_t>();
     s.place = r.get_str(kSceneLen);
+    s.activity = r.left() >= 1 ? r.get<uint8_t>() : 0;  // TLDCoop_DLC: older builds don't send it
+    if (s.activity >= ActCount) s.activity = 0;
     return r.ok();
 }
 
