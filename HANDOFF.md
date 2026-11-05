@@ -937,4 +937,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   hook GearItem.RollSpawnChance: host z przyjaciółmi, w budynku (nie IsOutDoorsScene), przedmiot który TLD zabrał
   dostaje drugą szansę 1−(1−p)^(per_player/100·(gracze−1)) (deterministycznie wg miejsca), [loot] per_player jak w
   pojemnikach. Działa tylko przy pierwszym ładowaniu budynku (m_RolledSpawnChance zapisywane).
+- 18:34 Karol: bez wpisywania czegokolwiek → klawisz [automat] key (domyślnie F2; F3–F8 to emotki, F11 raport, F1
+  konsola): F2 stawia automat przed graczem, Shift+F2 usuwa najbliższy. U Karola dopisane do coop.ini: [automat]
+  test=1, key=F2 (zrobione przez bridge). Link do testu tylko Karolowi; na ICARUS dopiero po jego teście.
 

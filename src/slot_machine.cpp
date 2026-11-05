@@ -19,6 +19,7 @@
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "net/emotes.h"
 #include "net/protocol.h"
 #include "net_runtime.h"
 #include "paths.h"
@@ -82,6 +83,7 @@ std::string name_of(Il2CppObject* o) {
 double now_ms() { return static_cast<double>(GetTickCount64()); }
 
 bool g_test = false;  // coop.ini [automat] test=1
+int g_key = 0;        // coop.ini [automat] key (F2): places one; with Shift, removes the nearest
 
 // --- built once: textures, materials, meshes (kept across scenes) ---------------------------------------------------
 
@@ -882,6 +884,11 @@ bool resolve() {
 void init() {
     const auto ini = paths::instance_dir() / L"coop.ini";
     g_test = GetPrivateProfileIntW(L"automat", L"test", 0, ini.c_str()) != 0;
+    wchar_t key[16];
+    GetPrivateProfileStringW(L"automat", L"key", L"F2", key, 16, ini.c_str());
+    std::string k;
+    for (const wchar_t* c = key; *c; ++c) k += static_cast<char>(*c);
+    g_key = net::virtual_key(k);
     if (!g_test) {
         logx::info("automat: off (coop.ini [automat] test=0)");
         return;
@@ -933,6 +940,13 @@ void on_frame(const std::string& scene, bool in_game) {
         g_want_at = now;
     }
     for (Machine& m : g_machines) animate(m, now);
+    // TLDCoop_DLC: the key (no command.txt needed): places one in front of us; with Shift, removes the nearest
+    static bool was_down = false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+    const bool down = g_key && pid == GetCurrentProcessId() && (GetAsyncKeyState(g_key) & 0x8000) != 0;
+    if (down && !was_down) command((GetAsyncKeyState(VK_SHIFT) & 0x8000) ? "usun" : "postaw");
+    was_down = down;
 }
 
 void command(const std::string& args) {
