@@ -895,5 +895,5 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - 2026-11-05 15:16 (Karol, po porównaniu z FNV/Stardew/Rust): w automacie tylko JEDEN rodzaj przedmiotu naraz, jeden wynik
   na całą stawkę (w sztukach); limit stawki 10 szt. albo 3 kg; tabela wygranych na automacie; ochrona przed
   wczytywaniem (wynik zapisany przy dźwigni, po wczytaniu ~2 min nieczynny); ZUŻYCIE automatu zamiast limitu 3/dzień
-  (kilka % na losowanie, gorszy stan = częstsze zacięcia, naprawa złomem). Efekty jackpota i „szczęście” — nie.
+  (kilka % na losowanie, gorszy stan = częstsze zacięcia, naprawa ELEKTRONIKĄ — płytką elektroniczną, nie złomem). Efekty jackpota i „szczęście” — nie.
 
