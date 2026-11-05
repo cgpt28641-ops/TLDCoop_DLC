@@ -1071,3 +1071,15 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - #a766225b/#3a26a171 (mięso „na pauzie” na ognisku): Shatsca sam: krzak przy ognisku — zachowanie gry, bez zmian.
 - #eee3022f (Szymon dokłada przy silnym wietrze): wiatr zgadza się kategorią (VeryWindy), prędkość z porywów różna
   (31 vs 45–49 mph); TLD pozwala dokładać do ogniska przy wietrze (blokuje rozpalanie). Bez zmian.
+
+### 2026-11-05 ~21:45 UTC — ekran startowy Karola
+- Karol: obrazek (ognisko + zorza, 1672×941) zamiast ostrzeżeń przy włączaniu gry ze Steam — TYLKO przy starcie,
+  nie przy każdym ładowaniu; „naciśnij, aby kontynuować” zostaje; wypełnia ekran z proporcjami (przycięte brzegi);
+  wbudowany w dll; gdy się nie uda — ekran TLD i przyczyna w logu.
+- src/loading_screen.cpp/.h: JPG w src/loading_screen_data.inc (tools/loading/gen_data.py z
+  assets/loading/loading_screen.jpg), Texture2D przez ImageConversion.LoadImage. Hook Panel_Boot.Update (init w
+  on_runtime_ready, przed sceną Boot): pod panelem nasz GameObject z NGUI UITexture, rozmiar = Screen × UIRoot
+  .GetPixelSizeAdjustment, uvRect przycina nadmiar obrazka, depth = najniższa głębokość etykiet „continue” − 1.
+  Dzieci m_MainDisclaimer, m_DisclaimerScreenList[i] i m_LoadingFlow wyłączane poza drogą do etykiet
+  m_MainDisclaimerContinue / m_DisclaimerScreenContinues / m_LoadingContinue; m_LoadingAnimationsRoot off. Przepływ
+  ostrzeżeń TLD bez zmian (dalej klik żeby przejść).

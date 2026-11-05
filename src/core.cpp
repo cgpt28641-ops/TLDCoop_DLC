@@ -16,6 +16,7 @@
 #include "slot_machine.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
+#include "loading_screen.h"
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
 #include "dev_console.h"
 #endif
@@ -827,6 +828,7 @@ void on_runtime_ready() {
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC
     custom_pictures::init();
+    loading_screen::init();  // TLDCoop_DLC: Karol's picture instead of TLD's warnings at start
     just_zoom::init();  // TLDCoop_DLC
     coop_report::init();  // TLDCoop_DLC
     coop_save::init();    // TLDCoop_DLC: ZAPISZ GRĘ in ESC's menu

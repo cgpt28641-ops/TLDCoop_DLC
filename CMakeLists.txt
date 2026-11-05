@@ -50,6 +50,7 @@ add_library(tldcoop SHARED
   src/dynamic_trees.cpp
   src/seamless_interiors.cpp  # TLDCoop_DLC: Seamless Interiors (karsontr13), with permission
   src/custom_pictures.cpp
+  src/loading_screen.cpp  # TLDCoop_DLC: the start screen (Karol's picture)
   src/coop_chat.cpp  # TLDCoop_DLC: chat (ENTER) and the bug report's description box
   src/coop_save.cpp  # TLDCoop_DLC: ZAPISZ GRĘ in ESC's menu
   src/coop_report.cpp  # TLDCoop_DLC: a bug report with one key (F11)
