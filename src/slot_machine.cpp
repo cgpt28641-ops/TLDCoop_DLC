@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <random>
 #include <sstream>
 #include <string>
@@ -18,6 +19,8 @@
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "net/protocol.h"
+#include "net_runtime.h"
 #include "paths.h"
 
 namespace slot_machine {
@@ -207,54 +210,85 @@ bool build_shared() {
 }
 
 // --- machines -------------------------------------------------------------------------------------------------------
+// Co-op: the host's game keeps every machine of every scene (its file automat_test.txt) and decides each spin; the
+// others ask (Msg::Automat) and show what the host says. Alone, our game is its own host.
 
-struct Machine {
+enum Op : uint8_t { OpList = 1, OpWant = 2, OpPlace = 3, OpRemove = 4, OpSpinWant = 5, OpSpin = 6, OpCondition = 7, OpBusy = 8 };
+constexpr size_t kSceneMax = 64;
+constexpr double kBusyMs = 3600;  // a spin, as the host counts it (the reels take 3.2 s)
+
+struct Rec {  // the host's record of one machine
+    uint32_t id = 0;
+    Vector3 pos{};
+    float yaw = 0, condition = 1.0f;
+    double busy_until = 0;
+};
+std::map<std::string, std::vector<Rec>> g_store;  // scene -> machines (host / alone)
+uint32_t g_next_id = 1;
+
+struct Machine {  // one shown in our scene
+    uint32_t id = 0;
     uintptr_t root = 0;
     uintptr_t reel[3] = {}, crank = 0, light = 0;
     Vector3 pos{};
     float yaw = 0;
     float condition = 1.0f;   // 0..1
-    // a spin
     bool spinning = false;
+    bool jammed = false;
     double spin_start = 0, result_at = 0;
     int stop[3] = {};         // the strip cell each reel stops on
-    float angle[3] = {};      // where each reel stands now (degrees)
-    std::string outcome;      // what the player is told
+    bool ours = false;        // we pulled the crank: we're told the result
+    std::string outcome;
     int light_mode = 0;       // 0 off, 1 spinning (blinks), 2 win (on), 3 jackpot (fast blinks)
     double light_until = 0;
 };
 std::vector<Machine> g_machines;
 std::string g_scene;
-double g_spawn_at = 0;
+double g_spawn_at = 0, g_want_at = 0;
+bool g_listed = false;    // a client: the host's list for our scene came
 std::mt19937 g_rng{std::random_device{}()};
-std::string g_forced;  // "automat wynik ..."
+std::string g_forced;     // "automat wynik ..."
+
+bool connected() { return netrt::status().connected; }
+bool hosting() {
+    const auto role = netrt::role();
+    return role && *role == net::Role::Host;
+}
+bool authority() { return !connected() || hosting(); }  // decides (host, or alone)
+uint8_t self_id() { return netrt::status().self_id; }
 
 std::filesystem::path save_file() { return paths::instance_dir() / L"automat_test.txt"; }
 
-struct Saved {
-    std::string scene;
-    Vector3 pos;
-    float yaw, condition;
-};
-
-std::vector<Saved> load_saved() {
-    std::vector<Saved> out;
+void load_store() {
+    g_store.clear();
     std::ifstream in(save_file());
     std::string line;
     while (std::getline(in, line)) {
         std::istringstream s(line);
-        Saved v{};
-        if (std::getline(s, v.scene, '|') && (s >> v.pos.x >> v.pos.y >> v.pos.z >> v.yaw >> v.condition)) out.push_back(v);
+        std::string scene;
+        Rec r;
+        if (std::getline(s, scene, '|') && (s >> r.pos.x >> r.pos.y >> r.pos.z >> r.yaw >> r.condition)) {
+            if (!(s >> r.id) || !r.id) r.id = g_next_id;
+            g_next_id = std::max(g_next_id, r.id + 1);
+            g_store[scene].push_back(r);
+        }
     }
-    return out;
 }
 
-void save_all() {
-    std::vector<Saved> all = load_saved();
-    all.erase(std::remove_if(all.begin(), all.end(), [](const Saved& v) { return v.scene == g_scene; }), all.end());
-    for (const Machine& m : g_machines) all.push_back(Saved{g_scene, m.pos, m.yaw, m.condition});
+void save_store() {
     std::ofstream out(save_file(), std::ios::trunc);
-    for (const Saved& v : all) out << v.scene << '|' << v.pos.x << ' ' << v.pos.y << ' ' << v.pos.z << ' ' << v.yaw << ' ' << v.condition << '\n';
+    for (const auto& [scene, recs] : g_store)
+        for (const Rec& r : recs)
+            out << scene << '|' << r.pos.x << ' ' << r.pos.y << ' ' << r.pos.z << ' ' << r.yaw << ' ' << r.condition << ' '
+                << r.id << '\n';
+}
+
+Rec* find_rec(const std::string& scene, uint32_t id) {
+    auto it = g_store.find(scene);
+    if (it == g_store.end()) return nullptr;
+    for (Rec& r : it->second)
+        if (r.id == id) return &r;
+    return nullptr;
 }
 
 Il2CppObject* tf_of(Il2CppObject* go) { return go ? il2::invoke(api.go_tf, go) : nullptr; }
@@ -323,25 +357,28 @@ bool spawn(Machine& m) {
             const int r = std::clamp(name.back() - '1', 0, 2);
             m.reel[r] = hold(tf_of(go));
             m.stop[r] = static_cast<int>(g_rng() % kAutReelCells);
-            m.angle[r] = strip_angle(m.stop[r]);
-            Vector3 e{m.angle[r], 0, 0};
+            Vector3 e{strip_angle(m.stop[r]), 0, 0};
             set_local(tf_of(go), nullptr, &e);
         } else if (name == "Crank") {
             m.crank = hold(tf_of(go));
         } else if (name == "Bulb") {
             Il2CppObject* lgo = new_go("MOD_TLDCoopAutomatLight");
             parent(lgo, go);
-            Vector3 zero{0, 0.04f, 0};
-            set_local(tf_of(lgo), &zero, nullptr);
+            Vector3 up{0, 0.04f, 0};
+            set_local(tf_of(lgo), &up, nullptr);
             if (Il2CppObject* light = add(lgo, api.t_light)) {
                 Color c{1.0f, 0.72f, 0.38f, 1};
                 float range = 3.0f, intensity = 1.6f;
                 void* c1[] = {&c};
                 il2::invoke(api.light_color, light, c1);
-                void* c2[] = {&range};
-                il2::invoke(api.light_range, light, c2);
-                void* c3[] = {&intensity};
-                il2::invoke(api.light_intensity, light, c3);
+                if (api.light_range) {
+                    void* c2[] = {&range};
+                    il2::invoke(api.light_range, light, c2);
+                }
+                if (api.light_intensity) {
+                    void* c3[] = {&intensity};
+                    il2::invoke(api.light_intensity, light, c3);
+                }
                 bool off = false;
                 void* c4[] = {&off};
                 il2::invoke(api.behaviour_enabled, light, c4);
@@ -358,18 +395,53 @@ bool spawn(Machine& m) {
     return true;
 }
 
+void forget(Machine& m) {
+    for (uintptr_t* h : {&m.root, &m.reel[0], &m.reel[1], &m.reel[2], &m.crank, &m.light}) drop(*h);
+}
+
 void despawn(Machine& m) {
     if (Il2CppObject* root = target(m.root); alive(root)) {
         void* a[] = {root};
         il2::invoke(api.destroy, nullptr, a);
     }
-    for (uintptr_t* h : {&m.root, &m.reel[0], &m.reel[1], &m.reel[2], &m.crank, &m.light}) drop(*h);
+    forget(m);
 }
 
 void clear_scene() {
-    for (Machine& m : g_machines)
-        for (uintptr_t* h : {&m.root, &m.reel[0], &m.reel[1], &m.reel[2], &m.crank, &m.light}) drop(*h);
+    for (Machine& m : g_machines) forget(m);  // (the scene's objects go with it)
     g_machines.clear();
+}
+
+Machine* shown(uint32_t id) {
+    for (Machine& m : g_machines)
+        if (m.id == id) return &m;
+    return nullptr;
+}
+
+// Our scene's machines as the host has them: new ones made, gone ones removed, moved ones made again.
+void show_list(const std::vector<Rec>& recs) {
+    for (size_t i = 0; i < g_machines.size();) {
+        Machine& m = g_machines[i];
+        const auto it = std::find_if(recs.begin(), recs.end(), [&](const Rec& r) { return r.id == m.id; });
+        const bool moved = it != recs.end() &&
+                           (std::fabs(it->pos.x - m.pos.x) + std::fabs(it->pos.y - m.pos.y) + std::fabs(it->pos.z - m.pos.z) > 0.01f ||
+                            std::fabs(it->yaw - m.yaw) > 0.5f);
+        if (it == recs.end() || moved) {
+            despawn(m);
+            g_machines.erase(g_machines.begin() + static_cast<ptrdiff_t>(i));
+            continue;
+        }
+        m.condition = it->condition;
+        ++i;
+    }
+    int made = 0;
+    for (const Rec& r : recs) {
+        if (shown(r.id)) continue;
+        Machine m;
+        m.id = r.id, m.pos = r.pos, m.yaw = r.yaw, m.condition = r.condition;
+        if (spawn(m)) g_machines.push_back(m), ++made;
+    }
+    if (made) logx::info("automat: %d machine(s) shown in %s (%zu here)", made, g_scene.c_str(), g_machines.size());
 }
 
 Machine* nearest(float max_m) {
@@ -382,6 +454,35 @@ Machine* nearest(float max_m) {
         if (d <= best_d) best_d = d, best = &m;
     }
     return best;
+}
+
+// --- the network ----------------------------------------------------------------------------------------------------
+
+net::Writer message(Op op, const std::string& scene) {
+    net::Writer w(net::Msg::Automat, 512);
+    w.put<uint8_t>(op);
+    w.put_blob(scene, kSceneMax);
+    return w;
+}
+
+// Host: a scene's list, to one friend (to) or everyone (to = -1); and to our own scene's view.
+void send_list(const std::string& scene, int to = -1) {
+    const auto it = g_store.find(scene);
+    static const std::vector<Rec> none;
+    const std::vector<Rec>& recs = it == g_store.end() ? none : it->second;
+    if (scene == g_scene) show_list(recs);
+    if (!connected() || !hosting()) return;
+    net::Writer w = message(OpList, scene);
+    const uint8_t n = static_cast<uint8_t>(std::min<size_t>(recs.size(), 32));
+    w.put<uint8_t>(n);
+    for (uint8_t i = 0; i < n; ++i) {
+        const Rec& r = recs[i];
+        w.put<uint32_t>(r.id);
+        w.put<float>(r.pos.x), w.put<float>(r.pos.y), w.put<float>(r.pos.z);
+        w.put<float>(r.yaw), w.put<float>(r.condition);
+    }
+    if (to >= 0) netrt::send_packet_to(static_cast<uint8_t>(to), w, true);
+    else netrt::send_packet(w, true);
 }
 
 // --- the game: the spin and its result ------------------------------------------------------------------------------
@@ -402,7 +503,7 @@ int find_cell(int symbol) {  // a random cell showing that symbol
     return cells.empty() ? 0 : cells[g_rng() % cells.size()];
 }
 
-// The outcome of the three middle symbols: 5 jackpot, 3, 2, 1 (back), 0 (lost)
+// The three middle symbols' outcome: 5 jackpot, 3, 2, 1 (back), 0 (lost)
 int multiplier(int a, int b, int c) {
     if (b == Skull) return 0;
     if (a == Gold && b == Gold && c == Gold) return 5;
@@ -411,47 +512,196 @@ int multiplier(int a, int b, int c) {
     return 1;
 }
 
-void force(Machine& m, const std::string& what) {
-    auto set = [&](int a, int b, int c) { m.stop[0] = find_cell(a), m.stop[1] = find_cell(b), m.stop[2] = find_cell(c); };
-    if (what == "jackpot") set(Gold, Gold, Gold);
-    else if (what == "trojka") set(Wolf, Wolf, Wolf);
-    else if (what == "para") set(Meat, Meat, Fire);
-    else if (what == "zwrot") set(Wolf, Meat, Fire);
-    else if (what == "czaszka") set(Wolf, Skull, Fire);
+std::string outcome_text(const int stop[3], bool jam) {
+    if (jam) return "Automat się zaciął! Stawka przepadła";
+    const int x = multiplier(symbol_at(stop[0]), symbol_at(stop[1]), symbol_at(stop[2]));
+    return x == 5 ? "JACKPOT! ×5" : x == 3 ? "Wygrana ×3!" : x == 2 ? "Wygrana ×2!" : x == 1 ? "Zwrot stawki" : "Przegrana";
 }
 
-void start_spin(Machine& m) {
+// Everyone: a spin the host decided, shown on our machine (we're told the result if we pulled the crank).
+void show_spin(uint32_t id, const int stop[3], bool jam, float condition, uint8_t spinner) {
+    Machine* m = shown(id);
+    if (!m) return;
     const double now = now_ms();
-    if (m.condition <= 0.0f) {
-        coop_notices::tell("Automat jest zepsuty — trzeba go naprawić płytką elektroniczną");
-        return;
+    for (int r = 0; r < 3; ++r) m->stop[r] = std::clamp(stop[r], 0, kAutReelCells - 1);
+    m->jammed = jam;
+    m->condition = condition;
+    m->spinning = true;
+    m->spin_start = now;
+    m->result_at = now + (jam ? 1800 : 3200);
+    m->ours = spinner == self_id();
+    m->outcome = outcome_text(m->stop, jam);
+    m->light_mode = 1;
+}
+
+// Host / alone: a spin of machine `id` in `scene`, asked by player `spinner`
+void decide_spin(const std::string& scene, uint32_t id, const std::string& forced, uint8_t spinner) {
+    Rec* r = find_rec(scene, id);
+    if (!r) return;
+    const double now = now_ms();
+    auto busy = [&](const char* why) {
+        logx::info("automat: #%u: player %u's spin refused (%s)", id, spinner, why);
+        if (spinner == self_id()) {
+            coop_notices::tell(r->condition <= 0 ? "Automat jest zepsuty — trzeba go naprawić płytką elektroniczną"
+                                                 : "Automat jest zajęty");
+        } else if (connected()) {
+            net::Writer w = message(OpBusy, scene);
+            w.put<uint32_t>(id);
+            w.put<uint8_t>(r->condition <= 0 ? 1 : 0);
+            netrt::send_packet_to(spinner, w, true);
+        }
+    };
+    if (now < r->busy_until) return busy("busy");
+    if (r->condition <= 0) return busy("broken");
+    const bool jam = forced == "zaciecie" || (forced.empty() && std::uniform_real_distribution<float>(0, 1)(g_rng) < jam_chance(r->condition));
+    int stop[3];
+    for (int& s : stop) s = static_cast<int>(g_rng() % kAutReelCells);
+    auto set = [&](int a, int b, int c) { stop[0] = find_cell(a), stop[1] = find_cell(b), stop[2] = find_cell(c); };
+    if (forced == "jackpot") set(Gold, Gold, Gold);
+    else if (forced == "trojka") set(Wolf, Wolf, Wolf);
+    else if (forced == "para") set(Meat, Meat, Fire);
+    else if (forced == "zwrot") set(Wolf, Meat, Fire);
+    else if (forced == "czaszka") set(Wolf, Skull, Fire);
+    r->condition = std::max(0.0f, r->condition - kWearPerSpin);
+    r->busy_until = now + kBusyMs;
+    save_store();
+    logx::info("automat: #%u spin for player %u: %s | %s | %s%s -> %s; condition %.0f%%", id, spinner,
+               kSymbolName[symbol_at(stop[0])], kSymbolName[symbol_at(stop[1])], kSymbolName[symbol_at(stop[2])],
+               jam ? " (jammed)" : "", outcome_text(stop, jam).c_str(), r->condition * 100);
+    if (scene == g_scene) show_spin(id, stop, jam, r->condition, spinner);
+    if (connected() && hosting()) {
+        net::Writer w = message(OpSpin, scene);
+        w.put<uint32_t>(id);
+        for (int s : stop) w.put<uint8_t>(static_cast<uint8_t>(s));
+        w.put<uint8_t>(jam ? 1 : 0);
+        w.put<float>(r->condition);
+        w.put<uint8_t>(spinner);
+        netrt::send_packet(w, true);
     }
-    const bool jam = g_forced == "zaciecie" || (g_forced.empty() && std::uniform_real_distribution<float>(0, 1)(g_rng) < jam_chance(m.condition));
-    for (int r = 0; r < 3; ++r) m.stop[r] = static_cast<int>(g_rng() % kAutReelCells);
-    if (!g_forced.empty() && g_forced != "zaciecie") force(m, g_forced);
+}
+
+void decide_place(const std::string& scene, const Vector3& pos, float yaw) {
+    Rec r;
+    r.id = g_next_id++;
+    r.pos = pos, r.yaw = yaw;
+    g_store[scene].push_back(r);
+    save_store();
+    logx::info("automat: #%u placed in %s at (%.2f, %.2f, %.2f)", r.id, scene.c_str(), pos.x, pos.y, pos.z);
+    send_list(scene);
+}
+
+void decide_remove(const std::string& scene, uint32_t id) {
+    auto it = g_store.find(scene);
+    if (it == g_store.end()) return;
+    auto& v = it->second;
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const Rec& r) { return r.id == id; }), v.end());
+    save_store();
+    logx::info("automat: #%u removed from %s", id, scene.c_str());
+    send_list(scene);
+}
+
+void decide_condition(const std::string& scene, uint32_t id, float condition) {
+    if (Rec* r = find_rec(scene, id)) {
+        r->condition = std::clamp(condition, 0.0f, 1.0f);
+        save_store();
+        send_list(scene);
+    }
+}
+
+void receive() {
+    static std::vector<net::Packet> in;
+    in.clear();
+    netrt::drain_packets(net::Msg::Automat, in);
+    const bool host = hosting();
+    for (const net::Packet& p : in) {
+        net::Reader r = net::packet_body(p);
+        const auto op = static_cast<Op>(r.get<uint8_t>());
+        const std::string scene = r.get_blob(kSceneMax);
+        if (!r.ok()) continue;
+        switch (op) {
+            case OpWant:
+                if (host) send_list(scene, p.from);
+                break;
+            case OpPlace: {
+                Vector3 pos{r.get<float>(), r.get<float>(), r.get<float>()};
+                const float yaw = r.get<float>();
+                if (host && r.ok()) decide_place(scene, pos, yaw);
+                break;
+            }
+            case OpRemove: {
+                const uint32_t id = r.get<uint32_t>();
+                if (host && r.ok()) decide_remove(scene, id);
+                break;
+            }
+            case OpCondition: {
+                const uint32_t id = r.get<uint32_t>();
+                const float c = r.get<float>();
+                if (host && r.ok()) decide_condition(scene, id, c);
+                break;
+            }
+            case OpSpinWant: {
+                const uint32_t id = r.get<uint32_t>();
+                const std::string forced = r.get_blob(16);
+                if (host && r.ok()) decide_spin(scene, id, forced, p.from);
+                break;
+            }
+            case OpList: {
+                if (host || scene != g_scene) break;
+                const uint8_t n = r.get<uint8_t>();
+                std::vector<Rec> recs;
+                for (uint8_t i = 0; i < n && r.ok(); ++i) {
+                    Rec x;
+                    x.id = r.get<uint32_t>();
+                    x.pos = Vector3{r.get<float>(), r.get<float>(), r.get<float>()};
+                    x.yaw = r.get<float>();
+                    x.condition = r.get<float>();
+                    recs.push_back(x);
+                }
+                if (!r.ok()) break;
+                g_listed = true;
+                show_list(recs);
+                break;
+            }
+            case OpSpin: {
+                if (host || scene != g_scene) break;
+                const uint32_t id = r.get<uint32_t>();
+                int stop[3];
+                for (int& s : stop) s = r.get<uint8_t>();
+                const bool jam = r.get<uint8_t>() != 0;
+                const float c = r.get<float>();
+                const uint8_t spinner = r.get<uint8_t>();
+                if (r.ok()) show_spin(id, stop, jam, c, spinner);
+                break;
+            }
+            case OpBusy: {
+                r.get<uint32_t>();
+                const bool broken = r.get<uint8_t>() != 0;
+                if (r.ok()) coop_notices::tell(broken ? "Automat jest zepsuty — trzeba go naprawić płytką elektroniczną" : "Automat jest zajęty");
+                break;
+            }
+            default:
+                break;
+        }
+    }
+}
+
+// Asks for, or does, a change: alone or as the host it's done here; a friend asks the host.
+void ask_spin(Machine& m) {
+    if (m.spinning) return coop_notices::tell("Automat jest zajęty");
+    if (m.condition <= 0) return coop_notices::tell("Automat jest zepsuty — trzeba go naprawić płytką elektroniczną");
+    const std::string forced = g_forced;
     g_forced.clear();
-    m.condition = std::max(0.0f, m.condition - kWearPerSpin);
-    m.spinning = true;
-    m.spin_start = now;
-    m.light_mode = 1;
-    const int a = symbol_at(m.stop[0]), b = symbol_at(m.stop[1]), c = symbol_at(m.stop[2]);
-    if (jam) {
-        m.outcome = "Automat się zaciął! Stawka przepadła";
-        m.result_at = now + 1800;  // the reels stop short
-    } else {
-        const int x = multiplier(a, b, c);
-        m.outcome = x == 5 ? "JACKPOT! ×5" : x == 3 ? "Wygrana ×3!" : x == 2 ? "Wygrana ×2!" : x == 1 ? "Zwrot stawki" : "Przegrana";
-        m.result_at = now + 3200;
-    }
-    logx::info("automat: spin (%s | %s | %s)%s -> %s; condition %.0f%%", kSymbolName[a], kSymbolName[b], kSymbolName[c],
-               jam ? " jammed" : "", m.outcome.c_str(), m.condition * 100);
-    save_all();
+    if (authority()) return decide_spin(g_scene, m.id, forced, self_id());
+    net::Writer w = message(OpSpinWant, g_scene);
+    w.put<uint32_t>(m.id);
+    w.put_blob(forced, 16);
+    netrt::send_packet(w, true);
 }
 
 // The angle of reel r at a time: fast, then easing into its stop (value and speed continuous)
-float reel_angle(const Machine& m, int r, double now, bool jammed) {
-    const double stop_at = m.spin_start + (jammed ? 900.0 + 250.0 * r : 1600.0 + 700.0 * r);
-    const float target = strip_angle(m.stop[r]) - 360.0f * 4;  // whole turns forward before it
+float reel_angle(const Machine& m, int r, double now) {
+    const double stop_at = m.spin_start + (m.jammed ? 900.0 + 250.0 * r : 1600.0 + 700.0 * r);
+    const float target = strip_angle(m.stop[r]) - 360.0f * 4;  // whole turns before it
     const float x = static_cast<float>((stop_at - now) / 1000.0);
     if (x <= 0) return strip_angle(m.stop[r]);
     const float speed = 900.0f;  // degrees a second
@@ -468,11 +718,10 @@ void set_light(Machine& m, bool on) {
 
 void animate(Machine& m, double now) {
     if (m.spinning) {
-        const bool jammed = m.outcome.find("zaciął") != std::string::npos;
         for (int r = 0; r < 3; ++r) {
             Il2CppObject* tf = target(m.reel[r]);
             if (!alive(tf)) continue;
-            Vector3 e{reel_angle(m, r, now, jammed), 0, 0};
+            Vector3 e{reel_angle(m, r, now), 0, 0};
             set_local(tf, nullptr, &e);
         }
         if (Il2CppObject* tf = target(m.crank); alive(tf)) {
@@ -482,7 +731,7 @@ void animate(Machine& m, double now) {
         }
         if (now >= m.result_at) {
             m.spinning = false;
-            coop_notices::tell(m.outcome);  // only for the one who spins
+            if (m.ours) coop_notices::tell(m.outcome);  // only the one who played is told
             const bool jackpot = m.outcome.rfind("JACKPOT", 0) == 0, win = m.outcome.rfind("Wygrana", 0) == 0;
             m.light_mode = jackpot ? 3 : win ? 2 : 0;
             m.light_until = now + (jackpot ? 4000 : 3000);
@@ -536,7 +785,7 @@ bool interact_detour(Il2CppObject* self, const MethodInfo* method) {
     if (!g_test) return r;
     Machine* m = machine_under_crosshairs(self);
     if (!m) return r;
-    if (!m->spinning) start_spin(*m);
+    ask_spin(*m);
     return true;
 }
 
@@ -638,28 +887,50 @@ void init() {
         return;
     }
     api.ok = resolve();
-    logx::info("automat: TEST %s", api.ok ? "on: command.txt \"automat postaw\" places one" : "unavailable (TLD's calls missing)");
+    load_store();
+    size_t n = 0;
+    for (const auto& [scene, recs] : g_store) n += recs.size();
+    logx::info("automat: TEST %s; %zu machine(s) in our file", api.ok ? "on: command.txt \"automat postaw\" places one" : "unavailable (TLD's calls missing)", n);
 }
 
 void on_frame(const std::string& scene, bool in_game) {
-    if (!g_test || !api.ok) return;
+    if (!g_test || !api.ok) {  // (a friend's messages: dropped, never left waiting)
+        static std::vector<net::Packet> stale;
+        stale.clear();
+        netrt::drain_packets(net::Msg::Automat, stale);
+        return;
+    }
     const double now = now_ms();
+    static int last_authority = -1;  // alone / host / friend changed: our scene's machines from the right place
+    const int auth = authority() ? 1 : 0;
+    if (auth != last_authority) {
+        last_authority = auth;
+        for (Machine& m : g_machines) despawn(m);  // (still in the scene: removed, then made again from the new list)
+        g_machines.clear();
+        g_scene.clear();
+    }
     if (scene != g_scene) {
         clear_scene();
         g_scene = scene;
         g_spawn_at = now + 1500;
+        g_listed = false;
     }
+    receive();
     if (!in_game) return;
     if (g_spawn_at > 0 && now >= g_spawn_at) {
         g_spawn_at = 0;
-        int n = 0;
-        for (const Saved& v : load_saved()) {
-            if (v.scene != g_scene) continue;
-            Machine m;
-            m.pos = v.pos, m.yaw = v.yaw, m.condition = v.condition;
-            if (spawn(m)) g_machines.push_back(m), ++n;
+        if (authority()) {
+            send_list(g_scene);  // (alone or host: ours; shown here)
+        } else {
+            net::Writer w = message(OpWant, g_scene);
+            netrt::send_packet(w, true);
+            g_want_at = now;
         }
-        if (n) logx::info("automat: %d machine(s) in %s", n, g_scene.c_str());
+    }
+    if (!authority() && !g_listed && g_want_at > 0 && now - g_want_at > 5000) {  // asked again (the host loading)
+        net::Writer w = message(OpWant, g_scene);
+        netrt::send_packet(w, true);
+        g_want_at = now;
     }
     for (Machine& m : g_machines) animate(m, now);
 }
@@ -680,39 +951,50 @@ void command(const std::string& args) {
     const game::PlayerState me = game::read_player();
     if (what == "postaw" || what.empty()) {
         const float yaw = me.yaw * 3.14159265f / 180.0f;
-        Machine m;
-        m.pos = Vector3{me.position.x + std::sin(yaw) * 1.3f, me.position.y, me.position.z + std::cos(yaw) * 1.3f};
-        m.yaw = me.yaw + 180.0f;
-        if (!spawn(m)) {
-            logx::warn("dev: automat: couldn't be made");
-            return;
+        const Vector3 pos{me.position.x + std::sin(yaw) * 1.3f, me.position.y, me.position.z + std::cos(yaw) * 1.3f};
+        const float myaw = me.yaw + 180.0f;
+        if (authority()) {
+            decide_place(g_scene, pos, myaw);
+        } else {
+            net::Writer w = message(OpPlace, g_scene);
+            w.put<float>(pos.x), w.put<float>(pos.y), w.put<float>(pos.z), w.put<float>(myaw);
+            netrt::send_packet(w, true);
         }
-        g_machines.push_back(m);
-        save_all();
-        logx::info("dev: automat placed at (%.2f, %.2f, %.2f) in %s", m.pos.x, m.pos.y, m.pos.z, g_scene.c_str());
         coop_notices::tell("Automat postawiony");
     } else if (what == "usun") {
         Machine* m = nearest(4.0f);
         if (!m) return coop_notices::tell("Automat: żadnego w pobliżu");
-        despawn(*m);
-        g_machines.erase(g_machines.begin() + (m - g_machines.data()));
-        save_all();
+        const uint32_t id = m->id;
+        if (authority()) {
+            decide_remove(g_scene, id);
+        } else {
+            net::Writer w = message(OpRemove, g_scene);
+            w.put<uint32_t>(id);
+            netrt::send_packet(w, true);
+        }
         coop_notices::tell("Automat usunięty");
     } else if (what == "stan") {
         int pct = 100;
         in >> pct;
         Machine* m = nearest(4.0f);
         if (!m) return coop_notices::tell("Automat: żadnego w pobliżu");
-        m->condition = std::clamp(pct, 0, 100) / 100.0f;
-        save_all();
-        logx::info("dev: automat condition %d%%", pct);
+        const float c = std::clamp(pct, 0, 100) / 100.0f;
+        if (authority()) {
+            decide_condition(g_scene, m->id, c);
+        } else {
+            net::Writer w = message(OpCondition, g_scene);
+            w.put<uint32_t>(m->id);
+            w.put<float>(c);
+            netrt::send_packet(w, true);
+        }
+        logx::info("dev: automat #%u condition %d%%", m->id, pct);
     } else if (what == "wynik") {
         in >> g_forced;
         logx::info("dev: automat: the next spin: %s", g_forced.c_str());
     } else if (what == "lista") {
         for (const Machine& m : g_machines)
-            logx::info("dev: automat at (%.2f, %.2f, %.2f), condition %.0f%%%s", m.pos.x, m.pos.y, m.pos.z, m.condition * 100,
-                       m.spinning ? ", spinning" : "");
+            logx::info("dev: automat #%u at (%.2f, %.2f, %.2f), condition %.0f%%%s", m.id, m.pos.x, m.pos.y, m.pos.z,
+                       m.condition * 100, m.spinning ? ", spinning" : "");
     } else {
         logx::warn("dev: automat: postaw | usun | stan N | wynik jackpot|trojka|para|zwrot|czaszka|zaciecie | lista");
     }

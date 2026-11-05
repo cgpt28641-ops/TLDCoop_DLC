@@ -1278,6 +1278,50 @@ void populate_detour(Il2CppObject* self, const MethodInfo* method) {
                    base_names.size());
 }
 
+// TLDCoop_DLC: more players, more on the floors too (Shatsca 05.11: "more items lying around in buildings, +50 % per
+// player, random of course, e.g. ammo"). Loose gear in a building is there by its own chance (GearItem.RollSpawnChance,
+// once, when the building is first loaded: m_RolledSpawnChance is saved). The host's game, in a building, with
+// friends: an item TLD's roll took away gets another chance ([loot] per_player again: 50 = half a roll more per player
+// beyond the first), the same for the spot every time. The friends get the host's loose items (world_items).
+using RollFn = void (*)(Il2CppObject* self, const MethodInfo* method);
+RollFn g_roll = nullptr;
+struct FloorApi {
+    ptrdiff_t chance = -1;                     // GearItem.m_SpawnChance (0..100)
+    const MethodInfo* active_self = nullptr;   // GameObject.get_activeSelf
+    const MethodInfo* set_active = nullptr;    // GameObject.SetActive
+    const MethodInfo* outdoors = nullptr;      // static GameManager.IsOutDoorsScene(string)
+} floor_api;
+int g_floor_logged = 0, g_floor_added = 0;
+void roll_detour(Il2CppObject* self, const MethodInfo* method) {
+    g_roll(self, method);
+    const size_t players = netrt::status().players.size() + 1;
+    if (!self || !hosting() || players < 2 || g_loot_per_player <= 0 || floor_api.chance < 0 || !alive(self)) return;
+    Il2CppObject* go = il2::invoke(api.component_go, self);
+    bool on = true;
+    if (!go || !il2::invoke_value(floor_api.active_self, go, on) || on) return;  // (it stayed: nothing to do)
+    if (floor_api.outdoors) {
+        bool out = false;
+        void* a[] = {il2::il2cpp_string_new(game::active_scene().c_str())};
+        if (il2::invoke_value(floor_api.outdoors, nullptr, out, a) && out) return;  // buildings only
+    }
+    const float p = std::clamp(il2::read_field<float>(self, floor_api.chance) / 100.0f, 0.0f, 1.0f);
+    if (p <= 0.0f || p >= 1.0f) return;
+    const double extra_rolls = g_loot_per_player / 100.0 * static_cast<double>(players - 1);
+    const double again = 1.0 - std::pow(1.0 - p, extra_rolls);  // the chance it's there after failing TLD's roll
+    const Vector3 at = position_of(self);
+    uint32_t h = static_cast<uint32_t>(std::lround(at.x * 100)) * 73856093u ^ static_cast<uint32_t>(std::lround(at.y * 100)) * 83492791u ^
+                 static_cast<uint32_t>(std::lround(at.z * 100)) * 19349663u ^ 0x9e3779b9u;
+    h ^= h >> 15, h *= 2246822519u, h ^= h >> 13;
+    if ((h >> 8) / 16777216.0 >= again) return;
+    bool yes = true;
+    void* a[] = {&yes};
+    il2::invoke(floor_api.set_active, go, a);
+    ++g_floor_added;
+    if (g_floor_logged++ < 30)
+        logx::info("items: %zu players: %s lies here after all (its chance %.0f%%, another %.0f%% for the players; %d so far)",
+                   players, name_of(self).c_str(), p * 100, again * 100, g_floor_added);
+}
+
 bool init() {
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
     Il2CppClass* transform = il2::find_class(kCore, "UnityEngine", "Transform");
@@ -1362,6 +1406,19 @@ bool init() {
             hook("Container.PopulateWithRandomGear", pop, &populate_detour, &g_populate))
             logx::info("containers: %d%% more loot in containers for each player beyond the first ([loot] per_player, the "
                        "host's)", g_loot_per_player);
+        Il2CppClass* gear_class = il2::find_class(kGame, "", "GearItem");
+        Il2CppClass* go_class = il2::find_class(kCore, "UnityEngine", "GameObject");
+        floor_api.chance = gear_class ? il2::field_offset_quiet(gear_class, "m_SpawnChance") : -1;
+        floor_api.active_self = go_class ? il2::find_method(go_class, "get_activeSelf", 0) : nullptr;
+        floor_api.set_active = go_class ? il2::find_method(go_class, "SetActive", 1) : nullptr;
+        floor_api.outdoors = game_manager ? il2::find_method_params(game_manager, "IsOutDoorsScene", {"System.String"}) : nullptr;
+        const MethodInfo* roll = gear_class ? il2::find_method_quiet(gear_class, "RollSpawnChance", 0) : nullptr;
+        if (roll && floor_api.chance >= 0 && floor_api.active_self && floor_api.set_active && floor_api.outdoors &&
+            hook("GearItem.RollSpawnChance", roll, &roll_detour, &g_roll))
+            logx::info("items: %d%% more loose items in buildings for each player beyond the first (the host's [loot] per_player)",
+                       g_loot_per_player);
+        else
+            logx::info("items: more loose items in buildings: unavailable (GearItem's spawn chance or calls missing)");
     }
     const bool opening = hook("Container.BeginContainerOpen", api.begin_open, &begin_open_detour, &g_begin_open) &&
                          hook("Container.ShowContainerContents", api.show, &show_detour, &g_show);

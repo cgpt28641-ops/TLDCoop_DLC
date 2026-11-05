@@ -918,3 +918,23 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   Tekstura bębnów ma tylko 3 symbole na pustym pasku → zrobić własny pasek 12 pól (ustalone symbole).
   Plan: siatki i tekstury wbudowane w DLL, Mesh składany w grze (bez Unity i bez zipa). Podgląd: tools/glb_preview.py.
 
+### 2026-11-05 ~17:30 UTC — AUTOMAT build 1 (test) + co-op; więcej przedmiotów na podłogach
+- „zaczynamy” (Karol 18:09), potem „od razu w co-op, bez błędów”. src/slot_machine.cpp/.h + slot_machine_model.inc
+  (tools/automat/gen_model.py: model GLB Karola → siatki/UV w Unity (x lustrzane, odwrócone trójkąty, v=1−v), kolory
+  wierzchołków → paleta 64×64, pasek bębna 12 pól z symboli z obrazka Karola → assets/automat/reel_strip.png).
+  Model składany w grze: Mesh/MeshFilter/MeshRenderer, shader „Shader Forge/TLD_StandardDiffuse”, tekstury przez
+  GetPixels32/SetPixels32, tablice przez il2cpp_array_new (nowe w OPTIONAL). Korzeń „MOD_TLDCoopAutomat” na warstwie 19
+  z BoxColliderem; hover „Automat — zagraj (stan N%)”, klik = losowanie; bębny wolno do zatrzymania (kolejno), korba
+  obrót, żarówka z Light (miga przy kręceniu, świeci przy wygranej, szybko miga przy jackpocie, mruga przy stanie <25%).
+  Zasady: czaszka na środkowym bębnie = przegrana, 3 złote ×5, 3 takie same ×3, para (nie czaszek) ×2, reszta zwrot;
+  zacięcie 2%→40% wg stanu, −3% stanu na losowanie, 0% = zepsuty. Napis z wynikiem tylko dla grającego.
+  Co-op: Msg::Automat = 57 (session.cpp: przyjmowany). Host trzyma wszystkie automaty (TLDCoop\automat_test.txt,
+  linia: scena|x y z yaw stan id), decyduje o losowaniu (busy 3,6 s), wysyła listę (OpList) i wynik (OpSpin) wszystkim;
+  przyjaciel prosi (OpWant/OpPlace/OpRemove/OpSpinWant/OpCondition). Solo = własny host. Bez test=1 wiadomości
+  odrzucane. Komendy (command.txt): „automat postaw|usun|stan N|wynik jackpot|trojka|para|zwrot|czaszka|zaciecie|lista”.
+  Jeszcze BEZ stawki/przedmiotów/przepisów/naprawy (następne buildy).
+- Shatsca (Discord 05.11 09:46): „+50% przedmiotów na ziemi w budynkach (losowo), np. amunicja” → world_containers:
+  hook GearItem.RollSpawnChance: host z przyjaciółmi, w budynku (nie IsOutDoorsScene), przedmiot który TLD zabrał
+  dostaje drugą szansę 1−(1−p)^(per_player/100·(gracze−1)) (deterministycznie wg miejsca), [loot] per_player jak w
+  pojemnikach. Działa tylko przy pierwszym ładowaniu budynku (m_RolledSpawnChance zapisywane).
+

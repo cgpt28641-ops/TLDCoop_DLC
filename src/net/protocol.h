@@ -224,7 +224,8 @@ enum class Msg : uint8_t {
     BloodMark = 41, SprayMark = 42, Features = 43, Report = 44, Chat = 45, AnimalHandover = 46,
     Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52, FlareShot = 53,
     LogsWant = 54, LogsFile = 55,
-    HouseLights = 56  // TLDCoop_DLC (v49): House Lights' switch in a scene: u8 on, scene[64] (either way; the host passes it on)
+    HouseLights = 56,  // TLDCoop_DLC (v49): House Lights' switch in a scene: u8 on, scene[64] (either way; the host passes it on)
+    Automat = 57       // TLDCoop_DLC: the slot machine (test builds): u8 op, scene blob, then the op's fields (src/slot_machine.cpp)
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
