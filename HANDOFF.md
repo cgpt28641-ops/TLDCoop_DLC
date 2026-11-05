@@ -1011,3 +1011,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (gdyby TLD zrobił go kopią wzoru, a nie przez nazwę).
 - Niepewne (do testu): czy stół liczy nasze płytki/mechanizm (po nazwie czy po GearItemData — oba się zgadzają z
   wzorem), czy wynik ląduje dobrze, ikony przepisów = ikony skopiowanego przepisu.
+
+### 2026-11-05 ~20:20 UTC — AUTOMAT 3b poprawki: płytka → złom, brak przepisów
+- Log Karola 20:09: płytka włożona do automatu była „1 x GEAR_ScrapMetal” — przeniesienie części stosu robi nowy
+  przedmiot przez m_PrefabReference (AssetReference) danych, a nie po nazwie. Teraz: nasza kopia GearItemData ma
+  własny obiekt AssetReference (ten sam GUID; nowy przez ctor(string), gdy Instantiate go współdzielił), a hooki
+  GearItem.InstantiateGearItem(AssetReference) i obu InstantiateAndDeserializeGearItem(AssetReference, …) ubierają
+  wynik, gdy referencja jest nasza.
+- Przepisy były dodane do BlueprintManager.m_AllBlueprints (log 20:07:18, kopia BLUEPRINT_GEAR_Arrow_A), ale panel
+  rzemiosła ma własną listę Panel_Crafting.m_Blueprints (zrobioną wcześniej) → hook RefreshAvailableBlueprints
+  dopisuje nasze przed odświeżeniem.

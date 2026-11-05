@@ -35,6 +35,7 @@ struct Def {
     float kg;
     uintptr_t data = 0;  // our GearItemData (a copy of the base's)
     uintptr_t title_s = 0, desc_s = 0;
+    uintptr_t ref = 0;   // our data's m_PrefabReference (TLD makes copies by it: a stack split)
 };
 
 Def g_defs[] = {
@@ -60,7 +61,7 @@ struct Api {
     const MethodInfo *make = nullptr;  // GearItem.InstantiateGearItem(string)
     Il2CppClass* lstring = nullptr;
     ptrdiff_t lstring_id = -1, gear_data = -1, gear_weight = -1, name_override = -1, desc_override = -1;
-    ptrdiff_t data_name = -1, data_desc = -1, data_weight = -1, data_placeable = -1;
+    ptrdiff_t data_name = -1, data_desc = -1, data_weight = -1, data_placeable = -1, data_ref = -1;
     ptrdiff_t panel_breakdown = -1, breakdown_name = -1;
     // recipes (build 3b)
     bool recipes = false;
@@ -134,6 +135,25 @@ Il2CppObject* data_for(Def& d, Il2CppObject* base_data) {
     if (Il2CppObject* n = new_lstring(std::string(d.key) + "_Desc")) il2::store_ref(copy, api.data_desc, n);
     if (const int64_t w = weight_of(d.kg)) put<int64_t>(copy, api.data_weight, w);
     put<bool>(copy, api.data_placeable, false);
+    // Its own prefab reference (same asset): a copy TLD makes by it (a stack split, into a container) is told apart
+    if (api.data_ref >= 0) {
+        Il2CppObject* ref = il2::read_field<Il2CppObject*>(copy, api.data_ref);
+        if (ref && ref == il2::read_field<Il2CppObject*>(base_data, api.data_ref)) {  // (shared: a new one)
+            Il2CppClass* k = il2::il2cpp_object_get_class(ref);
+            const MethodInfo* ctor = k ? il2::find_method_params_quiet(k, ".ctor", {"System.String"}) : nullptr;
+            Il2CppObject* mine = ctor ? il2::il2cpp_object_new(k) : nullptr;
+            if (mine) {
+                void* ca[] = {il2::read_field<Il2CppObject*>(ref, 0x10)};  // AssetReference.m_AssetGUID
+                il2::invoke(ctor, mine, ca);
+                il2::store_ref(copy, api.data_ref, mine);
+                ref = mine;
+            } else {
+                ref = nullptr;
+            }
+        }
+        if (ref) d.ref = il2::il2cpp_gchandle_new(ref, false);
+        logx::info("automat items: %s's prefab reference %s", d.name, ref ? "its own" : "SHARED (copies made by it become scrap)");
+    }
     d.data = il2::il2cpp_gchandle_new(copy, false);
     logx::info("automat items: %s's data made (from %s's)", d.name, d.base);
     return copy;
@@ -164,6 +184,35 @@ LocFn g_loc = nullptr;
 FinishFn g_finish = nullptr;
 bool g_drops = false;
 std::mt19937 g_rng{std::random_device{}()};
+
+Def* ref_def(Il2CppObject* ref) {
+    if (!ref) return nullptr;
+    for (Def& d : g_defs)
+        if (d.ref && target(d.ref) == ref) return &d;
+    return nullptr;
+}
+
+using MakeRefFn = Il2CppObject* (*)(Il2CppObject*, const MethodInfo*);
+MakeRefFn g_make_ref = nullptr;
+MakeLoadFn g_make_ref_text = nullptr, g_make_ref_proxy = nullptr;  // (the first argument is the AssetReference)
+
+Il2CppObject* make_ref_detour(Il2CppObject* ref, const MethodInfo* method) {
+    Il2CppObject* gi = g_make_ref(ref, method);
+    if (Def* d = ref_def(ref)) dress(gi, *d);
+    return gi;
+}
+Il2CppObject* make_ref_text_detour(Il2CppString* ref, Il2CppObject* saved, Il2CppObject* parent, bool fix, bool in_container,
+                                   const MethodInfo* method) {
+    Il2CppObject* gi = g_make_ref_text(ref, saved, parent, fix, in_container, method);
+    if (Def* d = ref_def(reinterpret_cast<Il2CppObject*>(ref))) dress(gi, *d);
+    return gi;
+}
+Il2CppObject* make_ref_proxy_detour(Il2CppString* ref, Il2CppObject* proxy, Il2CppObject* parent, bool fix, bool in_container,
+                                    const MethodInfo* method) {
+    Il2CppObject* gi = g_make_ref_proxy(ref, proxy, parent, fix, in_container, method);
+    if (Def* d = ref_def(reinterpret_cast<Il2CppObject*>(ref))) dress(gi, *d);
+    return gi;
+}
 
 Il2CppObject* make_detour(Il2CppString* name, const MethodInfo* method) {
     if (!starts_with(name, "GEAR_TLDCOOP_")) return g_make(name, method);
@@ -434,6 +483,33 @@ void keep_recipes() {
 }
 
 // Crafted: the result (made from our template by TLD) gets our name and data again, and is awake
+// The crafting panel keeps its own copy of the list (Panel_Crafting.m_Blueprints, made when it was first set up, before
+// ours were added): ours put in before it refreshes.
+using RefreshFn = void (*)(Il2CppObject*, const MethodInfo*);
+RefreshFn g_refresh = nullptr;
+ptrdiff_t g_panel_list = -1;
+void refresh_detour(Il2CppObject* self, const MethodInfo* method) {
+    Il2CppObject* list = self && g_panel_list >= 0 ? il2::read_field<Il2CppObject*>(self, g_panel_list) : nullptr;
+    if (list) {
+        static const MethodInfo* add = nullptr;
+        if (!add) add = il2::find_method(il2::il2cpp_object_get_class(list), "Add", 1);
+        int32_t n = 0;
+        Il2CppObject* items = list_items(list, n);
+        for (Recipe& r : g_recipes) {
+            Il2CppObject* bp = target(r.bp);
+            if (!alive(bp) || !add) continue;
+            bool in = false;
+            for (int32_t i = 0; i < n && static_cast<size_t>(i) < il2::array_length(items) && !in; ++i)
+                in = il2::array_object_at(items, static_cast<size_t>(i)) == bp;
+            if (in) continue;
+            void* a[] = {bp};
+            il2::invoke(add, list, a);
+            logx::info("automat items: recipe for %s put in the crafting panel's list", r.result);
+        }
+    }
+    g_refresh(self, method);
+}
+
 using ApplyFn = void (*)(Il2CppObject*, float, const MethodInfo*);
 ApplyFn g_apply = nullptr;
 void apply_detour(Il2CppObject* self, float hours, const MethodInfo* method) {
@@ -526,6 +602,7 @@ void init(bool drops) {
     api.data_desc = il2::field_offset(data, "m_LocalizedDescription");
     api.data_weight = il2::field_offset_quiet(data, "m_BaseWeight");
     api.data_placeable = il2::field_offset_quiet(data, "m_IsPlaceable");
+    api.data_ref = il2::field_offset_quiet(data, "m_PrefabReference");
     api.panel_breakdown = panel ? il2::field_offset_quiet(panel, "m_BreakDown") : -1;
     api.breakdown_name = breakdown ? il2::field_offset_quiet(breakdown, "m_LocalizedDisplayName") : -1;
     const MethodInfo* make_text = il2::find_method_params(gear, "InstantiateAndDeserializeGearItem",
@@ -544,6 +621,19 @@ void init(bool drops) {
     api.ok = hook("GearItem.InstantiateGearItem(string) (automat)", api.make, &make_detour, &g_make) &&
              hook("Localization.Get (automat)", get, &loc_detour, &g_loc);
     // (loading: saves and containers; without these a saved item of ours wouldn't come back)
+    {  // copies made by the prefab reference (a stack split into a container, etc.)
+        constexpr const char* kRef = "UnityEngine.AddressableAssets.AssetReference";
+        const MethodInfo* by_ref = il2::find_method_params(gear, "InstantiateGearItem", {kRef});
+        const MethodInfo* by_ref_text = il2::find_method_params(gear, "InstantiateAndDeserializeGearItem",
+                                                                {kRef, "System.String", "UnityEngine.Transform", "System.Boolean", "System.Boolean"});
+        const MethodInfo* by_ref_proxy = il2::find_method_params(gear, "InstantiateAndDeserializeGearItem",
+                                                                 {kRef, "GearItemSaveDataProxy", "UnityEngine.Transform", "System.Boolean", "System.Boolean"});
+        const bool refs = api.ok && api.data_ref >= 0 &&
+                          hook("GearItem.InstantiateGearItem(AssetReference) (automat)", by_ref, &make_ref_detour, &g_make_ref) &&
+                          hook("GearItem.InstantiateAndDeserializeGearItem(AssetReference, string) (automat)", by_ref_text, &make_ref_text_detour, &g_make_ref_text) &&
+                          hook("GearItem.InstantiateAndDeserializeGearItem(AssetReference, proxy) (automat)", by_ref_proxy, &make_ref_proxy_detour, &g_make_ref_proxy);
+        if (api.ok && !refs) logx::warn("automat items: copies by prefab reference aren't hooked (a split stack of ours becomes scrap)");
+    }
     const bool loads = api.ok &&
                        hook("GearItem.InstantiateAndDeserializeGearItem(string, string) (automat)", make_text, &make_text_detour, &g_make_text) &&
                        hook("GearItem.InstantiateAndDeserializeGearItem(string, proxy) (automat)", make_proxy, &make_proxy_detour, &g_make_proxy);
@@ -599,6 +689,12 @@ void init(bool drops) {
                       api.bp_count >= 0 && api.bp_minutes >= 0 && api.req_item >= 0 && api.req_count >= 0 &&
                       api.op_blueprint >= 0 && api.op_last >= 0 &&
                       hook("CraftingOperation.ApplyCraftingProgress (automat)", apply, &apply_detour, &g_apply);
+        if (Il2CppClass* pc = il2::find_class(kGame, "", "Panel_Crafting")) {
+            g_panel_list = il2::field_offset_quiet(pc, "m_Blueprints");
+            const MethodInfo* refresh = il2::find_method(pc, "RefreshAvailableBlueprints", 0);
+            if (!(api.recipes && g_panel_list >= 0 && hook("Panel_Crafting.RefreshAvailableBlueprints (automat)", refresh, &refresh_detour, &g_refresh)))
+                logx::warn("automat items: the crafting panel's list isn't hooked (the recipes may not show)");
+        }
         logx::info("automat items: recipes %s", api.recipes ? "on (workbench: mechanism, automat)" : "UNAVAILABLE (TLD calls missing)");
     }
     logx::info("automat items: %s; boards from electronics: %s", api.ok ? "ready (3 items)" : "UNAVAILABLE (hooks failed)",
