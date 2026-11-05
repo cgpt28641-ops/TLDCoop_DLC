@@ -769,10 +769,19 @@ void load_wear(Il2CppObject* gi, const std::string& gear) {
     if (alive(cl)) {
         const std::string text = json_string(gear, "m_ClothingItemSerialized");
         if (!text.empty()) {
-            for (auto [off, keys, what] : {std::tuple{api.wet, std::initializer_list<const char*>{"m_PercentWet"}, " wet"},
-                                           std::tuple{api.frozen, std::initializer_list<const char*>{"m_PercentFrozen"}, " frozen"}}) {
+            // (one key each, by value: an initializer_list nested in the loop's list dangled once the list was made, and
+            // json_first read freed stack as key pointers: szymon's game crashed on a friend's moved clothes, 05.11)
+            struct Part {
+                ptrdiff_t off;
+                const char* key;
+                const char* what;
+            };
+            const Part parts[] = {{api.wet, "m_PercentWet", " wet"}, {api.frozen, "m_PercentFrozen", " frozen"}};
+            for (const Part& p : parts) {
+                const ptrdiff_t off = p.off;
+                const char* what = p.what;
                 if (off < 0) continue;
-                const double theirs = json_first(text, keys);
+                const double theirs = json_first(text, {p.key});
                 if (theirs >= 0 && std::fabs(theirs - get<float>(cl, off)) > 0.5) {
                     put<float>(cl, off, static_cast<float>(theirs));
                     changed += what;
