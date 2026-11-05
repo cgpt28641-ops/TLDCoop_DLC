@@ -1476,6 +1476,7 @@ void on_frame(const std::string& scene, bool in_game) {
         g_listed = false;
     }
     receive();
+    automat_items::on_frame(in_game);  // (the recipes)
     if (!in_game) return;
     if (g_spawn_at > 0 && now >= g_spawn_at) {
         g_spawn_at = 0;

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <map>
+#include <vector>
 #include <random>
 #include <string>
 
@@ -60,6 +62,17 @@ struct Api {
     ptrdiff_t lstring_id = -1, gear_data = -1, gear_weight = -1, name_override = -1, desc_override = -1;
     ptrdiff_t data_name = -1, data_desc = -1, data_weight = -1, data_placeable = -1;
     ptrdiff_t panel_breakdown = -1, breakdown_name = -1;
+    // recipes (build 3b)
+    bool recipes = false;
+    Il2CppClass *go_class = nullptr, *required_class = nullptr, *tools_class = nullptr, *powder_class = nullptr, *liquid_class = nullptr;
+    const MethodInfo *go_ctor = nullptr, *go_set_active = nullptr, *go_tf = nullptr, *keep_loaded = nullptr;
+    const MethodInfo *instantiate_under = nullptr, *bpm_instance = nullptr, *required_ctor = nullptr, *init_tools = nullptr;
+    const MethodInfo *get_name = nullptr, *find_all = nullptr;
+    Il2CppObject* t_gear = nullptr;
+    ptrdiff_t bpm_all = -1, bp_required = -1, bp_tool = -1, bp_tools = -1, bp_powder = -1, bp_liquid = -1, bp_type = -1;
+    ptrdiff_t bp_decoration = -1, bp_result = -1, bp_count = -1, bp_minutes = -1, bp_locked = -1, bp_locked_prop = -1;
+    ptrdiff_t bp_ignore_lock = -1, bp_story = -1, bp_survival = -1, bp_location = -1, bp_fire = -1, bp_photo = -1;
+    ptrdiff_t req_item = -1, req_count = -1, req_units = -1, op_blueprint = -1, op_last = -1;
 } api;
 
 bool alive(Il2CppObject* o) { return o && il2::read_field<void*>(o, kCachedPtr) != nullptr; }
@@ -229,9 +242,228 @@ void finish_detour(Il2CppObject* self, const MethodInfo* method) {
     if (found && give(kBoard, 1)) coop_notices::tell("Znalazłeś płytkę elektroniczną");
 }
 
+
+// --- recipes (build 3b): both at the workbench (Karol 05.11: the milling machine only repairs in TLD) -------------
+// A copy of one of TLD's workbench blueprints, with our needs and result, added to BlueprintManager.m_AllBlueprints
+// (checked every 2 s: TLD builds the list again for a new game). The results and our needs are "templates": an item
+// of ours made under an inactive object (so it's never awake, never in the world or a save), kept across scenes.
+
+struct Need { const char* name; int count; };
+struct Recipe {
+    const char* result;
+    int minutes;
+    Need needs[5];
+    uintptr_t bp = 0;
+};
+Recipe g_recipes[] = {
+    {kMechanism, 60, {{"GEAR_ScrapMetal", 4}, {kBoard, 1}}},
+    {kAutomat, 180, {{kMechanism, 1}, {kBoard, 2}, {"GEAR_ScrapMetal", 6}, {"GEAR_ReclaimedWoodB", 4}, {"GEAR_Cloth", 2}}},
+};
+uintptr_t g_holder = 0;                       // the inactive object our templates live under
+std::map<std::string, uintptr_t> g_templates;  // ours (and base items not found in TLD's blueprints)
+double g_recipes_at = 0;
+bool g_recipes_logged = false;
+
+std::string name_of_object(Il2CppObject* o) {
+    return alive(o) ? text(reinterpret_cast<Il2CppString*>(il2::invoke(api.get_name, o))) : std::string();
+}
+
+Il2CppObject* list_items(Il2CppObject* list, int32_t& count) {
+    count = list ? il2::read_field<int32_t>(list, 0x18) : 0;
+    return list ? il2::read_field<Il2CppObject*>(list, 0x10) : nullptr;
+}
+
+Il2CppObject* holder() {
+    if (Il2CppObject* h = target(g_holder); alive(h)) return h;
+    if (g_holder) il2::il2cpp_gchandle_free(g_holder), g_holder = 0;
+    Il2CppObject* go = il2::il2cpp_object_new(api.go_class);
+    if (!go) return nullptr;
+    void* ca[] = {il2::il2cpp_string_new("MOD_TLDCoopAutomatTemplates")};
+    il2::invoke(api.go_ctor, go, ca);
+    bool off = false;
+    void* aa[] = {&off};
+    il2::invoke(api.go_set_active, go, aa);
+    void* ka[] = {go};
+    il2::invoke(api.keep_loaded, nullptr, ka);
+    g_holder = il2::il2cpp_gchandle_new(go, false);
+    return go;
+}
+
+// One of TLD's GearItems (prefab) by name, from the blueprints' needs and results
+std::map<std::string, Il2CppObject*> game_items(Il2CppObject* all) {
+    std::map<std::string, Il2CppObject*> out;
+    int32_t n = 0;
+    Il2CppObject* items = list_items(all, n);
+    for (int32_t i = 0; i < n && static_cast<size_t>(i) < il2::array_length(items); ++i) {
+        Il2CppObject* bp = il2::array_object_at(items, static_cast<size_t>(i));
+        if (!alive(bp)) continue;
+        if (Il2CppObject* r = il2::read_field<Il2CppObject*>(bp, api.bp_result); alive(r)) out.emplace(name_of_object(r), r);
+        Il2CppObject* req = il2::read_field<Il2CppObject*>(bp, api.bp_required);
+        for (size_t k = 0; k < il2::array_length(req); ++k)
+            if (Il2CppObject* rg = il2::array_object_at(req, k))
+                if (Il2CppObject* gi = il2::read_field<Il2CppObject*>(rg, api.req_item); alive(gi)) out.emplace(name_of_object(gi), gi);
+    }
+    return out;
+}
+
+// A template of `name`: ours dressed, or a copy of a game item's prefab (when TLD's blueprints don't hold it)
+Il2CppObject* template_of(const std::string& name, const std::map<std::string, Il2CppObject*>& game) {
+    if (const auto it = g_templates.find(name); it != g_templates.end())
+        if (Il2CppObject* t = target(it->second); alive(t)) return t;
+    Def* d = def_of(name);
+    const std::string base = d ? d->base : name;
+    const auto g = game.find(base);
+    if (!d && g != game.end()) return g->second;  // (the game's own prefab: what TLD's blueprints use)
+    Il2CppObject* from = g != game.end() ? g->second : nullptr;
+    if (!from) {  // not in any blueprint: a loaded one of that name (a prefab, or one in the world: copied)
+        void* fa[] = {api.t_gear};
+        Il2CppObject* all = api.find_all ? il2::invoke(api.find_all, nullptr, fa) : nullptr;
+        for (size_t i = 0; i < il2::array_length(all) && !from; ++i) {
+            Il2CppObject* gi = il2::array_object_at(all, i);
+            if (alive(gi) && std::string(net::gear_base_name(name_of_object(gi))) == base) from = gi;
+        }
+    }
+    Il2CppObject* h = holder();
+    if (!from || !h) return nullptr;
+    void* a[] = {from, il2::invoke(api.go_tf, h)};
+    Il2CppObject* gi = il2::invoke(api.instantiate_under, nullptr, a);  // (a GearItem's copy is its GearItem)
+    if (!alive(gi)) return nullptr;
+    if (d) {
+        dress(gi, *d);
+    } else {
+        void* na[] = {il2::il2cpp_string_new(base.c_str())};
+        il2::invoke(api.set_name, il2::invoke(api.component_go, gi), na);
+    }
+    g_templates[name] = il2::il2cpp_gchandle_new(gi, false);
+    logx::info("automat items: template %s (from %s)", name.c_str(), g != game.end() ? "a blueprint's item" : "a loaded item");
+    return gi;
+}
+
+Il2CppObject* make_blueprint(Recipe& r, Il2CppObject* source, const std::map<std::string, Il2CppObject*>& game) {
+    Il2CppObject* result = template_of(r.result, game);
+    if (!result) return nullptr;
+    size_t n = 0;
+    while (n < std::size(r.needs) && r.needs[n].name) ++n;
+    Il2CppObject* needs = il2::il2cpp_array_new ? il2::il2cpp_array_new(api.required_class, n) : nullptr;
+    if (!needs) return nullptr;
+    for (size_t i = 0; i < n; ++i) {
+        Il2CppObject* item = template_of(r.needs[i].name, game);
+        if (!item) {
+            logx::warn("automat items: recipe for %s: %s not found", r.result, r.needs[i].name);
+            return nullptr;
+        }
+        Il2CppObject* rg = il2::il2cpp_object_new(api.required_class);
+        il2::invoke(api.required_ctor, rg);
+        il2::store_ref(rg, api.req_item, item);
+        put<int32_t>(rg, api.req_count, r.needs[i].count);
+        put<int32_t>(rg, api.req_units, 0);  // Count
+        il2::store_ref(needs, 0x20 + static_cast<ptrdiff_t>(i * sizeof(void*)), rg);
+    }
+    void* ia[] = {source};
+    Il2CppObject* bp = il2::invoke(api.instantiate, nullptr, ia);
+    if (!bp) return nullptr;
+    int32_t flags = kDontUnload;
+    void* fa[] = {&flags};
+    il2::invoke(api.hide_flags, bp, fa);
+    void* na[] = {il2::il2cpp_string_new((std::string("BLUEPRINT_") + r.result).c_str())};
+    il2::invoke(api.set_name, bp, na);
+    il2::store_ref(bp, api.bp_required, needs);
+    il2::store_ref(bp, api.bp_tool, nullptr);
+    if (api.tools_class) il2::store_ref(bp, api.bp_tools, il2::il2cpp_array_new(api.tools_class, 0));
+    if (api.powder_class) il2::store_ref(bp, api.bp_powder, il2::il2cpp_array_new(api.powder_class, 0));
+    if (api.liquid_class) il2::store_ref(bp, api.bp_liquid, il2::il2cpp_array_new(api.liquid_class, 0));
+    put<int32_t>(bp, api.bp_type, 0);  // StandardGear
+    il2::store_ref(bp, api.bp_decoration, nullptr);
+    il2::store_ref(bp, api.bp_result, result);
+    put<int32_t>(bp, api.bp_count, 1);
+    put<int32_t>(bp, api.bp_minutes, r.minutes);
+    put<bool>(bp, api.bp_locked, false);
+    put<bool>(bp, api.bp_locked_prop, false);
+    put<bool>(bp, api.bp_ignore_lock, true);
+    put<bool>(bp, api.bp_story, false);
+    put<bool>(bp, api.bp_survival, false);
+    put<int32_t>(bp, api.bp_location, 1);  // Workbench
+    put<bool>(bp, api.bp_fire, false);
+    put<bool>(bp, api.bp_photo, false);
+    if (api.init_tools) il2::invoke(api.init_tools, bp);
+    r.bp = il2::il2cpp_gchandle_new(bp, false);
+    return bp;
+}
+
+void keep_recipes() {
+    Il2CppObject* bpm = il2::invoke(api.bpm_instance, nullptr);
+    Il2CppObject* all = alive(bpm) ? il2::read_field<Il2CppObject*>(bpm, api.bpm_all) : nullptr;
+    int32_t n = 0;
+    Il2CppObject* items = list_items(all, n);
+    if (!all || n <= 0) return;  // (not loaded yet)
+    Il2CppObject* source = nullptr;
+    std::vector<Recipe*> missing;
+    for (Recipe& r : g_recipes) {
+        Il2CppObject* bp = target(r.bp);
+        bool in = false;
+        for (int32_t i = 0; bp && i < n && static_cast<size_t>(i) < il2::array_length(items) && !in; ++i)
+            in = il2::array_object_at(items, static_cast<size_t>(i)) == bp;
+        if (!in) missing.push_back(&r);
+    }
+    if (missing.empty()) return;
+    for (int32_t i = 0; i < n && static_cast<size_t>(i) < il2::array_length(items) && !source; ++i) {
+        Il2CppObject* bp = il2::array_object_at(items, static_cast<size_t>(i));
+        if (alive(bp) && il2::read_field<int32_t>(bp, api.bp_location) == 1 && il2::read_field<int32_t>(bp, api.bp_type) == 0 &&
+            alive(il2::read_field<Il2CppObject*>(bp, api.bp_result)))
+            source = bp;
+    }
+    if (!source) {
+        if (!g_recipes_logged) logx::warn("automat items: no workbench blueprint to copy; no recipes"), g_recipes_logged = true;
+        return;
+    }
+    const auto game = game_items(all);
+    static const MethodInfo* add = nullptr;
+    if (!add) add = il2::find_method(il2::il2cpp_object_get_class(all), "Add", 1);
+    for (Recipe* r : missing) {
+        Il2CppObject* bp = target(r->bp);
+        if (!alive(bp)) {
+            if (r->bp) il2::il2cpp_gchandle_free(r->bp), r->bp = 0;
+            bp = make_blueprint(*r, source, game);
+        }
+        if (!bp || !add) continue;
+        void* a[] = {bp};
+        il2::invoke(add, all, a);
+        logx::info("automat items: recipe for %s added at the workbench (%d min; from %s's copy)", r->result, r->minutes,
+                   name_of_object(source).c_str());
+    }
+}
+
+// Crafted: the result (made from our template by TLD) gets our name and data again, and is awake
+using ApplyFn = void (*)(Il2CppObject*, float, const MethodInfo*);
+ApplyFn g_apply = nullptr;
+void apply_detour(Il2CppObject* self, float hours, const MethodInfo* method) {
+    g_apply(self, hours, method);
+    Il2CppObject* bp = self ? il2::read_field<Il2CppObject*>(self, api.op_blueprint) : nullptr;
+    if (!bp) return;
+    for (Recipe& r : g_recipes) {
+        if (target(r.bp) != bp) continue;
+        Il2CppObject* gi = il2::read_field<Il2CppObject*>(self, api.op_last);
+        Def* d = def_of(r.result);
+        if (!alive(gi) || !d) return;
+        Il2CppObject* go = il2::invoke(api.component_go, gi);
+        if (name_of_object(go) != d->name) {
+            dress(gi, *d);
+            logx::info("automat items: crafted %s", d->name);
+        }
+        return;
+    }
+}
 }  // namespace
 
 bool ready() { return api.ok; }
+
+void on_frame(bool in_game) {
+    if (!api.recipes || !in_game) return;
+    const double now = static_cast<double>(GetTickCount64());
+    if (now < g_recipes_at) return;
+    g_recipes_at = now + 2000;
+    keep_recipes();
+}
 
 std::string resolve_name(const std::string& which) {
     for (const Def& d : g_defs)
@@ -318,6 +550,57 @@ void init(bool drops) {
     if (api.ok && !loads) logx::warn("automat items: loading saved ones isn't hooked (one InstantiateAndDeserializeGearItem missing)");
     const MethodInfo* finish = panel ? il2::find_method(panel, "BreakDownFinished", 0) : nullptr;
     const bool boards = api.ok && hook("Panel_BreakDown.BreakDownFinished (automat)", finish, &finish_detour, &g_finish);
+    // recipes (test only for now)
+    if (api.ok && drops) {
+        Il2CppClass* bpd = il2::find_class(kGame, "TLD.Gear", "BlueprintData");
+        Il2CppClass* bpm = il2::find_class(kGame, "TLD.Gear", "BlueprintManager");
+        Il2CppClass* op = il2::find_class(kGame, "TLD.Gear", "CraftingOperation");
+        api.go_class = il2::find_class(kCore, "UnityEngine", "GameObject");
+        api.required_class = bpd ? il2::find_nested_class(bpd, "RequiredGearItem") : nullptr;
+        api.powder_class = bpd ? il2::find_nested_class(bpd, "RequiredPowder") : nullptr;
+        api.liquid_class = bpd ? il2::find_nested_class(bpd, "RequiredLiquid") : nullptr;
+        api.tools_class = il2::find_class(kGame, "", "ToolsItem");
+        api.go_ctor = api.go_class ? il2::find_method_params(api.go_class, ".ctor", {"System.String"}) : nullptr;
+        api.go_set_active = api.go_class ? il2::find_method(api.go_class, "SetActive", 1) : nullptr;
+        api.go_tf = api.go_class ? il2::find_method(api.go_class, "get_transform", 0) : nullptr;
+        api.keep_loaded = il2::find_method_params(object, "DontDestroyOnLoad", {"UnityEngine.Object"});
+        api.instantiate_under = il2::find_method_params(object, "Instantiate", {"UnityEngine.Object", "UnityEngine.Transform"});
+        api.get_name = il2::find_method(object, "get_name", 0);
+        api.t_gear = il2::type_object(gear);
+        if (Il2CppClass* res = il2::find_class(kCore, "UnityEngine", "Resources"))
+            api.find_all = il2::find_method_params(res, "FindObjectsOfTypeAll", {"System.Type"});
+        api.bpm_instance = bpm ? il2::find_method(bpm, "get_Instance", 0) : nullptr;
+        api.bpm_all = bpm ? il2::field_offset(bpm, "m_AllBlueprints") : -1;
+        api.required_ctor = api.required_class ? il2::find_method(api.required_class, ".ctor", 0) : nullptr;
+        api.init_tools = bpd ? il2::find_method_quiet(bpd, "InitializeOptionalTools", 0) : nullptr;
+        struct F { ptrdiff_t* at; const char* name; };
+        if (bpd)
+            for (const F& f : {F{&api.bp_required, "m_RequiredGear"}, F{&api.bp_tool, "m_RequiredTool"}, F{&api.bp_tools, "m_OptionalTools"},
+                               F{&api.bp_powder, "m_RequiredPowder"}, F{&api.bp_liquid, "m_RequiredLiquid"},
+                               F{&api.bp_type, "m_CraftingResultType"}, F{&api.bp_decoration, "m_CraftedResultDecoration"},
+                               F{&api.bp_result, "m_CraftedResultGear"}, F{&api.bp_count, "m_CraftedResultCount"},
+                               F{&api.bp_minutes, "m_DurationMinutes"}, F{&api.bp_locked, "m_Locked"},
+                               F{&api.bp_locked_prop, "<Locked>k__BackingField"}, F{&api.bp_ignore_lock, "m_IgnoreLockInSurvival"},
+                               F{&api.bp_story, "m_AppearsInStoryOnly"}, F{&api.bp_survival, "m_AppearsInSurvivalOnly"},
+                               F{&api.bp_location, "m_RequiredCraftingLocation"}, F{&api.bp_fire, "m_RequiresLitFire"},
+                               F{&api.bp_photo, "m_UsesPhoto"}})
+                *f.at = il2::field_offset_quiet(bpd, f.name);
+        if (api.required_class) {
+            api.req_item = il2::field_offset_quiet(api.required_class, "m_Item");
+            api.req_count = il2::field_offset_quiet(api.required_class, "m_Count");
+            api.req_units = il2::field_offset_quiet(api.required_class, "m_Units");
+        }
+        api.op_blueprint = op ? il2::field_offset_quiet(op, "<Blueprint>k__BackingField") : -1;
+        api.op_last = op ? il2::field_offset_quiet(op, "m_LastCraftedItem") : -1;
+        const MethodInfo* apply = op ? il2::find_method(op, "ApplyCraftingProgress", 1) : nullptr;
+        api.recipes = il2::il2cpp_array_new && api.go_ctor && api.go_set_active && api.go_tf && api.keep_loaded &&
+                      api.instantiate_under && api.get_name && api.bpm_instance && api.bpm_all >= 0 && api.required_ctor &&
+                      api.bp_required >= 0 && api.bp_result >= 0 && api.bp_location >= 0 && api.bp_type >= 0 &&
+                      api.bp_count >= 0 && api.bp_minutes >= 0 && api.req_item >= 0 && api.req_count >= 0 &&
+                      api.op_blueprint >= 0 && api.op_last >= 0 &&
+                      hook("CraftingOperation.ApplyCraftingProgress (automat)", apply, &apply_detour, &g_apply);
+        logx::info("automat items: recipes %s", api.recipes ? "on (workbench: mechanism, automat)" : "UNAVAILABLE (TLD calls missing)");
+    }
     logx::info("automat items: %s; boards from electronics: %s", api.ok ? "ready (3 items)" : "UNAVAILABLE (hooks failed)",
                !boards ? "unavailable" : drops ? "on (1 in 3)" : "off (test=0)");
 }

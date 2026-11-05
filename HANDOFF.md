@@ -994,3 +994,20 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Naprawa: płytka włożona do automatu (jak stawka) = +25% każda, zużywane tyle ile trzeba (Container.DestroyGear),
   stan przez OpCondition/decide_condition; nadmiar wraca do plecaka jako zakazany („części automatu”).
 - command.txt: „automat daj plytka|mechanizm|automat [N]” (do plecaka, przez nasz hook).
+
+### 2026-11-05 ~21:00 UTC — AUTOMAT build 3b: przepisy na stole warsztatowym
+- Frezarka w TLD (MillingMachine/Panel_Milling) tylko naprawia (Millable), bez przepisów → Karol (pytanie): mechanizm
+  też na stole warsztatowym. CraftingLocation: 1 = Workbench.
+- automat_items.cpp: co 2 s (tylko test=1) BlueprintManager.get_Instance().m_AllBlueprints — brakujące nasze przepisy
+  dodawane (List.Add): kopia (Object.Instantiate) pierwszego przepisu ze stołu z przedmiotem jako wynikiem, nowe
+  m_RequiredGear (RequiredGearItem: m_Item, m_Count, m_Units=Count), puste narzędzia/proch/płyny, m_CraftedResultGear,
+  1 sztuka, czas, odblokowany, Workbench, InitializeOptionalTools().
+  Mechanizm: 4 GEAR_ScrapMetal + 1 płytka, 60 min. Automat: mechanizm + 2 płytki + 6 złomu + 4 GEAR_ReclaimedWoodB +
+  2 GEAR_Cloth, 180 min.
+- Wzory (templates): przedmioty gry z wymagań/wyników przepisów TLD; brakujące i nasze: kopia (Instantiate pod
+  nieaktywnym „MOD_TLDCoopAutomatTemplates”, DontDestroyOnLoad → nigdy nie budzone, nie w świecie/zapisie); nasze
+  ubrane (dress). Źródło gdy nie ma w przepisach: Resources.FindObjectsOfTypeAll(GearItem) po nazwie.
+- Hook CraftingOperation.ApplyCraftingProgress: gdy przepis nasz, m_LastCraftedItem dostaje naszą nazwę i dane
+  (gdyby TLD zrobił go kopią wzoru, a nie przez nazwę).
+- Niepewne (do testu): czy stół liczy nasze płytki/mechanizm (po nazwie czy po GearItemData — oba się zgadzają z
+  wzorem), czy wynik ląduje dobrze, ikony przepisów = ikony skopiowanego przepisu.

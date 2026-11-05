@@ -17,6 +17,7 @@ constexpr const char* kMechanism = "GEAR_TLDCOOP_Mechanizm";
 constexpr const char* kAutomat = "GEAR_TLDCOOP_Automat";
 
 void init(bool drops);
+void on_frame(bool in_game);  // the recipes, kept in TLD's list (test only for now)
 bool ready();
 // "plytka" | "mechanizm" | "automat" (or a GEAR_ name) -> ours, or "" if it isn't one
 std::string resolve_name(const std::string& which);
