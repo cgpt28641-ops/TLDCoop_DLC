@@ -221,16 +221,18 @@ bool build_shared() {
 
 enum Op : uint8_t {
     OpList = 1, OpWant = 2, OpPlace = 3, OpRemove = 4, OpSpinWant = 5, OpSpin = 6, OpCondition = 7, OpBusy = 8,
-    OpOpenWant = 9, OpOpenOk = 10, OpContents = 11  // build 2: the stake
+    OpOpenWant = 9, OpOpenOk = 10, OpContents = 11,  // build 2: the stake
+    OpPickWant = 12, OpPicked = 13                    // build 3c: picked up into the pack
 };
 // Why the host said no (OpBusy)
-enum Busy : uint8_t { BusySpinning = 0, BusyBroken = 1, BusyUsed = 2, BusyLocked = 3, BusyEmpty = 4 };
+enum Busy : uint8_t { BusySpinning = 0, BusyBroken = 1, BusyUsed = 2, BusyLocked = 3, BusyEmpty = 4, BusyNotEmpty = 5 };
 const char* busy_text(uint8_t why) {
     switch (why) {
         case BusyBroken: return "Automat jest zepsuty — trzeba go naprawić płytką elektroniczną";
         case BusyUsed: return "Ktoś inny używa tego automatu";
         case BusyLocked: return "Najpierw odbierz wygraną z automatu";
         case BusyEmpty: return "Włóż stawkę do automatu";
+        case BusyNotEmpty: return "Najpierw opróżnij automat";
         default: return "Automat jest zajęty";
     }
 }
@@ -827,6 +829,40 @@ void decide_contents(const std::string& scene, uint32_t id, bool locked, const s
     else netrt::send_packet_except(from, w, true);
 }
 
+void decide_remove(const std::string& scene, uint32_t id);  // below
+
+// The machine picked up by us: the automat into the pack, with its condition
+void picked_up(float condition) {
+    if (automat_items::give_automat(condition)) coop_notices::tell("Automat w plecaku");
+    else coop_notices::tell("Automat: nie udało się go podnieść (zobacz log)");
+}
+
+// Host / alone: player `who` picks machine `id` up (only an empty one, not in use)
+void decide_pick(const std::string& scene, uint32_t id, uint8_t who) {
+    Rec* r = find_rec(scene, id);
+    if (!r) return;
+    const double now = now_ms();
+    if (now < r->busy_until) return refuse(scene, id, who, BusySpinning, "pick up");
+    if (r->holder != kNobody && r->holder != who && now < r->held_until) return refuse(scene, id, who, BusyUsed, "pick up");
+    if (r->locked || !r->text.empty()) {
+        // (an empty container's text isn't empty: what's in it is what counts)
+        bool empty = !r->locked;
+        if (empty && r->text.find("\"m_SerializedItems\":[]") == std::string::npos) empty = false;
+        if (!empty) return refuse(scene, id, who, BusyNotEmpty, "pick up");
+    }
+    const float condition = r->condition;
+    logx::info("automat: #%u picked up by player %u (condition %.0f%%)", id, who, condition * 100);
+    decide_remove(scene, id);
+    if (who == self_id()) {
+        picked_up(condition);
+    } else if (connected()) {
+        net::Writer w = message(OpPicked, scene);
+        w.put<uint32_t>(id);
+        w.put<float>(condition);
+        netrt::send_packet_to(who, w, true);
+    }
+}
+
 // Host: a friend's copy of every machine's contents in a scene (after its list)
 void send_contents_to(const std::string& scene, uint8_t to) {
     const auto it = g_store.find(scene);
@@ -881,10 +917,11 @@ void decide_spin(const std::string& scene, uint32_t id, const std::string& force
     }
 }
 
-void decide_place(const std::string& scene, const Vector3& pos, float yaw) {
+void decide_place(const std::string& scene, const Vector3& pos, float yaw, float condition = 1.0f) {
     Rec r;
     r.id = g_next_id++;
     r.pos = pos, r.yaw = yaw;
+    r.condition = std::clamp(condition, 0.0f, 1.0f);
     g_store[scene].push_back(r);
     save_store();
     logx::info("automat: #%u placed in %s at (%.2f, %.2f, %.2f)", r.id, scene.c_str(), pos.x, pos.y, pos.z);
@@ -952,7 +989,19 @@ void receive() {
             case OpPlace: {
                 Vector3 pos{r.get<float>(), r.get<float>(), r.get<float>()};
                 const float yaw = r.get<float>();
-                if (host && r.ok()) decide_place(scene, pos, yaw);
+                const float cond = r.left() >= sizeof(float) ? r.get<float>() : 1.0f;
+                if (host && r.ok()) decide_place(scene, pos, yaw, cond);
+                break;
+            }
+            case OpPickWant: {
+                const uint32_t id = r.get<uint32_t>();
+                if (host && r.ok()) decide_pick(scene, id, p.from);
+                break;
+            }
+            case OpPicked: {
+                r.get<uint32_t>();
+                const float cond = r.get<float>();
+                if (!host && r.ok()) picked_up(cond);
                 break;
             }
             case OpRemove: {
@@ -1032,6 +1081,15 @@ void ask_open(Machine& m, bool refresh) {
     net::Writer w = message(OpOpenWant, g_scene);
     w.put<uint32_t>(m.id);
     w.put<uint8_t>(refresh ? 1 : 0);
+    netrt::send_packet(w, true);
+}
+
+void ask_pick(Machine& m) {
+    if (m.spinning) return coop_notices::tell(busy_text(BusySpinning));
+    if (m.locked) return coop_notices::tell(busy_text(BusyNotEmpty));
+    if (authority()) return decide_pick(g_scene, m.id, self_id());
+    net::Writer w = message(OpPickWant, g_scene);
+    w.put<uint32_t>(m.id);
     netrt::send_packet(w, true);
 }
 
@@ -1236,20 +1294,29 @@ void hud_detour(Il2CppObject* self, Il2CppObject* hud, const MethodInfo* method)
     Machine* m = machine_under_crosshairs(self);
     if (!m) return;
     char text[96];
-    const char* what = m->spinning ? "kręci się…" : !box.ok ? "zagraj" : m->locked ? "odbierz wygraną" : "otwórz";
+    const char* what = m->spinning ? "kręci się…" : !box.ok ? "zagraj" : m->locked ? "odbierz wygraną"
+                                                                         : "otwórz (przytrzymaj: podnieś)";
     snprintf(text, sizeof(text), "Automat — %s, stan %d%%", what, static_cast<int>(std::lround(m->condition * 100)));
     int state = kHoverCanInteract;
     void* a[] = {il2::il2cpp_string_new(text), target(m->root), &state};
     il2::invoke(api.set_hover, hud, a);
 }
 
+uint32_t g_press_id = 0;  // the machine clicked, the button not let go yet
+double g_press_at = 0;
+
 bool interact_detour(Il2CppObject* self, const MethodInfo* method) {
     bool r = g_interact(self, method);
     if (!g_test) return r;
     Machine* m = machine_under_crosshairs(self);
     if (!m) return r;
-    if (box.ok) ask_open(*m, false);
-    else ask_spin(*m);  // (no container: build 1's click)
+    if (!box.ok) {
+        ask_spin(*m);  // (no container: build 1's click)
+        return true;
+    }
+    // build 3c: a click opens it; held (1 s), it's picked up (decided once the button is let go or the second is up)
+    g_press_id = m->id;
+    g_press_at = now_ms();
     return true;
 }
 
@@ -1502,6 +1569,44 @@ void on_frame(const std::string& scene, bool in_game) {
     }
     for (Machine& m : g_machines)  // still open here: still ours (the host lets go after a minute without word)
         if (m.open && now - m.hold_at > kHoldRefreshMs) ask_open(m, true);
+    if (g_press_id) {  // build 3c: a click (opens) or held a second (picks up)
+        const bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (!down || now - g_press_at >= 1000) {
+            Machine* m = shown(g_press_id);
+            g_press_id = 0;
+            if (m) {
+                if (down) ask_pick(*m);
+                else ask_open(*m, false);
+            }
+        }
+    }
+    // build 3c: an automat dropped from the pack: once it lies still (1.2 s), a machine there, facing us
+    static std::vector<std::pair<uintptr_t, double>> dropped;
+    while (Il2CppObject* gi = automat_items::take_dropped()) dropped.emplace_back(hold(gi), now + 1200);
+    for (size_t i = 0; i < dropped.size();) {
+        if (now < dropped[i].second) {
+            ++i;
+            continue;
+        }
+        Il2CppObject* gi = target(dropped[i].first);
+        drop(dropped[i].first);
+        dropped.erase(dropped.begin() + static_cast<ptrdiff_t>(i));
+        Vector3 pos{};
+        if (!alive(gi) || !automat_items::position_of(gi, pos.x, pos.y, pos.z)) continue;
+        const float cond = automat_items::condition_of(gi);
+        const game::PlayerState me = game::read_player();
+        const float yaw = std::atan2(me.position.x - pos.x, me.position.z - pos.z) * 180.0f / 3.14159265f;
+        automat_items::destroy(gi);
+        if (authority()) {
+            decide_place(g_scene, pos, yaw, cond);
+        } else {
+            net::Writer w = message(OpPlace, g_scene);
+            w.put<float>(pos.x), w.put<float>(pos.y), w.put<float>(pos.z), w.put<float>(yaw), w.put<float>(cond);
+            netrt::send_packet(w, true);
+        }
+        logx::info("automat: placed from the pack at (%.2f, %.2f, %.2f), condition %.0f%%", pos.x, pos.y, pos.z, cond * 100);
+        coop_notices::tell("Automat postawiony");
+    }
     // TLDCoop_DLC: the key (no command.txt needed): places one in front of us; with Shift, removes the nearest
     static bool was_down = false;
     DWORD pid = 0;

@@ -36,7 +36,10 @@ struct Def {
     uintptr_t data = 0;  // our GearItemData (a copy of the base's)
     uintptr_t title_s = 0, desc_s = 0;
     uintptr_t ref = 0;   // our data's m_PrefabReference (TLD makes copies by it: a stack split)
+    uintptr_t tex = 0;   // its icon (Karol's picture, src/automat_icons.inc), made on first use
 };
+
+#include "automat_icons.inc"
 
 Def g_defs[] = {
     {kBoard, "plytka", "GEAR_ScrapMetal", "TLDCOOP_Plytka", "Płytka elektroniczna",
@@ -62,6 +65,8 @@ struct Api {
     Il2CppClass* lstring = nullptr;
     ptrdiff_t lstring_id = -1, gear_data = -1, gear_weight = -1, name_override = -1, desc_override = -1;
     ptrdiff_t data_name = -1, data_desc = -1, data_weight = -1, data_placeable = -1, data_ref = -1;
+    ptrdiff_t gear_hp = -1, data_max_hp = -1;                 // build 3c: the automat's condition, carried
+    const MethodInfo *destroy = nullptr, *tf_get_pos = nullptr, *component_tf = nullptr;
     ptrdiff_t panel_breakdown = -1, breakdown_name = -1;
     // recipes (build 3b)
     bool recipes = false;
@@ -529,9 +534,161 @@ void apply_detour(Il2CppObject* self, float hours, const MethodInfo* method) {
         return;
     }
 }
+
+// --- icons: Karol's pictures (assets/automat, 256 px PNG in src/automat_icons.inc) ---------------------------------
+// TLD finds an item's icon by its prefab's name (Addressables): ours has none, the slot was empty. Utils' icon calls
+// (inventory, by data or by prefab name), the inspect picture (coverflow) and the recipe's icon give ours.
+
+struct IconApi {
+    bool ok = false;
+    Il2CppClass *tex_class = nullptr, *byte_class = nullptr;
+    const MethodInfo *tex_ctor = nullptr, *load_image = nullptr;
+} icon_api;
+
+const unsigned char* png_of(const Def& d, size_t& n) {
+    if (std::string(d.name) == kBoard) return n = sizeof(kIconBoard), kIconBoard;
+    if (std::string(d.name) == kMechanism) return n = sizeof(kIconMechanism), kIconMechanism;
+    return n = sizeof(kIconAutomat), kIconAutomat;
+}
+
+Il2CppObject* icon_of(Def& d) {
+    if (Il2CppObject* t = target(d.tex); alive(t)) return t;
+    if (d.tex) il2::il2cpp_gchandle_free(d.tex), d.tex = 0;
+    if (!icon_api.ok) return nullptr;
+    size_t n = 0;
+    const unsigned char* png = png_of(d, n);
+    Il2CppObject* bytes = il2::il2cpp_array_new(icon_api.byte_class, n);
+    Il2CppObject* tex = il2::il2cpp_object_new(icon_api.tex_class);
+    if (!bytes || !tex) return nullptr;
+    memcpy(reinterpret_cast<char*>(bytes) + 0x20, png, n);
+    int32_t w = 2, h = 2;
+    void* ca[] = {&w, &h};
+    il2::invoke(icon_api.tex_ctor, tex, ca);
+    void* la[] = {tex, bytes};
+    bool loaded = false;
+    if (!il2::invoke_value(icon_api.load_image, nullptr, loaded, la) || !loaded) {
+        logx::warn("automat items: %s's icon couldn't be loaded", d.name);
+        return nullptr;
+    }
+    int32_t flags = kDontUnload;
+    void* fa[] = {&flags};
+    il2::invoke(api.hide_flags, tex, fa);
+    d.tex = il2::il2cpp_gchandle_new(tex, false);
+    logx::info("automat items: %s's icon made (%zu bytes)", d.name, n);
+    return tex;
+}
+
+Def* def_of_data(Il2CppObject* data) {
+    if (!data) return nullptr;
+    for (Def& d : g_defs)
+        if (d.data && target(d.data) == data) return &d;
+    return nullptr;
+}
+
+using IconDataFn = Il2CppObject* (*)(Il2CppObject*, float, const MethodInfo*);
+using IconNameFn = Il2CppObject* (*)(Il2CppString*, bool, const MethodInfo*);
+using IconGearFn = Il2CppObject* (*)(Il2CppObject*, const MethodInfo*);
+IconDataFn g_icon_data = nullptr;
+IconNameFn g_icon_name = nullptr;
+IconGearFn g_cover = nullptr, g_cover_damage = nullptr, g_craft_icon = nullptr;
+
+Il2CppObject* icon_data_detour(Il2CppObject* data, float condition, const MethodInfo* method) {
+    if (Def* d = def_of_data(data))
+        if (Il2CppObject* t = icon_of(*d)) return t;
+    return g_icon_data(data, condition, method);
+}
+Il2CppObject* icon_name_detour(Il2CppString* name, bool opened, const MethodInfo* method) {
+    if (starts_with(name, "GEAR_TLDCOOP_"))
+        if (Def* d = def_of(text(name)))
+            if (Il2CppObject* t = icon_of(*d)) return t;
+    return g_icon_name(name, opened, method);
+}
+Il2CppObject* gear_icon(Il2CppObject* gi) {
+    Def* d = alive(gi) ? def_of_data(il2::read_field<Il2CppObject*>(gi, api.gear_data)) : nullptr;
+    return d ? icon_of(*d) : nullptr;
+}
+Il2CppObject* cover_detour(Il2CppObject* gi, const MethodInfo* method) {
+    if (Il2CppObject* t = gear_icon(gi)) return t;
+    return g_cover(gi, method);
+}
+Il2CppObject* cover_damage_detour(Il2CppObject* gi, const MethodInfo* method) {
+    if (Il2CppObject* t = gear_icon(gi)) return t;
+    return g_cover_damage(gi, method);
+}
+Il2CppObject* craft_icon_detour(Il2CppObject* bp, const MethodInfo* method) {
+    for (Recipe& r : g_recipes)
+        if (r.bp && target(r.bp) == bp)
+            if (Def* d = def_of(r.result))
+                if (Il2CppObject* t = icon_of(*d)) return t;
+    return g_craft_icon(bp, method);
+}
+
+// --- build 3c: the automat dropped from the pack becomes a machine (slot_machine takes it from here) ----------------
+using DropFn = Il2CppObject* (*)(Il2CppObject*, int32_t, bool, bool, bool, const MethodInfo*);
+DropFn g_drop = nullptr;
+std::vector<uintptr_t> g_dropped;
+
+Il2CppObject* drop_detour(Il2CppObject* self, int32_t units, bool sound, bool to_feet, bool force, const MethodInfo* method) {
+    Il2CppObject* gi = g_drop(self, units, sound, to_feet, force, method);
+    if (alive(gi))
+        if (Def* d = def_of_data(il2::read_field<Il2CppObject*>(gi, api.gear_data)); d && std::string(d->name) == kAutomat) {
+            g_dropped.push_back(il2::il2cpp_gchandle_new(gi, false));
+            logx::info("automat items: an automat dropped from the pack");
+        }
+    return gi;
+}
 }  // namespace
 
 bool ready() { return api.ok; }
+
+Il2CppObject* take_dropped() {
+    while (!g_dropped.empty()) {
+        const uintptr_t h = g_dropped.front();
+        g_dropped.erase(g_dropped.begin());
+        Il2CppObject* gi = target(h);
+        il2::il2cpp_gchandle_free(h);
+        if (alive(gi)) return gi;
+    }
+    return nullptr;
+}
+
+float condition_of(Il2CppObject* gi) {
+    Il2CppObject* data = alive(gi) ? il2::read_field<Il2CppObject*>(gi, api.gear_data) : nullptr;
+    const float max = data && api.data_max_hp >= 0 ? il2::read_field<float>(data, api.data_max_hp) : 0;
+    if (max <= 0 || api.gear_hp < 0) return 1.0f;
+    return std::clamp(il2::read_field<float>(gi, api.gear_hp) / max, 0.0f, 1.0f);
+}
+
+bool position_of(Il2CppObject* gi, float& x, float& y, float& z) {
+    struct V { float x, y, z; } v{};
+    Il2CppObject* tf = alive(gi) ? il2::invoke(api.component_tf, gi) : nullptr;
+    if (!tf || !il2::invoke_value(api.tf_get_pos, tf, v)) return false;
+    x = v.x, y = v.y, z = v.z;
+    return true;
+}
+
+void destroy(Il2CppObject* gi) {
+    Il2CppObject* go = alive(gi) ? il2::invoke(api.component_go, gi) : nullptr;
+    if (!go || !api.destroy) return;
+    void* a[] = {go};
+    il2::invoke(api.destroy, nullptr, a);
+}
+
+bool give_automat(float condition) {
+    Il2CppObject* pm = il2::invoke(api.player_manager, nullptr);
+    if (!api.ok || !pm) return false;
+    void* a[] = {il2::il2cpp_string_new(kAutomat)};
+    Il2CppObject* gi = il2::invoke(api.make, nullptr, a);
+    if (!alive(gi)) return false;
+    Il2CppObject* data = il2::read_field<Il2CppObject*>(gi, api.gear_data);
+    const float max = data && api.data_max_hp >= 0 ? il2::read_field<float>(data, api.data_max_hp) : 0;
+    if (max > 0 && api.gear_hp >= 0) put<float>(gi, api.gear_hp, std::clamp(condition, 0.0f, 1.0f) * max);
+    bool track = false, notify = true;
+    void* pa[] = {gi, &track, &notify};
+    il2::invoke(api.to_pack, pm, pa);
+    logx::info("automat items: the automat into the pack (condition %.0f%%)", condition * 100);
+    return true;
+}
 
 void on_frame(bool in_game) {
     if (!api.recipes || !in_game) return;
@@ -603,6 +760,11 @@ void init(bool drops) {
     api.data_weight = il2::field_offset_quiet(data, "m_BaseWeight");
     api.data_placeable = il2::field_offset_quiet(data, "m_IsPlaceable");
     api.data_ref = il2::field_offset_quiet(data, "m_PrefabReference");
+    api.data_max_hp = il2::field_offset_quiet(data, "m_MaxHP");
+    api.gear_hp = il2::field_offset_quiet(gear, "m_CurrentHP");
+    api.destroy = il2::find_method_params(object, "Destroy", {"UnityEngine.Object"});
+    api.component_tf = il2::find_method(component, "get_transform", 0);
+    if (Il2CppClass* tf = il2::find_class(kCore, "UnityEngine", "Transform")) api.tf_get_pos = il2::find_method(tf, "get_position", 0);
     api.panel_breakdown = panel ? il2::field_offset_quiet(panel, "m_BreakDown") : -1;
     api.breakdown_name = breakdown ? il2::field_offset_quiet(breakdown, "m_LocalizedDisplayName") : -1;
     const MethodInfo* make_text = il2::find_method_params(gear, "InstantiateAndDeserializeGearItem",
@@ -696,6 +858,34 @@ void init(bool drops) {
                 logx::warn("automat items: the crafting panel's list isn't hooked (the recipes may not show)");
         }
         logx::info("automat items: recipes %s", api.recipes ? "on (workbench: mechanism, automat)" : "UNAVAILABLE (TLD calls missing)");
+    }
+    // icons
+    if (api.ok) {
+        icon_api.tex_class = il2::find_class(kCore, "UnityEngine", "Texture2D");
+        icon_api.byte_class = il2::find_class("mscorlib.dll", "System", "Byte");
+        Il2CppClass* conv = il2::find_class("UnityEngine.ImageConversionModule.dll", "UnityEngine", "ImageConversion");
+        icon_api.tex_ctor = icon_api.tex_class ? il2::find_method_params(icon_api.tex_class, ".ctor", {"System.Int32", "System.Int32"}) : nullptr;
+        icon_api.load_image = conv ? il2::find_method_params(conv, "LoadImage", {"UnityEngine.Texture2D", "System.Byte[]"}) : nullptr;
+        icon_api.ok = il2::il2cpp_array_new && icon_api.byte_class && icon_api.tex_ctor && icon_api.load_image;
+        Il2CppClass* utils = il2::find_class(kGame, "", "Utils");
+        Il2CppClass* bpd = il2::find_class(kGame, "TLD.Gear", "BlueprintData");
+        int n = 0;
+        if (icon_api.ok && utils) {
+            n += hook("Utils.GetInventoryIconTexture(data) (automat)",
+                      il2::find_method_params(utils, "GetInventoryIconTexture", {"TLD.Gear.GearItemData", "System.Single"}),
+                      &icon_data_detour, &g_icon_data);
+            n += hook("Utils.GetInventoryIconTextureFromPrefabName (automat)",
+                      il2::find_method(utils, "GetInventoryIconTextureFromPrefabName", 2), &icon_name_detour, &g_icon_name);
+            n += hook("Utils.GetGearCoverflowTexture (automat)", il2::find_method(utils, "GetGearCoverflowTexture", 1), &cover_detour, &g_cover);
+            n += hook("Utils.GetGearCoverflowDamageTexture (automat)", il2::find_method(utils, "GetGearCoverflowDamageTexture", 1),
+                      &cover_damage_detour, &g_cover_damage);
+        }
+        if (icon_api.ok && bpd) n += hook("BlueprintData.GetCraftingIcon (automat)", il2::find_method(bpd, "GetCraftingIcon", 0), &craft_icon_detour, &g_craft_icon);
+        logx::info("automat items: icons %s (%d of 5 calls)", icon_api.ok ? "on" : "UNAVAILABLE", n);
+    }
+    if (api.ok && drops) {  // build 3c (test only for now): the automat dropped becomes a machine
+        const MethodInfo* drop = il2::find_method_params(gear, "Drop", {"System.Int32", "System.Boolean", "System.Boolean", "System.Boolean"});
+        logx::info("automat items: placing by dropping %s", hook("GearItem.Drop (automat)", drop, &drop_detour, &g_drop) ? "on" : "UNAVAILABLE");
     }
     logx::info("automat items: %s; boards from electronics: %s", api.ok ? "ready (3 items)" : "UNAVAILABLE (hooks failed)",
                !boards ? "unavailable" : drops ? "on (1 in 3)" : "off (test=0)");

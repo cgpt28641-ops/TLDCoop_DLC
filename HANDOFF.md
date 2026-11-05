@@ -1038,3 +1038,20 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   rekordu zostaje na miejscu.
 - #7c4d0757 (brak skrytki pamiątkowej): nic w logach; najpewniej losowanie TLD — pytanie do Shatscy.
 - command.txt: kilka komend (po jednej w linii), plik pusty (w trakcie zapisu) albo gra nie w świecie → czeka.
+
+### 2026-11-05 ~21:15 UTC — AUTOMAT 3c + ikony
+- Ikony: assets/automat/*.png → 256 px PNG w src/automat_icons.inc (kIconBoard/Mechanism/Automat), Texture2D przez
+  ImageConversion.LoadImage(Texture2D, byte[]). Hooki: Utils.GetInventoryIconTexture(GearItemData, float),
+  Utils.GetInventoryIconTextureFromPrefabName, Utils.GetGearCoverflowTexture / ...DamageTexture (obraz przy
+  oglądaniu), BlueprintData.GetCraftingIcon (nasze przepisy). (Wcześniej pusty slot: TLD szuka ikony po nazwie
+  prefabu w Addressables.)
+- Stawianie: hook GearItem.Drop(int, bool, bool, bool) — upuszczony GEAR_TLDCOOP_Automat (dane nasze) → po 1,2 s
+  (leży) w tym miejscu automat zwrócony do gracza, stan = m_CurrentHP/m_MaxHP przedmiotu, przedmiot zniszczony;
+  OpPlace ma teraz opcjonalny 5. float = stan.
+- Podnoszenie: klik w automat = otwórz, przytrzymanie LPM 1 s = podnieś (GetAsyncKeyState(VK_LBUTTON) w on_frame).
+  OpPickWant(12) → host decide_pick: nie gdy kręci się / ktoś ma otwarty / zablokowany wygraną / w środku coś jest
+  (tekst kontenera bez "m_SerializedItems":[] ) → „Najpierw opróżnij automat” (BusyNotEmpty=5); inaczej
+  decide_remove i OpPicked(13, stan) → automat_items::give_automat(stan) do plecaka. Hover: „otwórz (przytrzymaj:
+  podnieś)”.
+- Wszystko nadal tylko przy [automat] test=1. Zostało: ochrona przed wczytaniem (2 min), MODS „AUTOMAT”, płytki w
+  szufladach, rozbieranie automatu (mechanizm + połowa złomu).

@@ -10,6 +10,8 @@
 
 #include <string>
 
+#include "il2cpp_api.h"
+
 namespace automat_items {
 
 constexpr const char* kBoard = "GEAR_TLDCOOP_Plytka";
@@ -23,5 +25,12 @@ bool ready();
 std::string resolve_name(const std::string& which);
 // n of ours into the pack; false if it couldn't be made
 bool give(const std::string& which, int n);
+// build 3c: an automat item dropped from the pack (one a call, nullptr when none), its condition and where it lies;
+// the item removed (it became a machine); one into the pack (a machine picked up)
+Il2CppObject* take_dropped();
+float condition_of(Il2CppObject* gi);
+bool position_of(Il2CppObject* gi, float& x, float& y, float& z);
+void destroy(Il2CppObject* gi);
+bool give_automat(float condition);
 
 }  // namespace automat_items
