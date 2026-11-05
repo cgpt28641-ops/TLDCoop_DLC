@@ -911,4 +911,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   TESTY: coop.ini [automat] test=1 (domyślnie 0 — u innych nic nie widać); command.txt: give TLDCOOP_Plytka /
   TLDCOOP_Mechanizm / TLDCOOP_Automat, „automat stan N”, „automat wynik jackpot|para|...”; spróbować gear_add (F1).
   PLAN KOMPLETNY — czeka na „zaczynamy”.
+- 2026-11-05 17:57: model automatu od Karola (ChatGPT, trimesh) → assets/automat/automat_model.glb: 17 osobnych części
+  (Body, Wood_Left/Right, Wolf_Paint, Window_Recess, Reel_1..3, Window, Reel_Dividers, Top_Armor, Hardware, Tray,
+  Crank, Bulb_Base, Bulb, Filament), ~1600 trójkątów, 0,40 × 0,65 × 0,34 m, Y w górę, przód +Z; punkty obrotu bębnów
+  i korby poprawne. Kolory głównie jako vertex colors (trzeba je zamienić na materiały/teksturę), Bulb ma emisję.
+  Tekstura bębnów ma tylko 3 symbole na pustym pasku → zrobić własny pasek 12 pól (ustalone symbole).
+  Plan: siatki i tekstury wbudowane w DLL, Mesh składany w grze (bez Unity i bez zipa). Podgląd: tools/glb_preview.py.
 
