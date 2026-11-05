@@ -1087,3 +1087,32 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   assets/loading/loading_screen_1..3.jpg → kStartPictures[] (tools/loading/gen_data.py). Kolejny ekran rozruchu TLD
   (aktywny korzeń z m_DisclaimerScreenList[i] / m_MainDisclaimer / m_LoadingFlow, w kolejności pojawienia się)
   dostaje kolejny obrazek, dalsze ostatni; w logu „start screen: TLD's boot screen #n is '...'”.
+- Karol potwierdził: ekrany startowe działają.
+
+### 2026-11-05 ~22:40 UTC — animacje: motion capture (etap 1)
+- Karol (screen: avatar na linie z rozłożonymi rękami): „dużo animacji brakuje, większość wygląda słabo”; wybrał
+  WSZYSTKO: brakujące (praca przy ziemi, lina, skok/upadek, inne czynności) i do poprawy (chód/bieg, kucanie,
+  trzymanie rzeczy, jedzenie/spanie/dawanie); „jak najbardziej profesjonalnie”.
+- Plan: prawdziwy motion capture CMU (mocap.cs.cmu.edu, darmowy do każdego użytku; BVH z
+  github.com/una-dinosauria/cmu-mocap — git działa przez proxy) przeniesiony na rig paczki ciał i wbudowany w dll.
+  Etapy: (1) czynność w State + klipy czynności [ZROBIONE], (2) chód/bieg/skradanie z mocap (07_01 walk, 09_01 run,
+  77_25 careful walk, 91_16 kulenie), (3) trzymanie rzeczy, jedzenie/spanie/dawanie.
+- b3f8e49 + 9e10919 (CI zielone):
+  - net::Activity w StateMsg (bajt na końcu, starsze buildy go nie wysyłają → 0). ActClimb, Kneel, Fire, Chop,
+    Search, Work, Sit, Air, Carry. Protokół NIE zmieniony (v48), test protokołu: stary układ 217 B dalej czytany.
+  - src/coop_activity.cpp: u nadawcy 10×/s: PlayerManager.GetControlMode (wartości po nazwach: Climbing, StartingFire,
+    InSeat, InSnowShelter, BigCarry, DeployRope, TakeRope, InFishingHut), otwarte panele (Resources
+    .FindObjectsOfTypeAll + Panel_Base.IsEnabled; BodyHarvest/Cooking/FeedFire→Kneel, FireStart→Fire,
+    BreakDown→Chop, Container→Search, Crafting/Repair→Work, IceFishing→Sit), w powietrzu (vp_FPSController
+    .get_Grounded, >250 ms; zapas: prędkość pionowa < −4 m/s). Log „activity: ready (...)”.
+  - tools/mocap/: rig.py (FK), bvh.py, retarget.py (kierunki kości, biodra z ramy lewo-prawo/góra, bez obrotu i
+    przesuwu, wysokość bioder × długość nóg), preview.py (ludziki), gen_clips.py → src/avatar_mocap.inc (~640 KB):
+    climb 13_33, kneel 77_06, fire 77_08, chop 79_01, search 62_19 (górna połowa), work 79_34 (górna), sit 82_05,
+    air 13_39, fall 90_17 (nieużywany), carry 111_36 (górna). Pętle z przenikaniem 0.4 s. Rig M = Body_mackenzie_indoor,
+    F = Body_astrid. rig_local.json (zrzut z tldcoop_bodies.bundle przez tools/bodycut) NIE w repo (.gitignore).
+  - avatar.cpp: mocap_step w late_one (po animacji, przed gestami/trzymaniem): localRotation 19 kości + pozycja bioder
+    (spoczynek odczytany przy podpięciu ciała), slerp z pozą chodu, wejście 0.25 s (skok 0.12 s), wyjście 0.3 s,
+    przenikanie starego klipu pod nowym; klipy „górne” zostawiają biodra i nogi chodowi; przy całym ciele bez pozy
+    kucania.
+- DO TESTU (co-op, po 1 osobie patrzącej na drugą): wspinanie po linie, patroszenie/gotowanie (klęczenie), rozpalanie,
+  łamanie gałęzi/mebli, szperanie w szafce, warsztat, siedzenie (łowienie), skok/upadek, niesienie ciała.
