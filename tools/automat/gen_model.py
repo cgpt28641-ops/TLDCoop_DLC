@@ -144,6 +144,10 @@ for pt in parts:
     V[:, 0] *= -1
     U = pt["U"].copy()
     U[:, 1] = 1 - U[:, 1]
+    # both faces of every triangle (the model is meant double-sided: its triangles face either way, and TLD's shader
+    # shows one side only): the back copies with their own vertices, so their normals point the other way
+    V = np.concatenate([V, V.reshape(-1, 3, 3)[:, ::-1].reshape(-1, 3)])
+    U = np.concatenate([U, U.reshape(-1, 3, 2)[:, ::-1].reshape(-1, 2)])
     n = len(V)
     tris = np.arange(n).reshape(-1, 3)[:, ::-1].flatten()
     rows.append((pt["name"], -pt["t"][0], pt["t"][1], pt["t"][2], pt["tex"], len(pos) // 3, n, len(ind), len(tris)))

@@ -355,7 +355,7 @@ bool spawn(Machine& m) {
         void* ra[] = {target(g_shared.mat[p.tex])};
         il2::invoke(api.renderer_set_material, renderer, ra);
         const std::string name = p.name;
-        if (name.rfind("Reel_", 0) == 0) {
+        if (name == "Reel_1" || name == "Reel_2" || name == "Reel_3") {  // (not Reel_Dividers: it stays put)
             const int r = std::clamp(name.back() - '1', 0, 2);
             m.reel[r] = hold(tf_of(go));
             m.stop[r] = static_cast<int>(g_rng() % kAutReelCells);

@@ -944,4 +944,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (Body). Błąd: indeksy trójkątów w .inc są już lokalne dla każdej części, a kod odejmował v0 → ujemne indeksy, Unity
   odrzucało siatki wszystkich części poza pierwszą. Poprawione. Nawiasy w napisie hover nie wyświetlają się (czcionka
   TLD) → „Automat — zagraj, stan N%”.
+- 19:03 nagrania Karola (pełny model): (1) „Reel_Dividers” zaczyna się od „Reel_” → kod brał go za 3. bęben: przegródki
+  kręciły się (pręty wystające z okna), a prawdziwy Reel_3 stał → wynik na ekranie ≠ ogłoszony. Teraz tylko
+  Reel_1/2/3. (2) Trójkąty modelu ChatGPT skierowane w różne strony (GLB double-sided), shader TLD rysuje jedną stronę
+  → deski boczne itp. niewidoczne z zewnątrz. Generator robi teraz każdy trójkąt z obu stron (3196 trójkątów).
 
