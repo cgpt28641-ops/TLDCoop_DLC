@@ -1,5 +1,6 @@
 #include "loading_screen.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -41,7 +42,10 @@ struct Api {
 bool alive(Il2CppObject* o) { return o && il2::read_field<void*>(o, kCachedPtr) != nullptr; }
 Il2CppObject* target(uintptr_t h) { return h ? il2::il2cpp_gchandle_get_target(h) : nullptr; }
 
-uintptr_t g_tex = 0, g_widget = 0;
+constexpr int kPictures = static_cast<int>(sizeof(kStartPictures) / sizeof(kStartPictures[0]));
+uintptr_t g_tex[kPictures] = {}, g_widget = 0;
+int g_shown = -1;                    // which picture the widget has
+std::vector<Il2CppObject*> g_screens;  // TLD's boot screens (roots) in the order they came: the n-th gets picture n
 bool g_failed = false, g_logged = false;
 int g_last_w = 0, g_last_h = 0;
 
@@ -50,12 +54,13 @@ void fail(const char* why) {
     g_failed = true;
 }
 
-Il2CppObject* picture() {
-    if (Il2CppObject* t = target(g_tex); alive(t)) return t;
-    Il2CppObject* bytes = il2::il2cpp_array_new(api.byte_class, sizeof(kLoadingJpg));
+Il2CppObject* picture(int n) {
+    if (Il2CppObject* t = target(g_tex[n]); alive(t)) return t;
+    const StartPicture& pic = kStartPictures[n];
+    Il2CppObject* bytes = il2::il2cpp_array_new(api.byte_class, pic.size);
     Il2CppObject* tex = il2::il2cpp_object_new(api.tex_class);
     if (!bytes || !tex) return nullptr;
-    memcpy(reinterpret_cast<char*>(bytes) + 0x20, kLoadingJpg, sizeof(kLoadingJpg));
+    memcpy(reinterpret_cast<char*>(bytes) + 0x20, pic.jpg, pic.size);
     int32_t w = 2, h = 2;
     void* ca[] = {&w, &h};
     il2::invoke(api.tex_ctor, tex, ca);
@@ -65,7 +70,7 @@ Il2CppObject* picture() {
     int32_t flags = kDontUnload;
     void* fa[] = {&flags};
     il2::invoke(api.hide_flags, tex, fa);
-    g_tex = il2::il2cpp_gchandle_new(tex, false);
+    g_tex[n] = il2::il2cpp_gchandle_new(tex, false);
     return tex;
 }
 
@@ -112,11 +117,9 @@ void hide_all_but(Il2CppObject* root_go, const std::vector<Il2CppObject*>& keep_
 }
 
 // Our picture under the panel: full screen (NGUI units), the picture cut to the screen's proportions
-bool show(Il2CppObject* panel, int depth) {
+bool show(Il2CppObject* panel, int depth, int n) {
     Il2CppObject* widget = target(g_widget);
     if (!alive(widget)) {
-        Il2CppObject* tex = picture();
-        if (!tex) return fail("the picture couldn't be loaded"), false;
         Il2CppObject* go = il2::il2cpp_object_new(api.go_class);
         void* na[] = {il2::il2cpp_string_new(kName)};
         il2::invoke(api.go_ctor, go, na);
@@ -137,10 +140,18 @@ bool show(Il2CppObject* panel, int depth) {
         void* ta[] = {api.t_uitexture};
         widget = il2::invoke(api.go_add, go, ta);
         if (!alive(widget)) return fail("NGUI's UITexture couldn't be added"), false;
-        void* ma[] = {tex};
-        il2::invoke(api.set_main, widget, ma);
         g_widget = il2::il2cpp_gchandle_new(widget, false);
         g_last_w = g_last_h = 0;
+        g_shown = -1;
+    }
+    if (n != g_shown) {
+        Il2CppObject* tex = picture(n);
+        if (!tex) return fail("a picture couldn't be loaded"), false;
+        void* ma[] = {tex};
+        il2::invoke(api.set_main, widget, ma);
+        logx::info("start screen: picture %d of %d", n + 1, kPictures);
+        g_shown = n;
+        g_last_w = g_last_h = 0;  // (its proportions)
     }
     int32_t sw = 0, sh = 0;
     il2::invoke_value(api.screen_w, nullptr, sw);
@@ -156,7 +167,8 @@ bool show(Il2CppObject* panel, int depth) {
         void* ha[] = {&h};
         il2::invoke(api.set_height, widget, ha);
         // fill, keeping the proportions: the picture's surplus side cut evenly
-        const float screen = static_cast<float>(sw) / sh, pic = static_cast<float>(kLoadingW) / kLoadingH;
+        const float screen = static_cast<float>(sw) / sh,
+                    pic = static_cast<float>(kStartPictures[n].w) / kStartPictures[n].h;
         Rect uv{0, 0, 1, 1};
         if (pic > screen) uv.w = screen / pic, uv.x = (1 - uv.w) / 2;
         else uv.h = pic / screen, uv.y = (1 - uv.h) / 2;
@@ -196,7 +208,33 @@ void update_detour(Il2CppObject* self, const MethodInfo* method) {
     Il2CppObject* conts = il2::read_field<Il2CppObject*>(self, api.screen_continues);
     for (size_t i = 0; i < il2::array_length(conts); ++i) keep_label(il2::array_object_at(conts, i));
     if (depth == 1000000) depth = 0;
-    if (!show(self, depth - 1)) return;
+    // which of TLD's boot screens is up (the disclaimers, the main one, the loading): the n-th new one, picture n
+    Il2CppObject* current = nullptr;
+    auto consider = [&](Il2CppObject* go) {
+        bool on = false;
+        if (!current && alive(go) && il2::invoke_value(api.go_active, go, on) && on) current = go;
+    };
+    Il2CppObject* list = il2::read_field<Il2CppObject*>(self, api.screens);
+    for (size_t i = 0; i < il2::array_length(list); ++i) consider(il2::array_object_at(list, i));
+    consider(il2::read_field<Il2CppObject*>(self, api.main_disclaimer));
+    consider(il2::read_field<Il2CppObject*>(self, api.loading_flow));
+    int n = 0;
+    if (current) {
+        auto it = std::find(g_screens.begin(), g_screens.end(), current);
+        if (it == g_screens.end()) {
+            g_screens.push_back(current);
+            it = g_screens.end() - 1;
+            static const MethodInfo* get_name =
+                il2::find_method(il2::find_class(kCore, "UnityEngine", "Object"), "get_name", 0);
+            auto* nm = reinterpret_cast<Il2CppString*>(il2::invoke(get_name, current));
+            logx::info("start screen: TLD's boot screen #%zu is '%s'", g_screens.size(), nm ? il2::to_utf8(nm).c_str() : "?");
+        }
+        n = static_cast<int>(it - g_screens.begin());
+    } else if (!g_screens.empty()) {
+        n = static_cast<int>(g_screens.size()) - 1;
+    }
+    if (n >= kPictures) n = kPictures - 1;
+    if (!show(self, depth - 1, n)) return;
     // TLD's warnings, logos and loading animations off (the labels stay)
     hide_all_but(il2::read_field<Il2CppObject*>(self, api.main_disclaimer), keep);
     Il2CppObject* screens = il2::read_field<Il2CppObject*>(self, api.screens);

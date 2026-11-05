@@ -1083,3 +1083,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   Dzieci m_MainDisclaimer, m_DisclaimerScreenList[i] i m_LoadingFlow wyłączane poza drogą do etykiet
   m_MainDisclaimerContinue / m_DisclaimerScreenContinues / m_LoadingContinue; m_LoadingAnimationsRoot off. Przepływ
   ostrzeżeń TLD bez zmian (dalej klik żeby przejść).
+- 21:44 Karol: 3 ekrany startowe w kolejności: ognisko (był), wędrówka po torach, domek z mapą.
+  assets/loading/loading_screen_1..3.jpg → kStartPictures[] (tools/loading/gen_data.py). Kolejny ekran rozruchu TLD
+  (aktywny korzeń z m_DisclaimerScreenList[i] / m_MainDisclaimer / m_LoadingFlow, w kolejności pojawienia się)
+  dostaje kolejny obrazek, dalsze ostatni; w logu „start screen: TLD's boot screen #n is '...'”.
