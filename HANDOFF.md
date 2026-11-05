@@ -898,4 +898,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (kilka % na losowanie, gorszy stan = częstsze zacięcia, naprawa ELEKTRONIKĄ — płytką elektroniczną, nie złomem). Efekty jackpota i „szczęście” — nie.
 - 2026-11-05 15:22 (Karol): jackpot (3 złote) ×5, nie ×10; tabela wygranych tylko w opisie automatu, po najechaniu
   widać STAN automatu. Karol chce też model 3D automatu z generatora (z ikony) — wtedy bundle Unity 2021.3 w zipie.
+- 2026-11-05 15:33: grafiki od Karola w assets/automat/ (plytka_elektroniczna, mechanizm_bebnow, automat_ikona — PNG z
+  przezroczystością; automat_przod_do_modelu — białe tło, pod Meshy/Tripo). Złoty symbol = złoty samorodek. Automat
+  zielono-szary z wilkiem, KORBA z drewnianą rączką (nie dźwignia z kulką), ŻARÓWKA na górze — ma świecić w modzie
+  (propozycja: miga przy kręceniu, świeci przy wygranej, szybko miga przy jackpocie, przy złym stanie czasem mruga).
 
