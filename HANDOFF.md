@@ -878,3 +878,18 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   stąd całe kopie u innych (tusza jelenia). Teraz dostają id kExtraIdBase|n i są dzielone (u klienta jego własna kopia
   w tym miejscu znika). Szybkie przełączanie światła co 0,2 s w logu = ktoś klikał, nie pętla.
 
+### 2026-11-05 ~14:00 UTC — AUTOMAT (jednoręki bandyta): ustalenia, NIE ZACZYNAĆ przed „zaczynamy”
+- 3 bębny (wilk, mięso, zapałka, czaszka, ognisko, rzadki złoty): 3 złote ×10, 3 takie same ×3, para ×2, bez pary i
+  bez czaszki zwrot, czaszka w środku przegrana; rzadkie zacięcie zabiera wszystko. Losowo z bębnów, nie tabelka %.
+- Wkładanie jak do skrzyni, po zamknięciu kręci; każdy przedmiot osobno, stosy w sztukach; wygrana zostaje w środku,
+  ten sam stan/mokrość; limit 3 na gracza na dzień gry; zakazane oddawane z napisem.
+- Wolno: łuski, proch, groty, drzewca; garnki/patelnie; bandaże, tabletki do wody, przeciwbólowe, antybiotyki, herbata
+  z ziół; jedzenie sklepowe/puszki, napoje; drewno, węgiel, tkanina, złom, zapałki, hubka, świece, papier; nafta, olej;
+  zwykłe ubrania. Nie wolno: naboje, gotowe strzały, mięso i ryby, jelita i skóry (+ materiały z nich), broń,
+  narzędzia, śpiwór, apteczka, lepsze ubrania ze skór, fabularne/unikalne, płytki/mechanizm/automat.
+- Przepisy: płytka elektroniczna (z rozbierania elektroniki, rzadko w szufladach) → mechanizm bębnów (frezarka: 4 złom +
+  1 płytka) → automat (stół warsztatowy: mechanizm, 2 płytki, 6 złomu, 4 drewna z odzysku, 2 tkaniny; ~3 h, ~15 kg),
+  stawiany/przenoszony jak przenośna skrzynia. Ikony od Karola (ChatGPT), model w kodzie (bryły, ruchome bębny).
+- Co-op: każdy robi/stawia/gra (własny limit), losuje host, zajęty automat = czekasz; host włącza w MODS „AUTOMAT”.
+  Bez moda nowe przedmioty → złom; kopia zapisu przed testami.
+
