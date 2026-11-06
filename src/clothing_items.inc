@@ -95,6 +95,7 @@ static const Text kTexts[] = {
     {"TLDCOOP_CE_NoBelt", "You are missing a toolbelt", "Nie masz pasa na narzędzia"},
     {"TLDCOOP_CE_NoCrampons", "You are missing crampons", "Nie masz raków"},
     {"TLDCOOP_CE_NoScabbard", "You are missing a rifle scabbard", "Nie masz pochwy na karabin"},
+    {"TLDCOOP_CE_TakeOff", "Take it off first", "Najpierw to zdejmij"},
     {"TLDCOOP_CE_Attaching", "Attaching...", "Przypinanie..."},
     {"TLDCOOP_CE_Detaching", "Detaching...", "Odpinanie..."},
 };

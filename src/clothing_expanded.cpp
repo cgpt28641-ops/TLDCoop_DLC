@@ -10,7 +10,9 @@
 #include <string>
 #include <vector>
 
+#include "coop_lapse.h"
 #include "custom_text.h"
+#include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
 #include "net/session.h"
@@ -112,6 +114,8 @@ std::string g_scene;
 std::filesystem::path g_dir;
 int g_mapped = 0, g_failed = 0;
 std::vector<uintptr_t> g_keep;  // made objects held for good (GearItemData copies, icon data, the prefabs)
+using VoidFn = void (*)(Il2CppObject*, const MethodInfo*);
+using UpdateButtonsFn = void (*)(Il2CppObject*, Il2CppObject*, bool, const MethodInfo*);
 
 // --- small helpers ------------------------------------------------------------------------------------------------
 
@@ -611,6 +615,333 @@ bool any_bare() {
     return false;
 }
 
+
+// --- attach / detach (the inventory's item page) ----------------------------------------------------------------------
+// One more button on the item page, a copy of EQUIP (its click runs ItemDescriptionPage.OnEquip, which tells ours
+// apart by UIButton.current), after DROP. It says ATTACH BELT / CRAMPONS / SCABBARD on a base item, DETACH ... on one
+// of ours; a second's progress bar, then the base item (its condition) and the accessory become the made item, or back.
+
+struct UiApi {
+    ptrdiff_t page_equip = -1, page_examine = -1, page_drop = -1;  // ItemDescriptionPage.m_MouseButton*
+    FieldInfo* button_current = nullptr;                           // static UIButton.current
+    const MethodInfo *instantiate_under = nullptr, *go_tf = nullptr, *go_active = nullptr, *go_active_self = nullptr;
+    const MethodInfo *tf_local = nullptr, *tf_set_local = nullptr, *in_children = nullptr, *set_enabled = nullptr;
+    const MethodInfo *label_set = nullptr, *get_inventory = nullptr, *get_pm = nullptr, *add_item = nullptr;
+    const MethodInfo *destroy_gear = nullptr, *best_with_name = nullptr, *is_wearing = nullptr, *hud = nullptr;
+    const MethodInfo *load_panel = nullptr, *bar_launch = nullptr;
+    Il2CppClass* bar_class = nullptr;
+    ptrdiff_t inv_items = -1, gear_hp = -1, gear_in_pack = -1, gear_clothing = -1;
+    Il2CppObject *t_label = nullptr, *t_localize = nullptr, *t_button = nullptr;
+} ui;
+
+UpdateButtonsFn g_update_buttons = nullptr;
+VoidFn g_on_equip = nullptr;
+
+struct PageButton {
+    uintptr_t page = 0, button = 0;  // the page; our copy of its EQUIP (a GameObject)
+    uintptr_t gear = 0;              // the item it shows
+};
+std::vector<PageButton> g_pages;
+
+enum class Act { None, Attach, Detach };
+struct Pending {
+    Act act = Act::None;
+    uintptr_t gear = 0, extra = 0;
+    const Item* item = nullptr;
+    double started = 0;
+} g_pending;
+
+struct Vec3 {
+    float x, y, z;
+};
+
+std::string prefab_name(Il2CppObject* gear) {
+    std::string n = name_of(go_of(gear));
+    if (const size_t p = n.find('('); p != std::string::npos) n.resize(p);
+    while (!n.empty() && n.back() == ' ') n.pop_back();
+    return n;
+}
+
+// What our button does for this item: its made item (attach: one with this base; detach: this one), or none.
+Act act_for(const std::string& name, const Item*& out) {
+    const std::string n = lower(name);
+    for (const Item& it : kItems)
+        if (lower(it.key) == n) return out = &it, Act::Detach;
+    for (const Item& it : kItems)  // attach: the first made item of this base (crampons: the real ones' first)
+        if (lower(it.base) == n && lower(it.extra) != "gear_improvisedcrampons") return out = &it, Act::Attach;
+    out = nullptr;
+    return Act::None;
+}
+
+const char* label_for(Act a, const Item& it) {
+    const std::string e = lower(it.extra);
+    const bool belt = e == "gear_toolbelt", scabbard = e == "gear_riflescabbarda";
+    if (a == Act::Attach) return belt ? "TLDCOOP_CE_AttachBelt" : scabbard ? "TLDCOOP_CE_AttachScabbard" : "TLDCOOP_CE_AttachCrampons";
+    return belt ? "TLDCOOP_CE_DetachBelt" : scabbard ? "TLDCOOP_CE_DetachScabbard" : "TLDCOOP_CE_DetachCrampons";
+}
+
+void tell(const char* key) {
+    const std::string t = custom_text::text(key);
+    bool high = false, overlay = true;
+    void* a[] = {str(t.c_str()), &high, &overlay};
+    if (ui.hud) il2::invoke(ui.hud, nullptr, a);
+}
+
+void set_label(Il2CppObject* button_go, const std::string& text) {
+    Il2CppObject* tf = il2::invoke(ui.go_tf, button_go);
+    bool all = true;
+    void* la[] = {ui.t_localize, &all};
+    if (Il2CppObject* loc = tf ? il2::invoke(ui.in_children, tf, la) : nullptr) {
+        bool off = false;
+        void* ea[] = {&off};
+        il2::invoke(ui.set_enabled, loc, ea);  // its UILocalize would put "Equip" back
+    }
+    void* ta[] = {ui.t_label, &all};
+    if (Il2CppObject* label = tf ? il2::invoke(ui.in_children, tf, ta) : nullptr) {
+        void* sa[] = {str(text.c_str())};
+        il2::invoke(ui.label_set, label, sa);
+    }
+}
+
+void set_active_go(Il2CppObject* go, bool on) {
+    if (!alive(go)) return;
+    void* a[] = {&on};
+    il2::invoke(ui.go_active, go, a);
+}
+
+Vec3 local_of(Il2CppObject* go) {
+    Vec3 v{};
+    if (alive(go)) il2::invoke_value(ui.tf_local, il2::invoke(ui.go_tf, go), v);
+    return v;
+}
+
+PageButton* page_button(Il2CppObject* page) {
+    for (PageButton& p : g_pages)
+        if (target(p.page) == page) {
+            if (alive(target(p.button))) return &p;
+            if (p.button) il2::il2cpp_gchandle_free(p.button), p.button = 0;
+        }
+    Il2CppObject* equip = get<Il2CppObject*>(page, ui.page_equip);
+    Il2CppObject* examine = get<Il2CppObject*>(page, ui.page_examine);
+    Il2CppObject* drop = get<Il2CppObject*>(page, ui.page_drop);
+    if (!alive(equip) || !alive(drop)) return nullptr;
+    Il2CppObject* parent = nullptr;
+    if (Il2CppObject* tf = il2::invoke(ui.go_tf, equip)) parent = il2::invoke(il2::find_method(il2::find_class(kCore, "UnityEngine", "Transform"), "get_parent", 0), tf);
+    void* ia[] = {equip, parent};
+    Il2CppObject* copy = parent ? il2::invoke(ui.instantiate_under, nullptr, ia) : nullptr;
+    if (!alive(copy)) return nullptr;
+    void* na[] = {str("TLDCoop_ClothingButton")};
+    il2::invoke(api.obj_set_name, copy, na);
+    // After DROP, one step on as EXAMINE -> DROP goes (a row or a column, whichever TLD has).
+    const Vec3 a = local_of(alive(examine) ? examine : equip), b = local_of(drop);
+    Vec3 at{b.x + (b.x - a.x), b.y + (b.y - a.y), b.z};
+    if (!alive(examine)) at = {b.x, b.y - 40, b.z};
+    void* pa[] = {&at};
+    il2::invoke(ui.tf_set_local, il2::invoke(ui.go_tf, copy), pa);
+    PageButton* slot = nullptr;
+    for (PageButton& p : g_pages)
+        if (target(p.page) == page) slot = &p;
+    if (!slot) {
+        g_pages.push_back({});
+        slot = &g_pages.back();
+        slot->page = il2::il2cpp_gchandle_new(page, false);
+    }
+    slot->button = il2::il2cpp_gchandle_new(copy, false);
+    logx::info("clothing: the item page's ATTACH/DETACH button is made");
+    return slot;
+}
+
+void update_buttons_detour(Il2CppObject* self, Il2CppObject* gi, bool allow, const MethodInfo* m) {
+    g_update_buttons(self, gi, allow, m);
+    if (!g_ready || g_state != State::Ready || !alive(self)) return;
+    const Item* it = nullptr;
+    const Act act = alive(gi) && get<bool>(gi, ui.gear_in_pack) ? act_for(prefab_name(gi), it) : Act::None;
+    PageButton* pb = act != Act::None ? page_button(self) : nullptr;
+    if (!pb) {  // none here (or not for this item): ours off
+        for (PageButton& p : g_pages)
+            if (target(p.page) == self) set_active_go(target(p.button), false);
+        return;
+    }
+    if (target(pb->gear) != gi) {
+        if (pb->gear) il2::il2cpp_gchandle_free(pb->gear);
+        pb->gear = il2::il2cpp_gchandle_new(gi, false);
+    }
+    Il2CppObject* button = target(pb->button);
+    set_active_go(button, allow);
+    std::string text = custom_text::text(label_for(act, *it));
+    for (char& c : text) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    set_label(button, text);
+}
+
+Il2CppObject* inventory_find(const char* name) {
+    Il2CppObject* inv = il2::invoke(ui.get_inventory, nullptr);
+    Il2CppObject* items = inv ? get<Il2CppObject*>(inv, ui.inv_items) : nullptr;
+    if (!items) return nullptr;
+    void* a[] = {items, str(name)};
+    Il2CppObject* g = il2::invoke(ui.best_with_name, nullptr, a);
+    return alive(g) ? g : nullptr;
+}
+
+float condition_of(Il2CppObject* gear) {
+    Il2CppObject* data = get<Il2CppObject*>(gear, api.gear_data);
+    const float max = data ? get<float>(data, api.d_max_hp) : 0.0f;
+    return max > 0 ? std::clamp(get<float>(gear, ui.gear_hp) / max, 0.0f, 1.0f) : 1.0f;
+}
+
+void finish(bool success, bool cancel, float progress);
+
+void start(Act act, const Item& it, Il2CppObject* gear) {
+    if (g_pending.act != Act::None) return;
+    Il2CppObject* clothing = get<Il2CppObject*>(gear, ui.gear_clothing);
+    bool worn = false;
+    if (alive(clothing) && il2::invoke_value(ui.is_wearing, clothing, worn) && worn) {
+        tell("TLDCOOP_CE_TakeOff");
+        return;
+    }
+    const Item* use = &it;
+    Il2CppObject* extra = nullptr;
+    if (act == Act::Attach) {
+        // crampons: the real ones, else improvised (and the made item that goes with them)
+        extra = inventory_find(it.extra);
+        if (!extra && lower(it.extra) == "gear_crampons") {
+            for (const Item& o : kItems)
+                if (lower(o.base) == lower(it.base) && lower(o.extra) == "gear_improvisedcrampons") use = &o;
+            extra = inventory_find("GEAR_ImprovisedCrampons");
+        }
+        if (!extra) {
+            const std::string e = lower(it.extra);
+            tell(e == "gear_toolbelt" ? "TLDCOOP_CE_NoBelt" : e == "gear_riflescabbarda" ? "TLDCOOP_CE_NoScabbard"
+                                                                                        : "TLDCOOP_CE_NoCrampons");
+            return;
+        }
+    }
+    g_pending = {act, il2::il2cpp_gchandle_new(gear, false), extra ? il2::il2cpp_gchandle_new(extra, false) : 0, use,
+                 net::now_ms()};
+    void* la[] = {il2::type_object(ui.bar_class)};
+    Il2CppObject* bar = ui.load_panel ? il2::invoke(ui.load_panel, nullptr, la) : nullptr;
+    if (!bar || !ui.bar_launch || !coop_lapse::on_bar_end(&finish)) return finish(true, false, 1.0f);
+    const std::string text = custom_text::text(act == Act::Attach ? "TLDCOOP_CE_Attaching" : "TLDCOOP_CE_Detaching");
+    float seconds = 1, minutes = 0, failure = 0;
+    bool skip_restore = false;
+    void* a[] = {str(text.c_str()), &seconds, &minutes, &failure, &skip_restore, nullptr};
+    il2::invoke(ui.bar_launch, bar, a);
+}
+
+void finish(bool success, bool cancel, float progress) {
+    (void)progress;
+    Pending p = g_pending;
+    g_pending = {};
+    Il2CppObject* gear = target(p.gear);
+    Il2CppObject* extra = target(p.extra);
+    if (p.gear) il2::il2cpp_gchandle_free(p.gear);
+    if (p.extra) il2::il2cpp_gchandle_free(p.extra);
+    if (!success || cancel || !p.item || !alive(gear) || net::now_ms() - p.started > 60000) return;
+    Il2CppObject* inv = il2::invoke(ui.get_inventory, nullptr);
+    Il2CppObject* pm = il2::invoke(ui.get_pm, nullptr);
+    if (!inv || !pm) return;
+    const float cond = condition_of(gear);
+    auto add = [&](const char* name, float c) {
+        int32_t n = 1;
+        void* a[] = {str(name), &n, &c};
+        Il2CppObject* g = il2::invoke(ui.add_item, pm, a);
+        return alive(g);
+    };
+    auto destroy = [&](Il2CppObject* g) {
+        void* a[] = {g};
+        il2::invoke(ui.destroy_gear, inv, a);
+    };
+    if (p.act == Act::Attach) {
+        if (!alive(extra) || !add(p.item->key, cond)) return;
+        destroy(extra);
+        destroy(gear);
+        logx::info("clothing: %s + %s -> %s (condition %.0f%%)", p.item->base, p.item->extra, p.item->key, cond * 100);
+    } else {
+        if (!add(p.item->base, cond)) return;
+        add(p.item->extra, cond);  // (the pack doesn't keep the accessory's own condition: the item's)
+        destroy(gear);
+        logx::info("clothing: %s -> %s + %s (condition %.0f%%)", p.item->key, p.item->base, p.item->extra, cond * 100);
+    }
+}
+
+void on_equip_detour(Il2CppObject* self, const MethodInfo* m) {
+    Il2CppObject* button = nullptr;
+    if (ui.button_current) il2::il2cpp_field_static_get_value(ui.button_current, &button);
+    Il2CppObject* go = alive(button) ? go_of(button) : nullptr;
+    for (PageButton& p : g_pages) {
+        if (!go || target(p.button) != go) continue;
+        Il2CppObject* gear = target(p.gear);
+        const Item* it = nullptr;
+        const Act act = alive(gear) ? act_for(prefab_name(gear), it) : Act::None;
+        if (act != Act::None && it) start(act, *it, gear);
+        return;
+    }
+    g_on_equip(self, m);
+}
+
+bool init_ui() {
+    Il2CppClass* page = il2::find_class(kGame, "", "ItemDescriptionPage");
+    Il2CppClass* button = il2::find_class(kGame, "", "UIButton");
+    Il2CppClass* object = il2::find_class(kCore, "UnityEngine", "Object");
+    Il2CppClass* go = il2::find_class(kCore, "UnityEngine", "GameObject");
+    Il2CppClass* tf = il2::find_class(kCore, "UnityEngine", "Transform");
+    Il2CppClass* comp = il2::find_class(kCore, "UnityEngine", "Component");
+    Il2CppClass* gm = il2::find_class(kGame, "", "GameManager");
+    Il2CppClass* pm = il2::find_class(kGame, "", "PlayerManager");
+    Il2CppClass* inv = il2::find_class(kGame, "", "Inventory");
+    Il2CppClass* label = il2::find_class(kGame, "", "UILabel");
+    if (!page || !button || !object || !go || !tf || !comp || !gm || !pm || !inv || !label) return false;
+    ui.page_equip = il2::field_offset(page, "m_MouseButtonEquip");
+    ui.page_examine = il2::field_offset(page, "m_MouseButtonExamine");
+    ui.page_drop = il2::field_offset(page, "m_MouseButtonDrop");
+    ui.button_current = il2::il2cpp_class_get_field_from_name(button, "current");
+    ui.instantiate_under = il2::find_method_params(object, "Instantiate", {"UnityEngine.Object", "UnityEngine.Transform"});
+    ui.go_tf = il2::find_method(go, "get_transform", 0);
+    ui.go_active = il2::find_method(go, "SetActive", 1);
+    ui.tf_local = il2::find_method(tf, "get_localPosition", 0);
+    ui.tf_set_local = il2::find_method(tf, "set_localPosition", 1);
+    ui.in_children = il2::find_method_params(comp, "GetComponentInChildren", {"System.Type", "System.Boolean"});
+    ui.set_enabled = il2::find_method(il2::find_class(kCore, "UnityEngine", "Behaviour"), "set_enabled", 1);
+    ui.label_set = il2::find_method(label, "set_text", 1);
+    ui.get_inventory = il2::find_method(gm, "GetInventoryComponent", 0);
+    ui.get_pm = il2::find_method(gm, "GetPlayerManagerComponent", 0);
+    ui.add_item = il2::find_method_params(pm, "AddItemCONSOLE", {"System.String", "System.Int32", "System.Single"});
+    ui.destroy_gear = il2::find_method_params(inv, "DestroyGear", {"GearItem"});
+    ui.inv_items = il2::field_offset(inv, "m_Items");
+    if (Il2CppClass* ext = il2::find_class(kGame, "TLD.Gear", "GearItemObjectExtensions"))
+        ui.best_with_name = il2::find_method(ext, "GetBestGearItemWithName", 2);
+    ui.is_wearing = il2::find_method(api.clothing_class, "IsWearing", 0);
+    if (Il2CppClass* hud = il2::find_class(kGame, "", "HUDMessage"))
+        ui.hud = il2::find_method_params(hud, "AddMessage", {"System.String", "System.Boolean", "System.Boolean"});
+    ui.bar_class = il2::find_class(kGame, "", "Panel_GenericProgressBar");
+    ui.load_panel = il2::find_method_params(il2::find_class(kGame, "", "InterfaceManager"), "LoadPanel", {"System.Type"});
+    ui.bar_launch = ui.bar_class ? il2::find_method_params(ui.bar_class, "Launch",
+                                                           {"System.String", "System.Single", "System.Single", "System.Single",
+                                                            "System.Boolean", "OnExitDelegate"})
+                                 : nullptr;
+    ui.gear_hp = il2::field_offset(api.gear_class, "m_CurrentHP");
+    ui.gear_in_pack = il2::field_offset(api.gear_class, "m_InPlayerInventory");
+    ui.gear_clothing = il2::field_offset(api.gear_class, "m_ClothingItem");
+    auto type = [](Il2CppClass* k) {
+        Il2CppObject* t = k ? il2::type_object(k) : nullptr;
+        if (t) il2::il2cpp_gchandle_new(t, false);
+        return t;
+    };
+    ui.t_label = type(label);
+    ui.t_localize = type(il2::find_class(kGame, "", "UILocalize"));
+    const MethodInfo* update = il2::find_method_params(page, "UpdateButtons", {"GearItem", "System.Boolean"});
+    const MethodInfo* on_equip = il2::find_method(page, "OnEquip", 0);
+    const bool ok = ui.page_equip >= 0 && ui.page_drop >= 0 && ui.button_current && ui.instantiate_under && ui.go_tf &&
+                    ui.go_active && ui.tf_local && ui.tf_set_local && ui.in_children && ui.set_enabled && ui.label_set &&
+                    ui.get_inventory && ui.get_pm && ui.add_item && ui.destroy_gear && ui.inv_items >= 0 &&
+                    ui.best_with_name && ui.is_wearing && ui.gear_hp >= 0 && ui.gear_in_pack >= 0 &&
+                    ui.gear_clothing >= 0 && ui.t_label && ui.t_localize && update && on_equip;
+    if (!ok) return false;
+    return hooks::install_method("ItemDescriptionPage.UpdateButtons (clothing)", update,
+                                 reinterpret_cast<void*>(&update_buttons_detour), reinterpret_cast<void**>(&g_update_buttons)) &&
+           hooks::install_method("ItemDescriptionPage.OnEquip (clothing)", on_equip, reinterpret_cast<void*>(&on_equip_detour),
+                                 reinterpret_cast<void**>(&g_on_equip));
+}
+
 }  // namespace
 
 bool init() {
@@ -784,6 +1115,7 @@ bool init() {
         return false;
     }
     g_ready = true;
+    if (!init_ui()) logx::warn("clothing: no ATTACH/DETACH button on the item page (TLD API missing or hooks failed)");
     logx::info("clothing: ready (the pack in %s; its catalog loads with the game)", g_dir.string().c_str());
     return true;
 }
