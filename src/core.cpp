@@ -413,7 +413,7 @@ void push_local_state(const std::string& scene) {
         m.held_flags = held.flags;
         coop_emotes::current(m.emote, m.emote_seq);  // TLDCoop_DLC
         m.place = seamless_interiors::place();  // TLDCoop_DLC: the Seamless Interiors room we're in ("" outdoors)
-        m.activity = coop_activity::current(scene, m.y, now);  // TLDCoop_DLC: what our body is busy with
+        m.activity = coop_activity::current(scene, m.x, m.y, m.z, now);  // TLDCoop_DLC: what our body is busy with
         {  // TLDCoop_DLC: how we're doing, read once a second
             static double health_read = -1e18;
             static uint8_t condition = 100;

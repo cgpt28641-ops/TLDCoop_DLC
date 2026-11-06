@@ -10,7 +10,8 @@
 namespace coop_activity {
 
 bool init();
-// For State, at its push rate: the activity right now. `scene` and `y` (the player's height) to tell a fall.
-uint8_t current(const std::string& scene, float y, double now_ms);
+// For State, at its push rate: the activity right now. `scene` and where we are (a fall, and walking off from a panel's
+// work: then nothing is shown).
+uint8_t current(const std::string& scene, float x, float y, float z, double now_ms);
 
 }  // namespace coop_activity

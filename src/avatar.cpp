@@ -418,6 +418,8 @@ struct Avatar {
     MocapPlay mocap, mocap_out;
     uint8_t mocap_activity = 0;
     double mocap_last = 0;
+    int crouch_flag = -1;  // TLDCoop_DLC: the crouch flag last logged
+    int gait_told = 0;     // TLDCoop_DLC: gait/crouch changes logged (capped)
 };
 std::map<uint8_t, std::unique_ptr<Avatar>> g_avatars;  // by player id (host: the friends; a friend: the host, others)
 std::array<bool, net::kMaxPlayers> g_in_game{};  // the ids set_players last listed: states of anyone else are late
@@ -2173,8 +2175,12 @@ bool mocap_step(Avatar& a) {
     const float dt = a.mocap_last > 0 ? static_cast<float>(std::fmin(0.1, (now - a.mocap_last) / 1000.0)) : 0.0f;
     a.mocap_last = now;
     if (!api.get_local_rotation || !api.set_local_rotation || !api.get_local_position || !a.mocap_bones[0]) return false;
-    const uint8_t want = a.fresh && !a.lying && !a.shown_down ? a.last.activity : 0;
+    uint8_t want = a.fresh && !a.lying && !a.shown_down ? a.last.activity : 0;
+    // work in place (kneeling, at a panel) while they walk: an older sender's mistake, shown as nothing
+    const bool on_foot = want == net::ActClimb || want == net::ActAir || want == net::ActCarry;
+    if (!on_foot && a.speed > 1.5f) want = 0;
     if (want != a.mocap_activity) {
+        if (a.gait_told < 300) ++a.gait_told, say(a, "activity %d -> %d (speed %.2f m/s)", a.mocap_activity, want, a.speed);
         a.mocap_activity = want;
         const MocapClip* c = mocap_clip(want, a.female);
         if (c != a.mocap.clip) {
@@ -2489,6 +2495,7 @@ void drive_animation(Avatar& a, const net::StateMsg& s, double now) {
     else if (a.speed > run_from + kGaitHysteresis)
         want = "run";
     if (std::strcmp(want, g.current) != 0) {
+        if (a.gait_told < 300) ++a.gait_told, say(a, "gait %s -> %s (speed %.2f m/s)", g.current, want, a.speed);  // TLDCoop_DLC
         float fade = kGaitFadeSeconds;
         void* args[] = {il2::il2cpp_string_new(want), &fade};
         il2::invoke(api.crossfade, animation, args);
@@ -2599,6 +2606,10 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
     // In a bed (milestone 13): the body lies where TLD lays a sleeper. Crouching: eased down and up.
     a.lying = (s.flags & net::kStateInBed) && (s.flags & net::kStateBed) && a.actions && !down;
     const bool crouched = (s.flags & net::kStateCrouched) && !down && !a.lying;
+    if (crouched != (a.crouch_flag != 0)) {  // TLDCoop_DLC: for the log (a body stuck bent over, 05.11)
+        a.crouch_flag = crouched ? 1 : 0;
+        if (a.gait_told < 300) ++a.gait_told, say(a, "crouched %s (speed %.2f m/s)", crouched ? "on" : "off", a.speed);
+    }
     a.crouch += ((crouched ? 1.0f : 0.0f) - a.crouch) * std::fmin(1.0f, dt * 6);
     // A handover: they face their partner, the clips' distance apart (eased there and back).
     if (a.handover_on) {

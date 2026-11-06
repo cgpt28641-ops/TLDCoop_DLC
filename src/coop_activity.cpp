@@ -21,6 +21,8 @@ struct Api {
     const MethodInfo* find_all = nullptr;        // static Resources.FindObjectsOfTypeAll(Type)
     const MethodInfo* find_one = nullptr;        // static Object.FindObjectOfType(Type)
     const MethodInfo* panel_enabled = nullptr;   // Panel_Base.IsEnabled() (virtual)
+    const MethodInfo* game_object = nullptr;     // Component.get_gameObject()
+    const MethodInfo* in_hierarchy = nullptr;    // GameObject.get_activeInHierarchy()
     Il2CppObject* t_controller = nullptr;        // typeof(vp_FPSController)
     const MethodInfo* grounded = nullptr;        // vp_FPSController.get_Grounded()
 } api;
@@ -43,8 +45,9 @@ struct PanelKind {
     const char* name;
     uint8_t activity;
     Il2CppObject* type = nullptr;
-    std::vector<uintptr_t> found;  // its instances (prefabs among them never open)
+    std::vector<uintptr_t> found;  // its instances (prefab assets among them: never in a scene, never open)
     double looked = -1e18;
+    bool seen_live = false;        // one of them has been up in the game (then it's the panel TLD uses)
 };
 PanelKind g_panels[] = {
     {"Panel_BodyHarvest", net::ActKneel}, {"Panel_Cooking", net::ActKneel}, {"Panel_FeedFire", net::ActKneel},
@@ -56,6 +59,14 @@ double g_searched = -1e18;  // one search for all panel kinds at a time
 
 bool alive(Il2CppObject* o) { return o && il2::read_field<void*>(o, kCachedPtr) != nullptr; }
 
+// Up in the game: its object active in a scene's hierarchy. A prefab asset (FindObjectsOfTypeAll lists those too) is
+// in no scene; its IsEnabled could say yes forever (szymon's body kneeling at nothing, Shatsca's film 05.11).
+bool in_game(Il2CppObject* o) {
+    Il2CppObject* go = api.game_object ? il2::invoke(api.game_object, o) : nullptr;
+    bool on = false;
+    return alive(go) && api.in_hierarchy && il2::invoke_value(api.in_hierarchy, go, on) && on;
+}
+
 bool panel_open(PanelKind& p, double now) {
     if (!p.type) return false;
     bool any_alive = false;
@@ -63,11 +74,13 @@ bool panel_open(PanelKind& p, double now) {
         Il2CppObject* o = il2::il2cpp_gchandle_get_target(h);
         if (!alive(o)) continue;
         any_alive = true;
+        if (!in_game(o)) continue;
+        p.seen_live = true;
         bool on = false;
         if (il2::invoke_value(il2::virtual_method(o, api.panel_enabled), o, on) && on) return true;
     }
-    // TLD makes a panel the first time it's needed: look again now and then until we have a live one
-    if (!any_alive && now - p.looked > 5000 && now - g_searched > 500) {
+    // TLD makes a panel the first time it's needed: look again now and then until we have one that's been up
+    if ((!any_alive || !p.seen_live) && now - p.looked > 5000 && now - g_searched > 500) {
         p.looked = now;
         g_searched = now;
         for (uintptr_t h : p.found) il2::il2cpp_gchandle_free(h);
@@ -132,6 +145,8 @@ bool init() {
     Il2CppClass* object = il2::find_class(kCore, "UnityEngine", "Object");
     api.find_one = il2::find_method_params_quiet(object, "FindObjectOfType", {"System.Type"});
     api.panel_enabled = il2::find_method(il2::find_class(kGame, "", "Panel_Base"), "IsEnabled", 0);
+    api.game_object = il2::find_method(il2::find_class(kCore, "UnityEngine", "Component"), "get_gameObject", 0);
+    api.in_hierarchy = il2::find_method(il2::find_class(kCore, "UnityEngine", "GameObject"), "get_activeInHierarchy", 0);
     if (Il2CppClass* controller = il2::find_class(kGame, "", "vp_FPSController")) {
         api.t_controller = il2::type_object(controller);
         api.grounded = il2::find_method_quiet(controller, "get_Grounded", 0);
@@ -145,7 +160,8 @@ bool init() {
             p.type = il2::type_object(k);
             ++panels;
         }
-    g_ready = api.player_manager && api.control_mode && api.find_all && api.panel_enabled;
+    g_ready = api.player_manager && api.control_mode && api.find_all && api.panel_enabled && api.game_object &&
+              api.in_hierarchy;
     logx::info("activity: %s (%d control modes, %d panels, footing %s)", g_ready ? "ready" : "INCOMPLETE", modes, panels,
                api.grounded ? "from the controller" : "from the height");
     return g_ready;
@@ -153,12 +169,31 @@ bool init() {
 
 uint8_t read_now(const std::string& scene, float y, double now);
 
-uint8_t current(const std::string& scene, float y, double now) {
-    static double at = -1e18;
+// Work at a panel or kneeling keeps us in place: walking off while it still says so means it's wrong (shown as nothing)
+bool moves_on_foot(uint8_t a) { return a == net::ActClimb || a == net::ActAir || a == net::ActCarry; }
+
+uint8_t current(const std::string& scene, float x, float y, float z, double now) {
+    static double at = -1e18, walked_from = -1;
     static uint8_t last = net::ActNone;
+    static float lx = 0, lz = 0;
     if (now - at < 100 && scene == g_scene) return last;  // ten times a second is plenty
+    const double dt = (now - at) / 1000.0;
+    const float speed = dt > 0 && dt < 1 ? static_cast<float>(std::hypot(x - lx, z - lz) / dt) : 0.0f;
     at = now;
-    last = read_now(scene, y, now);
+    lx = x, lz = z;
+    uint8_t a = read_now(scene, y, now);
+    if (a != net::ActNone && !moves_on_foot(a) && speed > 1.2f) {
+        if (walked_from < 0) walked_from = now;
+        if (now - walked_from > 700) {
+            static int told = 0;
+            if (told++ < 10) logx::warn("activity: %d while walking at %.1f m/s: not shown", a, speed);
+            a = net::ActNone;
+        }
+    } else {
+        walked_from = -1;
+    }
+    if (a != last) logx::info("activity: %d -> %d", last, a);
+    last = a;
     return last;
 }
 
