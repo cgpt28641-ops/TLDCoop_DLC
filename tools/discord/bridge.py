@@ -1,9 +1,11 @@
 # The Discord bridge (run by .github/workflows/discord.yml every 30 minutes, on the "discord" branch's checkout):
+# The server (The Long Dark Multiplayer, Karol 06.11): #chat (the bot's replies: what was done, the dll), #błędy (game
+# logs), #pomysły (mods to add), #claude-komendy (to be decided).
 #   in:  every new message on the server's text channels the bot can read, with its attachments (logs), saved as
 #        inbox/<channel>/<date>/<message id>.json (+ the files in a folder beside it); inbox/state.json keeps where each
 #        channel was read up to.
 #   out: every outbox/*.txt is posted by the bot and removed. A file's first line "#channel-name" picks the channel
-#        (default: DISCORD_DEFAULT_CHANNEL, or the first text channel); files named in "attach: a, b" lines (paths in the
+#        (default: DISCORD_DEFAULT_CHANNEL, else #chat, else the first text channel); files named in "attach: a, b" lines (paths in the
 #        repo checkout) go along.
 # Standard library only. The token comes from the DISCORD_BOT_TOKEN secret; nothing here ever prints it.
 import json, os, re, sys, time, uuid, urllib.request, urllib.error
@@ -52,6 +54,8 @@ def download(url):
 
 
 def safe(name):
+    # Polish letters as plain ones (#błędy -> bledy), anything else odd as _
+    name = name.translate(str.maketrans('ąćęłńóśźżĄĆĘŁŃÓŚŹŻ', 'acelnoszzACELNOSZZ'))
     return re.sub(r'[^A-Za-z0-9._-]+', '_', name)[:120] or 'file'
 
 
@@ -114,7 +118,7 @@ def push(channels):
     out_dir = os.path.join(ROOT, 'outbox')
     if not os.path.isdir(out_dir):
         return 0
-    default = os.environ.get('DISCORD_DEFAULT_CHANNEL', '').strip().lstrip('#')
+    default = os.environ.get('DISCORD_DEFAULT_CHANNEL', '').strip().lstrip('#') or 'chat'  # (Karol: replies go to #chat)
     by_name = {c['name']: c for c in channels}
     sent = 0
     for name in sorted(os.listdir(out_dir)):
