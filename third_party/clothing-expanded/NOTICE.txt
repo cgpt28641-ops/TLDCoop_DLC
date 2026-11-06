@@ -1,0 +1,8 @@
+ClothingExpanded by TonisGaming (https://github.com/TonisGaming/ClothingExpanded), a ModComponent item pack for
+The Long Dark: 28 items made of a piece of the game's clothing and an accessory (tool belt, crampons, rifle scabbard),
+with their models, inventory icons, paper-doll pictures and texts. No licence is published; included in TLDCoop_DLC
+with permission (requested by our players on Discord, 06.11.2026). The author has discontinued his The Long Dark mods.
+
+Included unchanged: clothingexpanded_assets_all.bundle, the shaders bundle, catalog_clothingexpanded.json (its bundle
+paths are pointed at the TLDCoop\clothing folder when written out), items/*.json and Localization.json. Our port: the
+ModComponent mapping and the attach/detach buttons (src/clothing_expanded.cpp), the Polish texts (tools/clothing).
