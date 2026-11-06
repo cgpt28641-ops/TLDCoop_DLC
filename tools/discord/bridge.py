@@ -1,6 +1,7 @@
 # The Discord bridge (run by .github/workflows/discord.yml every 30 minutes, on the "discord" branch's checkout):
 # The server (The Long Dark Multiplayer, Karol 06.11): #chat (the bot's replies: what was done, the dll), #błędy (game
-# logs), #pomysły (mods to add), #claude-komendy (to be decided).
+# logs), #pomysły (mods to add), #claude-komendy (players' requests: big changes wait for Karol's yes, small fixes go
+# ahead; commands !status !dll !zmiany !test !stop; questions about the mod, answered there).
 #   in:  every new message on the server's text channels the bot can read, with its attachments (logs), saved as
 #        inbox/<channel>/<date>/<message id>.json (+ the files in a folder beside it); inbox/state.json keeps where each
 #        channel was read up to.
