@@ -1235,3 +1235,35 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   i odejmowane z KeroseneLampItem.m_CurrentFuelLiters (jednostki 1e-9 l). Brak hooka końca paska → przelewa od razu.
 - Ryzyko do sprawdzenia w logu: „fuel: ready”, „fuel: drained X l”. Pad: przycisk może nie być w nawigacji (lista
   przycisków budowana przed naszym postfixem). Następne w kolejce: ClothingExpanded (#pomysły 1568240607980421251).
+
+### 2026-11-06 ~21:40 local — ClothingExpanded w całości (9711e56, 6695771 + notice; CI zielone; NIE testowane w grze)
+- Decyzja: Shatsca zaproponował (#pomysły 1568240607980421251), kerel na #claude-komendy 19:43 „Dobra rób 1” (pełna
+  wersja z modelami). Mod TonisGaming (porzucony), paczka ModComponent: third_party/clothing-expanded (bundle 22 MB +
+  shaders + catalog + items/*.json + Localization.json, NOTICE.txt). DLL ma teraz ~33 MB (paczka jako zasób RC).
+- src/clothing_expanded.cpp:
+  - Zasoby RC 301/302/303 (src/clothing_expanded.rc.in, CMake configure_file z absolutną ścieżką, project(... RC)) →
+    zapis do TLDCoop\clothing (nadpisuje gdy inny rozmiar/początek); w catalogu „.\\AssetBundles\\” → ten folder.
+  - 2 s po pierwszej klatce: Addressables.LoadContentCatalogAsync(path,false,null); m_InternalOp z handle'a, czekam na
+    get_IsDone/get_Status (timeout 120 s).
+  - Mapowanie (jak ModComponent ItemMapper): RadialSpawnManager.GetPrefabFromName(klucz) → goły prefab; GearItemData =
+    Instantiate(dane bazowego przedmiotu TLD) + nasze: m_PrefabReference(AssetReferenceGearItem(klucz)), tag 0, waga
+    (ItemWeight.FromKilograms), MaxHP, decay, nazwa/opis (LocalizedString), ikona (GearItemInventoryIconSimpleData z
+    tekstury z bundla: AssetBundle.GetAllLoadedAssetBundles_Native + LoadAsset), coverflow (AssetReferenceTexture2D);
+    ClothingItem: copy_fields z bazowego + liczby moda; HoverIconsToShow z bazowego; Repairable/Harvest/Inspect z JSON;
+    buffy: WeightReductionBuff z GEAR_ToolBelt (3 przedm., 0.5), ClimbingBuff z GEAR_Crampons/ImprovisedCrampons,
+    torba: WeightReductionBuff z GEAR_RifleScabbardA (1, 0.5) + CarryingCapacityBuff z GEAR_MooseHideBag; warstwa Gear;
+    shader „Standard” → shader GEAR_CoffeeCup; na końcu GearItem.Awake() na prefabie (jak ModComponent). HideFlags
+    DontUnloadUnusedAsset + gchandle. Po zmianie sceny: goły prefab → mapowanie od nowa.
+  - copy_fields: il2cpp_field_get_value/set_value (nowe optional exporty w il2cpp_api.h), m_GearItem → nasz.
+  - UI: hook ItemDescriptionPage.UpdateButtons → kopia m_MouseButtonEquip za DROP (krok EXAMINE→DROP), napis
+    PRZYPNIJ/ODEPNIJ PAS|RAKI|POCHWĘ (UILocalize wyłączony); hook OnEquip: UIButton.current == nasz → akcja. Pasek 1 s
+    (coop_lapse::on_bar_end), potem AddItemCONSOLE(nowy, 1, stan bazowego) + Inventory.DestroyGear(stare). Raki:
+    prawdziwe, inaczej prowizoryczne. Założone ubranie → „Najpierw to zdejmij”. Odpięty dodatek dostaje stan przedmiotu
+    (mod daje nowy; paczka nie pamięta stanu dodatku).
+- custom_text.{h,cpp}: nasze teksty EN/PL (Localization.get_Language zawiera „polish”) przez hook Localization.Get
+  automatu (automat_items loc_detour pyta custom_text najpierw). PL teksty — nasze (tools/clothing/gen_items.py).
+- dev: `clothing` (stan, lista: gear/BARE), `give GEAR_JeansToolbelt` do testu.
+- Ryzyka do logu: „clothing: N of 28 items ready”, „clothing: no icon…”, „…materials on TLD's shader”; czy
+  TLD-owy CaseInsensitiveResourceLocator widzi nowy catalog (jak u ModComponent powinien); pozycja przycisku; ikony/
+  paperdoll; zapis/wczytanie save z nowymi przedmiotami. Bez DLC (TFTFT) bazowe GEAR_ToolBelt/RifleScabbardA/Crampons
+  mogą nie istnieć → te przedmioty FAILED.
