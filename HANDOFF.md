@@ -1126,3 +1126,23 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   czytał zwolniony stos jako wskaźniki kluczy. Teraz zwykła tablica struktur.
 - Reszta logów: tylko znane ostrzeżenia (animator differs, m_LocalizedDisplayName, DynamicGI, pojedyncze NRE).
 - Na Discorda jeszcze nie wysłane (Karol wyłączał komputer) — wysłać przy następnej okazji razem z mocap.
+
+### 2026-11-06 ~07:50 local — zapętlenie, chód z mocap, łatka 2.60 (ad9a844, 188d478; CI zielone; NIC nie testowane)
+- Film Shatscy 22:54 (szymon po dołączeniu pochylony, „chodzi” w miejscu). Karol: grali na STARSZYM dll (bez mocap),
+  więc to stary system (podejrzenie: flaga kucania + chód, albo prędkość). Logów z tej gry brak → dodane logi w
+  avatar: „crouched on/off (speed)”, „gait X -> Y (speed)”, „activity A -> B” (limit 300 na awatar).
+- coop_activity: panele liczone tylko gdy GameObject.activeInHierarchy (FindObjectsOfTypeAll zwraca też prefaby-assety,
+  których IsEnabled mógł wiecznie mówić „otwarte” → wieczne klęczenie); szuka dalej, dopóki nie zobaczy panelu w grze;
+  czynność „w miejscu” przy chodzie >1.2 m/s przez 0.7 s = brak (log warn), u odbiorcy też (>1.5 m/s).
+- Chód z mocap (tools/mocap/gait.py: jeden pełny krok od uderzenia lewej pięty, szew domknięty, prędkość z toru bioder):
+  g_idle 82_08 (stanie), g_walk 07_01 (1.42 m/s), g_run 35_17 (3.06 m/s), g_creep 77_14 (skradanie, 1.36 m/s).
+  avatar.cpp gait_step: udziały z prędkości (idle→walk 0.15–0.55 m/s, walk→run 2.3–3.1), wspólna faza kroku,
+  tempo = prędkość/prędkość klipu (0.5–1.8×), do tyłu przy cofaniu (vel_x/vel_z), skradanie gdy kuca i idzie; kucanie
+  w miejscu = stara poza crouch_pose. Wyłączone przy jedzeniu/spaniu/podawaniu/walce. mocap_mix: mieszanie warstw.
+  Dev: `pose gait 0|1` (mocap / stare klipy paczki). MocapClip ma pole speed. Kulenie (77_19/77_20/91_16) odrzucone:
+  dziwne nagrania.
+- Łatka TLD 2.60 189457 (Karol 06.11): mod odczytuje wszystko po nazwach → powinien działać; kTestedGameVersion
+  zostaje 2.59 (warn w logu) do potwierdzenia. Do sprawdzenia w logach po 1. grze: wnyki (nasza synchronizacja stanu),
+  przedmioty po powrocie do domku (pływające — poprawka TLD vs nasze world_items/SI), gaszenie światła przy podróży
+  Fulmarem, zwierzęta uciekające przed pociągiem (właściciel zwierzęcia), zapasy Fulmara (pojemnik), usunięte kartony
+  z Fulmara (ostrzeżenia o brakujących pojemnikach — niegroźne).
