@@ -842,7 +842,8 @@ void on_runtime_ready() {
     food_tweaker::init();  // TLDCoop_DLC: realistic calories and cooking times (MODS: FOOD TWEAKER)
     night_sky::init();     // TLDCoop_DLC: Better Night Sky (coop.ini [sky])
     fuel_transfer::init(); // TLDCoop_DLC: DRAIN FUEL on a kerosene lamp (coop.ini [fuel])
-    clothing_expanded::init();  // TLDCoop_DLC: ClothingExpanded (28 items, its pack in the DLL)
+    if (config::load().clothing) clothing_expanded::init();  // TLDCoop_DLC: ClothingExpanded (coop.ini [clothing])
+    else logx::info("clothing: off (coop.ini [clothing] enabled=0)");
     slot_machine::init();  // TLDCoop_DLC: the automat (coop.ini [automat] test=1)
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC

@@ -26,21 +26,24 @@ std::u16string wide(const char* s) {
     return out;
 }
 
-// The game's language is Polish (Localization.get_Language), asked once a second at most.
+// The game's language is Polish: Localization.s_Language, read (no managed call: this runs inside TLD's
+// Localization.Get, also while its tables load) once a second at most.
 bool polish() {
-    static const MethodInfo* get = nullptr;
+    static FieldInfo* field = nullptr;
     static bool looked = false;
     static bool pl = false;
     static unsigned long long last = 0;
     if (!looked) {
         looked = true;
         if (Il2CppClass* loc = il2::find_class("Assembly-CSharp.dll", "", "Localization"))
-            get = il2::find_method_quiet(loc, "get_Language", 0);
+            field = il2::il2cpp_class_get_field_from_name(loc, "s_Language");
     }
     const unsigned long long now = GetTickCount64();
-    if (get && now - last > 1000) {
+    if (field && now - last > 1000) {
         last = now;
-        std::string lang = il2::to_utf8(reinterpret_cast<Il2CppString*>(il2::invoke(get, nullptr)));
+        Il2CppString* value = nullptr;
+        il2::il2cpp_field_static_get_value(field, &value);
+        std::string lang = value ? il2::to_utf8(value) : std::string();
         for (char& c : lang) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         pl = lang.find("polish") != std::string::npos || lang.find("polski") != std::string::npos;
     }

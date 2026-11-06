@@ -89,9 +89,15 @@ constexpr const char* kDefaultIni =
     "; drain: DRAIN FUEL on a kerosene lamp's examine screen: its fuel back into the kerosene containers in your pack\n"
     "drain=1\n"
     "\n"
+    "[clothing]\n"
+    "; enabled: ClothingExpanded (built in): pants with a tool belt, boots with crampons, the satchel with a rifle\n"
+    "; scabbard. 1 = on (needs the Tales from the Far Territory DLC); off for now while it is tested\n"
+    "enabled=0\n"
+    "\n"
     "[sky]\n"
-    "; Better Night Sky (built in): finer stars and a moon with its phases. Your own look (0 = TLD's sky)\n"
-    "enabled=1\n"
+    "; Better Night Sky (built in): finer stars and a moon with its phases. Your own look (0 = TLD's sky; off for\n"
+    "; now while it is tested)\n"
+    "enabled=0\n"
     "\n"
     "[houselights]\n"
     "; House Lights (built in): light switches work again. enabled: the host's choice (MODS page); the rest your own\n"
@@ -291,8 +297,9 @@ Settings load() {
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.food_tweaker = GetPrivateProfileIntW(L"food", L"enabled", 0, ini.c_str()) != 0;  // TLDCoop_DLC
-    s.night_sky = GetPrivateProfileIntW(L"sky", L"enabled", 1, ini.c_str()) != 0;      // TLDCoop_DLC
+    s.night_sky = GetPrivateProfileIntW(L"sky", L"enabled", 0, ini.c_str()) != 0;      // TLDCoop_DLC
     s.fuel_drain = GetPrivateProfileIntW(L"fuel", L"drain", 1, ini.c_str()) != 0;      // TLDCoop_DLC
+    s.clothing = GetPrivateProfileIntW(L"clothing", L"enabled", 0, ini.c_str()) != 0;  // TLDCoop_DLC
     {  // TLDCoop_DLC: [houselights]
         auto num = [&](const wchar_t* key, float& v, float lo, float hi) {
             const std::string t = read(ini, key, "", L"houselights");
