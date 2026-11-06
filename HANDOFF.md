@@ -1169,3 +1169,18 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (template_for z wariantem, obszar spawnu z prefabem tej klasy — region_variant), przejęcie (pool_take: ta sama klasa,
   inaczej nowy z obszaru tej klasy, dopiero na końcu dowolny + warn), walka (spawn_stand_in z wariantem kopii).
 - Protokół v50 (wszyscy ten sam dll).
+
+### 2026-11-06 ~12:30 local — przegląd kodu od 41cdce2 (9d1ebc0, CI zielone, NIE testowane w grze)
+- Karol: „posprawdzaj dokładnie kod pod względem błędów”. Przejrzane: avatar (mocap, chód, stopy, głowa, obrót),
+  coop_activity, world_objects (lina), wildlife (warianty wilków), protocol, world_items.
+- Poprawione:
+  - coop_activity: szukanie paneli (FindObjectsOfTypeAll) mogło iść co ~0.5 s w kółko (panel nieotwierany = nigdy
+    „widziany”) → przestaje, gdy instancja jest w scenie (GameObject.get_scene handle ≠ 0), maks. 1 szukanie / 1.5 s,
+    każdy rodzaj co 10 s; instancje ze sceny brane przed prefabami.
+  - wildlife: g_region_variant (wariant obszaru spawnu po wskaźniku) czyszczony przy zmianie sceny (mirror i ownership).
+  - mocap: rig klipów wybierany po wysokości bioder (< 1.02 m = rig Astrid), nie po imieniu — zrzut wszystkich 23 ciał
+    (scratchpad dumprigs.py): dwa rigi, w obrębie rigu te same obroty spoczynkowe; atwood, jace, patron1, patron4 to
+    mężczyźni na krótszym rigu (dla nich dotąd szłyby klipy M → ręce skręcone o 12°).
+  - obrót ciała resetowany przy ponownym pokazaniu awatara; klip „air” trzymany (nie pętla 4 klatek = drganie).
+  - lina: gdy my mamy linę, a lista hosta nie — nasza zostaje i idzie do hosta (zdjęcie jej zabrałoby linę z gry).
+- Wpadka: 0c54587 nie skompilował się w CI (female_rig użyte przed deklaracją) — naprawione w 582ea0b.
