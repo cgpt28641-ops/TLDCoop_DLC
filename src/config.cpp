@@ -80,6 +80,11 @@ constexpr const char* kDefaultIni =
     "; grey, black or #RRGGBB, e.g.\n"
     "; Shatsca=blue\n"
     "\n"
+    "[food]\n"
+    "; Food Tweaker (built in): realistic calories of meat, packaged food, drinks and dishes, and meat cooking times.\n"
+    "; enabled: the host's choice for everyone (MODS page); 0 = the game's own values\n"
+    "enabled=0\n"
+    "\n"
     "[houselights]\n"
     "; House Lights (built in): light switches work again. enabled: the host's choice (MODS page); the rest your own\n"
     "enabled=1\n"
@@ -236,6 +241,7 @@ void save(const Settings& s) {
     WritePrivateProfileStringW(L"hud", L"chart", s.hud_chart ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"ambient", L"enabled", s.ambient_lights ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"houselights", L"enabled", s.house_lights ? L"1" : L"0", ini.c_str());
+    WritePrivateProfileStringW(L"food", L"enabled", s.food_tweaker ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"trees", L"enabled", s.dynamic_trees ? L"1" : L"0", ini.c_str());
     WritePrivateProfileStringW(L"interiors", L"enabled", s.seamless_interiors ? L"1" : L"0", ini.c_str());
     // TLDCoop_DLC: the codes aren't written to the log (it goes into F11's bug reports): only whether one is set
@@ -276,6 +282,7 @@ Settings load() {
     s.hud_chart = GetPrivateProfileIntW(L"hud", L"chart", 1, ini.c_str()) != 0;
     s.hud_colours = read_section(ini, L"colors");  // TLDCoop_DLC
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
+    s.food_tweaker = GetPrivateProfileIntW(L"food", L"enabled", 0, ini.c_str()) != 0;  // TLDCoop_DLC
     {  // TLDCoop_DLC: [houselights]
         auto num = [&](const wchar_t* key, float& v, float lo, float hi) {
             const std::string t = read(ini, key, "", L"houselights");

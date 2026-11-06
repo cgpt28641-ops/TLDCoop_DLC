@@ -114,6 +114,9 @@ constexpr ModSwitch kMods[] = {
      "House Lights: włączniki światła w domach znów działają (prąd jak podczas zorzy). Kliknij włącznik na ścianie. Ty "
      "decydujesz za wszystkich; jasność i zasięg każdy ma swoje w coop.ini [houselights]. (Wbudowany, autorzy "
      "DemonBunnyBon i Xpazeman, za zgodą.)"},
+    {"FOOD TWEAKER",
+     "Food Tweaker: realistyczne kalorie mięsa, jedzenia z puszek, napojów i potraw oraz czas pieczenia mięsa. "
+     "WYŁĄCZONY = wartości z gry. Ty decydujesz za wszystkich. (Wbudowany, na podstawie moda GruffCassquatcha.)"},
 };
 constexpr int kModCount = static_cast<int>(sizeof(kMods) / sizeof(kMods[0]));
 constexpr int kModRows[] = {kMode, kCharacter, kNames, kRadar, kChart};  // rows with arrows (VOICE may be hidden)
@@ -1561,6 +1564,7 @@ void load_choices() {
     g.mod_on[1] = g.settings.dynamic_trees;
     g.mod_on[2] = g.settings.seamless_interiors;
     g.mod_on[3] = g.settings.house_lights;
+    g.mod_on[4] = g.settings.food_tweaker;  // TLDCoop_DLC
     // TLDCoop_DLC: only the characters the worn clothes fit (avatar::choosable_body_ids).
     g.bodies.clear();
     std::string ids = avatar::choosable_body_ids();
@@ -1819,6 +1823,7 @@ void close_menu(bool confirmed) {
             g.settings.dynamic_trees = g.mod_on[1];
             g.settings.seamless_interiors = g.mod_on[2];
             g.settings.house_lights = g.mod_on[3];
+            g.settings.food_tweaker = g.mod_on[4];
         }
         if (by_code) g.settings.transport = "steam";  // codes run through Steam
         if (g.mode == kJoin) g.settings.join_code = g.join_code;

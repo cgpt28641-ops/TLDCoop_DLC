@@ -15,6 +15,7 @@
 
 #include "ambient_lights.h"
 #include "house_lights.h"
+#include "food_tweaker.h"
 #include "slot_machine.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
@@ -181,6 +182,7 @@ void coop_off(const char* why) {
 void apply_net_settings(const config::Settings& s, bool startup) {
     ambient_lights::set_settings(s);
     house_lights::set_settings(s);
+    food_tweaker::set_settings(s);  // TLDCoop_DLC
     coop_report::set_name(s.name);
     dynamic_trees::set_settings(s);
     seamless_interiors::set_settings(s);
@@ -233,6 +235,7 @@ void start_networking() {
     if (!s.autostart) {
         ambient_lights::set_settings(s);
         house_lights::set_settings(s);
+        food_tweaker::set_settings(s);  // TLDCoop_DLC
         coop_report::set_name(s.name);
         dynamic_trees::set_settings(s);
         seamless_interiors::set_settings(s);
@@ -827,6 +830,7 @@ void on_runtime_ready() {
     world_spray::init();
     ambient_lights::init();
     house_lights::init();  // TLDCoop_DLC
+    food_tweaker::init();  // TLDCoop_DLC: realistic calories and cooking times (MODS: FOOD TWEAKER)
     slot_machine::init();  // TLDCoop_DLC: the automat (coop.ini [automat] test=1)
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC

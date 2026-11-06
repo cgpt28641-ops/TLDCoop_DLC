@@ -40,6 +40,8 @@ struct Settings {
     // TLDCoop_DLC: [houselights] House Lights (built in, by DemonBunnyBon / Xpazeman, with permission): the light
     // switches of houses work again. enabled: the host's choice for everyone (MODS); the rest each player's own.
     bool house_lights = true;
+    // TLDCoop_DLC: [food] Food Tweaker (built in): realistic calories and meat cooking times; the host's choice (MODS)
+    bool food_tweaker = false;
     float hl_intensity = 2.0f;      // how bright (the mod's 0-3)
     float hl_range = 1.4f;          // how far they reach (x their own range, at most 20 m)
     bool hl_white = false;          // whiter light

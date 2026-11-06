@@ -1263,6 +1263,7 @@ constexpr uint32_t kFeatureDynamicTrees = 2;   // Dynamic Trees (built in, with 
 constexpr uint32_t kFeatureAdaptiveArsenal = 4;  // (was Adaptive Arsenal: removed; the bit stays unused)
 constexpr uint32_t kFeatureSeamlessInteriors = 8;  // Seamless Interiors (built in, with its author's permission)
 constexpr uint32_t kFeatureHouseLights = 32;   // (v49) House Lights (built in, with its author's permission)
+constexpr uint32_t kFeatureFoodTweaker = 64;   // (v50) Food Tweaker (built in: realistic calories and cooking times)
 constexpr uint32_t kFeatureWildOwnership = 16;  // (v44) [wildlife] ownership=1: each animal is run by one game
 inline void write_features(Writer& w, uint32_t bits, float tree_snow) {
     w.put<uint32_t>(bits);
