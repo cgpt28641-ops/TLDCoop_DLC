@@ -1157,3 +1157,15 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Obrót w miejscu: stojąc (prędkość < 0.3, bez czynności, bez celowania) ciało (body_yaw) trzyma kierunek, przy różnicy
   > 55° obraca się 220°/s i przestępuje (krok chodu waga do 0.6, krok na 180°); w ruchu podąża za wzrokiem (wygładzone).
 - Wszystko wyłącza `pose gait 0` (g_mocap_gait).
+
+### 2026-11-06 ~10:45 local — lina na głazie, wilki śnieżne (3401a0a, v50, CI zielone, NIE testowane)
+- Shatsca: „lina wspinaczkowa założona na głaz nie wyświetla się drugiemu graczowi i nie może jej użyć”; „wilk śnieżny
+  (od hordy) zmienił się nagle na zwykłego”.
+- Lina: nie była w ogóle synchronizowana. world_objects: ObjectKind::Rope = 9 (klucz „c/”), lista
+  RopeAnchorPoint.s_RopeAnchorPoints, stan m_RopeDeployed && !m_RopeSnapped, odpytywane w obie strony jak drzwi
+  (both_ways), u odbiorcy SetRopeActiveState(state, false) + m_RopeDeployed. Log init „climbing ropes on anchors shared”.
+- Wilki: rodzaj (kind) był tylko „wolf”; timberwolf (AiTimberwolf = wilki śnieżne/watahy) i głodny (AiWolfStarving) to
+  osobne klasy BaseAi. AnimalRec.flags: kAnimalTimberwolf=16, kAnimalStarving=32 (net::animal_variant). Kopie
+  (template_for z wariantem, obszar spawnu z prefabem tej klasy — region_variant), przejęcie (pool_take: ta sama klasa,
+  inaczej nowy z obszaru tej klasy, dopiero na końcu dowolny + warn), walka (spawn_stand_in z wariantem kopii).
+- Protokół v50 (wszyscy ten sam dll).
