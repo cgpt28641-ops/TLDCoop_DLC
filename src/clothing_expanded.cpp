@@ -300,6 +300,16 @@ bool write_pack() {
     const std::string from = ".\\\\AssetBundles\\\\";
     for (size_t p = catalog.find(from); p != std::string::npos; p = catalog.find(from, p + dir.size()))
         catalog.replace(p, from.size(), dir);
+    // Its locator id is TLD's own main catalog's ("AddressablesMainContentCatalog"): loaded as is it took the game's
+    // place and TLD crashed (06.11, Shatsca: GameAssembly+0x3cd25a, a null). Its own name, as ModComponent does.
+    const std::string id_key = "\"m_LocatorId\":\"";
+    if (const size_t p = catalog.find(id_key); p != std::string::npos) {
+        const size_t v = p + id_key.size(), end = catalog.find('"', v);
+        if (end != std::string::npos) catalog.replace(v, end - v, "catalog_clothingexpanded");
+    } else {
+        logx::warn("clothing: the pack's catalog has no locator id to rename; not loading it");
+        return false;
+    }
     return write_file(g_dir / L"catalog_clothingexpanded.json", catalog.data(), catalog.size());
 }
 
@@ -320,9 +330,11 @@ bool start_catalog() {
     return true;
 }
 
-const MethodInfo* method_up(Il2CppObject* o, const char* name) {
+// AsyncOperationBase<T>.m_Status, read (no call into the generic class's methods): 0 None (still loading),
+// 1 Succeeded, 2 Failed.
+FieldInfo* field_up(Il2CppObject* o, const char* name) {
     for (Il2CppClass* k = o ? il2::il2cpp_object_get_class(o) : nullptr; k; k = il2::il2cpp_class_get_parent(k))
-        if (const MethodInfo* m = il2::il2cpp_class_get_method_from_name(k, name, 0)) return m;
+        if (FieldInfo* f = il2::il2cpp_class_get_field_from_name(k, name)) return f;
     return nullptr;
 }
 
@@ -330,15 +342,11 @@ const MethodInfo* method_up(Il2CppObject* o, const char* name) {
 int catalog_status() {
     Il2CppObject* op = target(g_catalog_op);
     if (!op) return -1;
-    static const MethodInfo *is_done = nullptr, *status = nullptr;
-    if (!is_done) is_done = method_up(op, "get_IsDone");
-    if (!status) status = method_up(op, "get_Status");
-    bool done = false;
-    if (!is_done || !il2::invoke_value(is_done, op, done)) return -1;
-    if (!done) return 0;
-    int32_t st = 0;  // AsyncOperationStatus: None 0, Succeeded 1, Failed 2
-    if (status) il2::invoke_value(status, op, st);
-    return st == 1 ? 1 : -1;
+    static FieldInfo* status = nullptr;
+    if (!status) status = field_up(op, "m_Status");
+    if (!status) return -1;
+    const int32_t st = get<int32_t>(op, static_cast<ptrdiff_t>(il2::il2cpp_field_get_offset(status)));
+    return st == 0 ? 0 : st == 1 ? 1 : -1;
 }
 
 // --- making an item ---------------------------------------------------------------------------------------------------
