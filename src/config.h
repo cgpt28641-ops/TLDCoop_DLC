@@ -43,7 +43,7 @@ struct Settings {
     // TLDCoop_DLC: [food] Food Tweaker (built in): realistic calories and meat cooking times; the host's choice (MODS)
     bool food_tweaker = false;
     // TLDCoop_DLC: [sky] Better Night Sky (built in, MIT): finer stars and a phased moon; each player's own look
-    bool night_sky = false;  // (off by default until tested: 06.11 a world start crashed)
+    bool night_sky = true;
     // TLDCoop_DLC: [fuel] drain: a kerosene lamp's fuel back into a canister (Better Fuel Management's Drain); own
     bool fuel_drain = true;
     // TLDCoop_DLC: [clothing] enabled: ClothingExpanded's 28 items (off until tested: the 06.11 build crashed a start)

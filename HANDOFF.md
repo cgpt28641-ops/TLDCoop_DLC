@@ -1276,3 +1276,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (podejrzenie rekursji/wywołania w trakcie ładowania tabel).
 - Podejrzani: Night Sky (UniStorm.Init przy starcie świata, bundle 2019), ClothingExpanded (catalog/mapowanie, any_bare →
   GetPrefabFromName/WaitForCompletion przy zmianie sceny), custom_text (powyżej). Po logu: włączać po jednym.
+
+### 2026-11-06 ~22:20 local — przyczyna crasha znaleziona (log Shatscy), Night Sky z powrotem włączone
+- Log: „clothing: loading the pack's catalog” → po 0,3 s [FAULT] 0xC0000005 GameAssembly+0x3cd25a (adres 0) w menu.
+  Night Sky działało („stars and moon up”), więc znów domyślnie [sky] enabled=1.
+- Przyczyna: catalog paczki ma m_LocatorId = "AddressablesMainContentCatalog" (jak główny catalog TLD) → załadowany
+  zastępował katalog gry. Teraz przy zapisie zmieniam na "catalog_clothingexpanded" (tak robi ModComponent
+  AssetBundleProcessor). Status ładowania czytany z pola m_Status (bez wywołań metod klasy generycznej).
+- [clothing] dalej domyślnie 0 — do testu enabled=1 (poprosiłem Shatscę/Karola).
+- Bridge Discorda: wzmianki bota (@bot albo rola bota) od kerel123/shatsca → bot od razu daje 👀 i dopisuje do
+  inbox/mentions.lst (czytam najpierw); workflow co 10 min (cron */10).
