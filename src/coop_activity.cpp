@@ -98,8 +98,11 @@ bool panel_open(PanelKind& p, double now) {
         p.seen_live = false;
         void* a[] = {p.type};
         Il2CppObject* all = il2::invoke(api.find_all, nullptr, a);
-        for (size_t i = 0; i < il2::array_length(all) && p.found.size() < 4; ++i)
-            if (Il2CppObject* o = il2::array_object_at(all, i); alive(o)) p.found.push_back(il2::il2cpp_gchandle_new(o, false));
+        // the ones in a scene first (prefab assets may come before them in the list)
+        for (int pass = 0; pass < 2; ++pass)
+            for (size_t i = 0; i < il2::array_length(all) && p.found.size() < 4; ++i)
+                if (Il2CppObject* o = il2::array_object_at(all, i); alive(o) && in_scene(o) == (pass == 0))
+                    p.found.push_back(il2::il2cpp_gchandle_new(o, false));
     }
     return false;
 }
