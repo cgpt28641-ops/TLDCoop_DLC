@@ -1218,3 +1218,20 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   wyłączona; on_frame: _TintColor × m_StarsAlpha² / m_MoonAlpha, księżyc w stronę -forward m_MoonLight, faza
   (dzień+m_MoonCycleStartDay)%29·24/29 → Moon_<i>.png. Bez spadających gwiazd i zmiany bloomu. Ryzyko: shadery
   z 2019 (różowe/niewidoczne) — patrz log „night sky: … up”.
+
+### 2026-11-06 ~17:40 local — przelewanie paliwa lampa→kanister (9f424b2; CI zielone; NIE testowane)
+- 3. punkt kolejki kerela (#pomysły 1568266626615353374, reakcja ⏳ → ✅): z Better Fuel Management (WulfMarius/ds5678)
+  TYLKO „Drain”. Reszta moda (puste kanistry nie znikają, przelewanie między kanistrami, menu radialne) NIE.
+- src/fuel_transfer.cpp, coop.ini [fuel] drain=1 (każdy swoje, nic nie synchronizowane — ekwipunek jest lokalny).
+  Ekran oględzin lampy (Panel_Inventory_Examine): przycisk UNLOAD (normalnie broni) → „DRAIN FUEL” z ikoną REFUEL,
+  pod najniższym z HARVEST/REFUEL/REPAIR (+m_ButtonSpacing), wyszarzony gdy <1 ml do przelania (min(paliwo lampy,
+  wolne miejsce w kanistrach z naftą w plecaku)). Napis: UILocalize wyłączony na czas (włączony z powrotem przy innym
+  przedmiocie, ikona przywracana).
+- Hooki: RefreshMainWindow (postfix), OnSelectUnload (klik → drain), OnUnload (Continue pada → drain),
+  SelectUnloadButton (dla lampy: tylko podświetlenie, panel rozładowania broni ukryty).
+- Drain: Panel_GenericProgressBar.Launch (wersja ze stringiem audio, „Play_SndActionRefuelLantern”, 3 s, 0 min).
+  Koniec paska: coop_lapse::on_bar_end(listener) — nowe w coop_lapse (ProgressBarEnded już był hookowany; postęp =
+  elapsed/duration, przy anulowaniu tylko ta część). Paliwo wpisywane wprost w LiquidItem.m_Liquid (do m_LiquidCapacity)
+  i odejmowane z KeroseneLampItem.m_CurrentFuelLiters (jednostki 1e-9 l). Brak hooka końca paska → przelewa od razu.
+- Ryzyko do sprawdzenia w logu: „fuel: ready”, „fuel: drained X l”. Pad: przycisk może nie być w nawigacji (lista
+  przycisków budowana przed naszym postfixem). Następne w kolejce: ClothingExpanded (#pomysły 1568240607980421251).
