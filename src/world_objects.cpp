@@ -1048,6 +1048,12 @@ void apply_list(const net::ObjectListMsg& m) {
         const std::string id = id_of(x.o), key = key_of(x.kind, id);
         if (const auto it = host.find(key); it != host.end()) {
             ++matched;
+            // TLDCoop_DLC: a rope we have down that the host's world hasn't: ours stands and goes to the host (taking
+            // it away here would lose the rope it cost us: TLD took it from our pack when it was put down)
+            if (x.kind == Kind::Rope && done(x) && !it->second->done) {
+                changed_here(x, id, name_of(x.o));
+                continue;
+            }
             if ((is_lock(x.kind) && done(x) && !it->second->done) || (both_ways(x.kind) && value_of(x) != it->second->done)) {
                 if (const auto ours = g_ours.find(key); ours != g_ours.end() && now - ours->second < kOursMs) {
                     ++kept;  // we just opened it: the host hasn't heard yet
