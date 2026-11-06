@@ -1184,3 +1184,16 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   - obrót ciała resetowany przy ponownym pokazaniu awatara; klip „air” trzymany (nie pętla 4 klatek = drganie).
   - lina: gdy my mamy linę, a lista hosta nie — nasza zostaje i idzie do hosta (zdjęcie jej zabrałoby linę z gry).
 - Wpadka: 0c54587 nie skompilował się w CI (female_rig użyte przed deklaracją) — naprawione w 582ea0b.
+
+### 2026-11-06 ~13:30 local — most Discorda przez GitHub (b335198)
+- Karol chce, żebym czytał Discorda i odpisywał też przy wyłączonym komputerze; nowy serwer (zaproszenie
+  discord.gg/7HwgJQA26), ICARUS (grupa DM) zostaje tylko przez przeglądarkę Karola. Z chmury Discord jest zablokowany,
+  łącznika MCP do Discorda brak → GitHub jako pośrednik.
+- .github/workflows/discord.yml (co 30 min, :07 i :37, + ręcznie `gh workflow run discord.yml`): tools/discord/bridge.py
+  (tylko stdlib) czyta nowe wiadomości ze wszystkich kanałów tekstowych serwera bota → gałąź `discord`:
+  inbox/<kanał>/<data>/<id>.json + załączniki w inbox/<kanał>/<data>/<id>/ (≤25 MB), inbox/state.json, channels.json;
+  wysyła outbox/*.txt (1. linia „#kanał”, „attach: ścieżka” dla plików) i je usuwa. Pierwszy odczyt kanału: ostatnie 50.
+- build.yml: push z `branches-ignore: [discord]` (gałąź skrzynki nie buduje).
+- Do zrobienia przez Karola: aplikacja/bot na discord.com/developers (Message Content Intent), zaproszenie bota
+  (View Channels, Send Messages, Read Message History, Attach Files), sekret repo DISCORD_BOT_TOKEN. Gałąź `discord`
+  już istnieje (pierwszy przebieg bez tokenu: OK). Potem: zaplanowane zadanie co godzinę na czytanie skrzynki.
