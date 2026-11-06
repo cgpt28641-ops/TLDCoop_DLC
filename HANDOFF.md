@@ -1146,3 +1146,14 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   przedmioty po powrocie do domku (pływające — poprawka TLD vs nasze world_items/SI), gaszenie światła przy podróży
   Fulmarem, zwierzęta uciekające przed pociągiem (właściciel zwierzęcia), zapasy Fulmara (pojemnik), usunięte kartony
   z Fulmara (ostrzeżenia o brakujących pojemnikach — niegroźne).
+
+### 2026-11-06 ~08:50 local — stopy na ziemi, głowa za wzrokiem, obrót w miejscu (291d67b, CI zielone, NIE testowane)
+- Karol wybrał: stopy na zboczach, głowa/tułów za wzrokiem, obrót w miejscu (automat: „na razie nie”).
+- avatar.cpp plant_feet: Physics.Raycast pod każdą stopą (z 0.6 m w górę, 1.4 m w dół, normal.y > 0.5), stopa na
+  ziemię + wysokość z klipu (wymach zostaje), biodra z niższą stopą (−0.45…+0.25 m), stopa pochylona ze zboczem
+  (≤25°), wygładzane; tylko bez czynności lub przy search/work/carry, nie przy leżeniu/walce/wilku.
+- look_pose: Spine2 0.3 / Neck 0.3 / Head 0.4 obrót za różnicą wzroku i ciała (±70°) i pochyleniem (±60°); przy
+  celowaniu tylko głowa 0.5 (ręce biorą pochylenie).
+- Obrót w miejscu: stojąc (prędkość < 0.3, bez czynności, bez celowania) ciało (body_yaw) trzyma kierunek, przy różnicy
+  > 55° obraca się 220°/s i przestępuje (krok chodu waga do 0.6, krok na 180°); w ruchu podąża za wzrokiem (wygładzone).
+- Wszystko wyłącza `pose gait 0` (g_mocap_gait).
