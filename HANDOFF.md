@@ -1203,3 +1203,18 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   `discord` w TLDCoop_DLC została (proxy nie pozwala usunąć) — niegroźna. Domyślny kanał wiadomości: #updates.
   Kanały: #updates, #błędy (logi), #pomysły (mody), #claude-komendy (zlecenia graczy, !status !dll !zmiany !test
   !stop, pytania), #chat. Czeka na token DISCORD_BOT_TOKEN w tldcoop-discord.
+
+### 2026-11-06 ~17:10 local — Food Tweaker, Better Night Sky (d582034, 28fcf2f; CI zielone; NIE testowane)
+- Decyzja kerela (Discord #pomysły, 15:20): Food Tweaker → Better Night Sky → przelewanie paliwa lampa→kanister →
+  ClothingExpanded. Karol: pytania zadawać na Discordzie; polecenia tylko od kerel123; od czasu do czasu luźny wpis na
+  #chat; kanał #pliki (wrzucony winhttp.dll, repo tldcoop-discord files/).
+- Food Tweaker (src/food_tweaker.cpp, MIT Deus13/ttr/GruffCassquatch, third_party/food-tweaker/LICENSE): MODS →
+  FOOD TWEAKER (5. wiersz MODS — wszystkie miejsca zajęte), net::kFeatureFoodTweaker=64, coop.ini [food] enabled=0.
+  Włączony: GearItem.Awake → kalorie wg tabeli „realistic” (mięso na kg, puszki, napoje, potrawy; udział resztki
+  zachowany), CookingPotItem.ModifiedCookTimeMinutes → mięso min/kg × udział × mnożnik ognia. Ryby bez zmian.
+- Better Night Sky (src/night_sky.cpp, MIT WulfMarius/ds5678, bundle 2019.4 w src/night_sky_bundle.inc,
+  tools/nightsky/gen_bundle.py): coop.ini [sky] enabled=1 (każdy swoje, nic nie synchronizowane). Hook
+  UniStormWeatherSystem.Init: StarSphere/Moon z paczki (zapis do TLDCoop\tldcoop_nightsky.bundle), oryginalna sfera
+  wyłączona; on_frame: _TintColor × m_StarsAlpha² / m_MoonAlpha, księżyc w stronę -forward m_MoonLight, faza
+  (dzień+m_MoonCycleStartDay)%29·24/29 → Moon_<i>.png. Bez spadających gwiazd i zmiany bloomu. Ryzyko: shadery
+  z 2019 (różowe/niewidoczne) — patrz log „night sky: … up”.
