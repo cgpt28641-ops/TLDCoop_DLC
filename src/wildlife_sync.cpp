@@ -623,6 +623,8 @@ void apply_handover(const std::string& scene, double now) {
     if (all) h.until = 0;  // (summed up next time)
 }
 
+int variant_of(Il2CppObject* ai);  // TLDCoop_DLC (v50): which wolf (below)
+
 void capture(const std::string& scene, double now) {
     apply_handover(scene, now);
     const game::PlayerState me = game::read_player();
@@ -679,6 +681,7 @@ void capture(const std::string& scene, double now) {
         a.mode = static_cast<uint8_t>(il2::read_field<int32_t>(ai, api.ai_mode));
         a.flags = a.mode == kAiModeDead ? net::kAnimalDead : 0;
         if (api.ai_wildlife_mode >= 0 && il2::read_field<int32_t>(ai, api.ai_wildlife_mode) == 1) a.flags |= net::kAnimalAurora;
+        a.flags |= net::variant_flags(variant_of(ai));  // TLDCoop_DLC (v50)
         a.hp = il2::read_field<float>(ai, api.ai_hp);
         a.x = pos.x;
         a.y = pos.y;
@@ -793,6 +796,7 @@ void capture(const std::string& scene, double now) {
 
 struct Puppet {
     uint8_t kind = 0;
+    int variant = 0;  // TLDCoop_DLC (v50): net::animal_variant
     uintptr_t go = 0, transform = 0, animator = 0;
     std::vector<Param> schema;
     size_t params_size = 0;
@@ -871,10 +875,33 @@ Il2CppObject* prefab_from_ref(Il2CppObject* ref) {
 // TLDCoop_DLC: each kind's prefab once found (2.58 loads it from its reference; kept so that's done once).
 std::unordered_map<int, uintptr_t> g_templates;
 
+Il2CppObject* base_ai_of(Il2CppObject* go);
+
+// TLDCoop_DLC (v50): which wolf an animal is (net::animal_variant): 1 a timberwolf, 2 a starving wolf, 0 any other.
+int variant_of(Il2CppObject* ai) {
+    if (!ai) return 0;
+    const std::string c = il2::class_name_of(ai);
+    return c.find("Timberwolf") != std::string::npos ? 1 : c.find("WolfStarving") != std::string::npos ? 2 : 0;
+}
+int prefab_variant(Il2CppObject* go) { return go ? variant_of(base_ai_of(go)) : 0; }
+const char* variant_name(int v) { return v == 1 ? "timberwolf" : v == 2 ? "starving wolf" : "ordinary one"; }
+
+// A spawn area's prefab's variant, found once per area (its prefab may need loading).
+std::unordered_map<uintptr_t, int> g_region_variant;
+int region_variant(Il2CppObject* region, Il2CppObject* asset) {
+    const auto key = reinterpret_cast<uintptr_t>(region);
+    if (const auto it = g_region_variant.find(key); it != g_region_variant.end()) return it->second;
+    Il2CppObject* prefab = il2::read_field<Il2CppObject*>(region, api.region_prefab);
+    if (!prefab) prefab = prefab_from_ref(asset);
+    const int v = prefab_variant(prefab);
+    g_region_variant[key] = v;
+    return v;
+}
+
 // TLDCoop_DLC: an aurora animal has its own model ("the aurora wolf's skin only shows on the host"): the spawn
 // area's aurora entry, or an aurora animal of ours; else the ordinary one.
-Il2CppObject* template_for(int kind, bool aurora) {
-    const int key = kind + (aurora ? 100 : 0);
+Il2CppObject* template_for(int kind, bool aurora, int variant = 0) {
+    const int key = kind + (aurora ? 100 : 0) + variant * 1000;
     if (aurora) {
         if (auto it = g_templates.find(key); it != g_templates.end()) {
             if (Il2CppObject* go = target(it->second); alive(go)) return go;
@@ -901,6 +928,38 @@ Il2CppObject* template_for(int kind, bool aurora) {
         if (!(missing & (1 << kind))) logx::info("wildlife: no aurora %s model here; the ordinary one stands in", kind_name(kind));
         missing |= 1 << kind;
     }
+    if (variant != 0) {  // TLDCoop_DLC (v50): a timberwolf or a starving wolf: one of those (its spawn area, or one here)
+        if (auto it = g_templates.find(key); it != g_templates.end()) {
+            if (Il2CppObject* go = target(it->second); alive(go)) return go;
+            il2::il2cpp_gchandle_free(it->second);
+            g_templates.erase(it);
+        }
+        const char* what = variant == 1 ? "timberwolf" : "starving wolf";
+        Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
+        for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
+            if (il2::read_field<int32_t>(region, api.region_kind) == kind) {
+                Il2CppObject* asset = region_asset(region, 0);
+                if (region_variant(region, asset) != variant) continue;
+                Il2CppObject* prefab = il2::read_field<Il2CppObject*>(region, api.region_prefab);
+                if (!prefab) prefab = prefab_from_ref(asset);
+                if (prefab) {
+                    g_templates[key] = hold(prefab);
+                    logx::info("wildlife: the %s model comes from this scene's spawn area", what);
+                    return prefab;
+                }
+            }
+        if (api.ai_asset_ref >= 0)
+            for (Il2CppObject* ai : all_animals())
+                if (il2::read_field<int32_t>(ai, api.ai_kind) == kind && variant_of(ai) == variant)
+                    if (Il2CppObject* prefab = prefab_from_ref(il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref))) {
+                        g_templates[key] = hold(prefab);
+                        logx::info("wildlife: the %s model comes from one here", what);
+                        return prefab;
+                    }
+        static int missing = 0;
+        if (!(missing & (1 << variant))) logx::info("wildlife: no %s model here; an ordinary wolf stands in", what);
+        missing |= 1 << variant;
+    }
     if (auto it = g_templates.find(kind); it != g_templates.end()) {
         if (Il2CppObject* go = target(it->second); alive(go)) return go;
         il2::il2cpp_gchandle_free(it->second);
@@ -911,18 +970,23 @@ Il2CppObject* template_for(int kind, bool aurora) {
         logx::info("wildlife: the %s model comes from %s", kind_name(kind), from);
         return prefab;
     };
+    // (an ordinary one: not a timberwolf's or a starving wolf's spawn area or model, if there's another)
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
-    for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
-        if (il2::read_field<int32_t>(region, api.region_kind) == kind) {
-            if (Il2CppObject* prefab = il2::read_field<Il2CppObject*>(region, api.region_prefab)) return prefab;
-            if (Il2CppObject* prefab = prefab_from_ref(region_asset(region, 0)))
-                return keep(prefab, "this scene's spawn area (its addressable prefab)");
-        }
-    if (api.ai_asset_ref >= 0)  // any animal of that kind here, ours (hidden) included: its own reference
-        for (Il2CppObject* ai : all_animals())
-            if (il2::read_field<int32_t>(ai, api.ai_kind) == kind)
-                if (Il2CppObject* prefab = prefab_from_ref(il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref)))
-                    return keep(prefab, "an animal of that kind here (its addressable prefab)");
+    for (int pass = 0; pass < 2; ++pass) {  // first an ordinary one, then whatever there is
+        for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
+            if (il2::read_field<int32_t>(region, api.region_kind) == kind) {
+                Il2CppObject* asset = region_asset(region, 0);
+                if (pass == 0 && region_variant(region, asset) != 0) continue;
+                if (Il2CppObject* prefab = il2::read_field<Il2CppObject*>(region, api.region_prefab)) return prefab;
+                if (Il2CppObject* prefab = prefab_from_ref(asset))
+                    return keep(prefab, "this scene's spawn area (its addressable prefab)");
+            }
+        if (api.ai_asset_ref >= 0)  // any animal of that kind here, ours (hidden) included: its own reference
+            for (Il2CppObject* ai : all_animals())
+                if (il2::read_field<int32_t>(ai, api.ai_kind) == kind && (pass == 1 || variant_of(ai) == 0))
+                    if (Il2CppObject* prefab = prefab_from_ref(il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref)))
+                        return keep(prefab, "an animal of that kind here (its addressable prefab)");
+    }
     for (const auto& [addr, h] : g_hidden)
         if (Il2CppObject* go = target(h))
             for (Il2CppObject* ai : all_animals())
@@ -988,10 +1052,10 @@ constexpr double kNoModelRetryMs = 4000;
 std::unordered_map<int, double> g_no_model;
 
 bool make_puppet(uint32_t id, const net::AnimalRec& rec, Puppet& p, double now) {
-    const int model_key = rec.kind + ((rec.flags & net::kAnimalAurora) ? 100 : 0);
+    const int model_key = rec.kind + ((rec.flags & net::kAnimalAurora) ? 100 : 0) + net::animal_variant(rec.flags) * 1000;
     if (const auto no = g_no_model.find(model_key); no != g_no_model.end() && now < no->second) return false;
     Il2CppObject* root = puppet_root();
-    Il2CppObject* source = template_for(rec.kind, (rec.flags & net::kAnimalAurora) != 0);
+    Il2CppObject* source = template_for(rec.kind, (rec.flags & net::kAnimalAurora) != 0, net::animal_variant(rec.flags));
     if (source) g_no_model.erase(model_key);
     else g_no_model[model_key] = now + kNoModelRetryMs;
     if (!root || !source) {
@@ -1017,6 +1081,7 @@ bool make_puppet(uint32_t id, const net::AnimalRec& rec, Puppet& p, double now) 
     p = Puppet{};
     p.kind = rec.kind;
     p.aurora = (rec.flags & net::kAnimalAurora) != 0;
+    p.variant = net::animal_variant(rec.flags);
     p.go = hold(copy);
     p.transform = hold(transform_of_go(copy));
     bool include_inactive = true;
@@ -1205,8 +1270,14 @@ struct Quaternion {
 // No animal of that kind of our own (TLD's spawning is off while mirroring): make one for the fight with this
 // region's nearest spawn area for the kind, the way TLD spawns them, already in its fight mode.
 // `mode`: the AiMode it starts in; `wake`: active (a fight) or not (only its damage tables are wanted).
+// TLDCoop_DLC (v50): which wolf the host's animal is, from its copy here (-1 unknown: any)
+int puppet_variant(uint32_t id) {
+    const auto it = g_puppets.find(id);
+    return it != g_puppets.end() ? it->second.variant : -1;
+}
+
 Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees, int32_t mode = 14 /* AiMode.Struggle */,
-                             bool wake = true) {
+                             bool wake = true, int variant = -1) {
     if (!api.instantiate_spawn && !api.instantiate_spawn_legacy) return nullptr;
     Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
     Il2CppObject* best = nullptr;
@@ -1218,7 +1289,9 @@ Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees, int32_t m
         if (!asset) asset = region_asset(region, wildlife);
         if (!asset) continue;
         const Vector3 c = il2::read_field<Vector3>(region, api.region_center);
-        const float d = (c.x - pos.x) * (c.x - pos.x) + (c.z - pos.z) * (c.z - pos.z);
+        float d = (c.x - pos.x) * (c.x - pos.x) + (c.z - pos.z) * (c.z - pos.z);
+        // TLDCoop_DLC (v50): the same wolf (a timberwolf's area for a timberwolf), unless there's none of those
+        if (variant >= 0 && region_variant(region, region_asset(region, wildlife)) != variant) d += 1e12f;
         if (!best || d < best_d) best = region, best_d = d;
     }
     if (!best) return nullptr;
@@ -1336,7 +1409,7 @@ bool start_fight(const net::AttackMsg& a, double now) {
     Il2CppObject* ai = our_animal_of_kind(a.kind);
     bool made_for_it = false;
     if (!ai) {
-        ai = spawn_stand_in(a.kind, where, yaw);
+        ai = spawn_stand_in(a.kind, where, yaw, 14, true, puppet_variant(a.animal));
         made_for_it = ai != nullptr;
     }
     if (!ai) {
@@ -1506,7 +1579,7 @@ void handle_attacks(double now, bool can_fight) {
                 // TLDCoop_DLC: none of ours of that kind: one made (asleep, out of the way) just for its damage tables
                 const game::PlayerState me = game::read_player();
                 Vector3 at{me.position.x, me.position.y - 50.0f, me.position.z};
-                made = ai = spawn_stand_in(a.kind, at, 0, kAiModeWander, false);
+                made = ai = spawn_stand_in(a.kind, at, 0, kAiModeWander, false, puppet_variant(a.animal));
                 from = " (with one made for it)";
             }
             Il2CppObject* table = ai ? il2::invoke(api.damage_table, ai) : nullptr;
@@ -1642,7 +1715,8 @@ void mirror(const std::string& scene, double now) {
         if (part.scene != scene) continue;
         for (const net::AnimalRec& rec : part.animals) {
             auto it = g_puppets.find(rec.id);
-            if (it != g_puppets.end() && (it->second.kind != rec.kind || it->second.aurora != ((rec.flags & net::kAnimalAurora) != 0) || !alive(target(it->second.go)))) {
+            if (it != g_puppets.end() && (it->second.kind != rec.kind || it->second.aurora != ((rec.flags & net::kAnimalAurora) != 0) ||
+                                          it->second.variant != net::animal_variant(rec.flags) || !alive(target(it->second.go)))) {
                 remove_puppet(it->second);
                 g_puppets.erase(it);
                 it = g_puppets.end();

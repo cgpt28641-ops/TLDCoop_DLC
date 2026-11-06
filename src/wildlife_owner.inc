@@ -715,6 +715,7 @@ net::AnimalRec own_record(Il2CppObject* ai, uint32_t id, uint16_t epoch, const V
     a.mode = static_cast<uint8_t>(il2::read_field<int32_t>(ai, api.ai_mode));
     a.flags = a.mode == kAiModeDead ? net::kAnimalDead : 0;
     if (api.ai_wildlife_mode >= 0 && il2::read_field<int32_t>(ai, api.ai_wildlife_mode) == 1) a.flags |= net::kAnimalAurora;
+    a.flags |= net::variant_flags(variant_of(ai));  // TLDCoop_DLC (v50): which wolf
     if (api.ai_bleeding >= 0 && il2::read_field<bool>(ai, api.ai_bleeding)) a.flags |= net::kAnimalBleeding;
     if (api.ai_wounded >= 0 && il2::read_field<bool>(ai, api.ai_wounded)) a.flags |= net::kAnimalWounded;
     if (api.ai_bleed_elapsed >= 0) a.bleed_elapsed = il2::read_field<float>(ai, api.ai_bleed_elapsed);
@@ -804,23 +805,30 @@ bool aggressive(int32_t mode) {
 }
 
 // One of our hidden animals of that kind (aurora or not as asked, if there's one), out of the pool.
-Il2CppObject* pool_take(int kind, bool aurora) {
+Il2CppObject* pool_take(int kind, bool aurora, int variant = 0, bool strict = true) {
+    // TLDCoop_DLC (v50): the same wolf (timberwolf, starving, ordinary) and aurora or not; else the same wolf; else any
+    // of the kind (Shatsca 06.11: a timberwolf handed over became an ordinary wolf)
     Il2CppObject* fallback = nullptr;
     uintptr_t fallback_key = 0;
+    int fallback_score = -1;
     for (const auto& [addr, h] : g_hidden) {
         Il2CppObject* go = target(h);
         Il2CppObject* ai = go && alive(go) ? base_ai_of(go) : nullptr;
         if (!ai || il2::read_field<int32_t>(ai, api.ai_kind) != kind || dead_animal(ai)) continue;
         if (g_fight.active && target(g_fight.ai) == ai) continue;
         const bool is_aurora = api.ai_wildlife_mode >= 0 && il2::read_field<int32_t>(ai, api.ai_wildlife_mode) == 1;
-        if (is_aurora == aurora) {
+        const bool same_wolf = variant_of(ai) == variant;
+        if (is_aurora == aurora && same_wolf) {
             uintptr_t handle = h;
             g_hidden.erase(addr);
             drop(handle);
             return ai;
         }
-        if (!fallback) fallback = ai, fallback_key = addr;
+        const int score = (same_wolf ? 2 : 0) + (is_aurora == aurora ? 1 : 0);
+        if (score > fallback_score) fallback = ai, fallback_key = addr, fallback_score = score;
     }
+    // a stand-in of another wolf would change before their eyes: one is made instead, if it can be
+    if (fallback && strict && variant_of(fallback) != variant) return nullptr;
     if (fallback) {
         uintptr_t handle = g_hidden[fallback_key];
         g_hidden.erase(fallback_key);
@@ -896,12 +904,17 @@ void take_local(const net::WildCtlMsg& t, double now) {
     bool moved = false;
     if ((t.flags & net::kTakeMoved) && !dead_given) moved = moved_spot(s.region, pos, yaw, now);
     for (auto& [key, ids] : g_away) ids.erase(t.id);  // v45: (ours to count again, as one of ours here)
-    Il2CppObject* ai = pool_take(s.kind, aurora);
+    const int variant = net::animal_variant(s.flags);  // TLDCoop_DLC (v50): which wolf
+    Il2CppObject* ai = pool_take(s.kind, aurora, variant);
     bool spawned = false;
     if (!ai) {
-        ai = spawn_stand_in(s.kind, pos, yaw, kAiModeWander, true);
+        ai = spawn_stand_in(s.kind, pos, yaw, kAiModeWander, true, variant);
         spawned = ai != nullptr;
     }
+    if (!ai) ai = pool_take(s.kind, aurora, variant, false);  // (none could be made: any of the kind after all)
+    if (ai && variant_of(ai) != variant)
+        logx::warn("wildlife: #%u is a %s; only a %s could take its place here", t.id, variant_name(variant),
+                   variant_name(variant_of(ai)));
     if (!ai) return refuse("no animal of that kind here to take its place, and none could be made");
     Il2CppObject* go = go_of(ai);
     set_active(go, true);
@@ -1448,7 +1461,7 @@ void puppet_record(const net::AnimalRec& rec, double t_ms, double received_ms, d
     if (g_owned.count(rec.id)) return;  // ours (a late record from before we took it)
     if (g_dying.count(rec.id)) return;                  // ours, dying: the host's carcass takes its place
     auto it = g_puppets.find(rec.id);
-    if (it != g_puppets.end() && (it->second.kind != rec.kind ||
+    if (it != g_puppets.end() && (it->second.kind != rec.kind || it->second.variant != net::animal_variant(rec.flags) ||
                                   it->second.aurora != ((rec.flags & net::kAnimalAurora) != 0) || !alive(target(it->second.go)))) {
         remove_puppet(it->second);
         g_puppets.erase(it);

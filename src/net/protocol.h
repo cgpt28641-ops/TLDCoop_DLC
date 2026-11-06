@@ -138,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 49;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 50;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -199,6 +199,7 @@ constexpr uint16_t kProtocolVersion = 49;  // v4: World. v5: Animals. v6: sounds
                                            // v46 (TLDCoop_DLC): Controllers' per_player (more animals per player)
                                            // v47 (TLDCoop_DLC): ids up to 200 bytes (kPdidMax); Shot (a flare round seen
                                            // by the others); Controllers' loot per_player
+                                           // v50 (TLDCoop_DLC): ObjectKind::Rope (a climbing rope put down on an anchor)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -334,6 +335,12 @@ constexpr uint8_t kAnimalDead = 1;
 constexpr uint8_t kAnimalAurora = 2;  // TLDCoop_DLC: an aurora animal (its own model)
 constexpr uint8_t kAnimalBleeding = 4;  // v44: BaseAi.m_BleedingOut (WildFrame)
 constexpr uint8_t kAnimalWounded = 8;   // v44: BaseAi.m_Wounded (WildFrame)
+// TLDCoop_DLC (v50): which wolf: a timberwolf (AiTimberwolf, the packs) or a starving one (AiWolfStarving); neither:
+// an ordinary wolf. Every game shows and takes over the same one (Shatsca 06.11: "a snow wolf turned into a normal one").
+constexpr uint8_t kAnimalTimberwolf = 16;
+constexpr uint8_t kAnimalStarving = 32;
+inline int animal_variant(uint8_t flags) { return (flags & kAnimalTimberwolf) ? 1 : (flags & kAnimalStarving) ? 2 : 0; }
+inline uint8_t variant_flags(int variant) { return variant == 1 ? kAnimalTimberwolf : variant == 2 ? kAnimalStarving : 0; }
 constexpr uint8_t kNoPlayer = 0xFF;
 struct AnimalsMsg {
     uint32_t frame = 0;
@@ -1018,7 +1025,7 @@ inline bool read_container_want(Reader& r, ContainerWantMsg& m) {
 // Things in the world that are broken down or harvested (milestone 8c); locks and safes, placements (decorations,
 // movable containers) a player moved, and dead players' bodies (milestone 10). Named by TLD's persistent id for them
 // (or "@name|x|y|z" in cm when they have none).
-enum class ObjectKind : uint8_t { BreakDown = 1, Harvestable = 2, Lock = 3, Safe = 4, Placement = 5, Body = 6, Repair = 7, Door = 8 };
+enum class ObjectKind : uint8_t { BreakDown = 1, Harvestable = 2, Lock = 3, Safe = 4, Placement = 5, Body = 6, Repair = 7, Door = 8, Rope = 9 };
 constexpr size_t kPlacementEntryMax = 16 * 1024;  // one placement's record
 constexpr size_t kBodyTextMax = 192 * 1024;       // one body: who, its TLD record and what it holds
 inline bool has_text(ObjectKind k) { return k == ObjectKind::Placement || k == ObjectKind::Body; }
@@ -1061,8 +1068,9 @@ inline bool read_object_state(Reader& r, ObjectState& s) {
     s.refresh = r.get<float>();
     s.id = r.get_blob(kPdidMax);
     if (has_text(s.kind)) s.text = r.get_long_blob(s.kind == ObjectKind::Body ? kBodyTextMax : kPlacementEntryMax);
-    return r.ok() && kind >= 1 && kind <= 8;  // TLDCoop_DLC: 7 Repair (a safehouse's furniture repaired), 8 Door (an
-                                              // interior's door, closet or locker open or shut: OpenClose)
+    return r.ok() && kind >= 1 && kind <= 9;  // TLDCoop_DLC: 7 Repair (a safehouse's furniture repaired), 8 Door (an
+                                              // interior's door, closet or locker open or shut: OpenClose), 9 Rope (v50:
+                                              // a climbing rope down on a RopeAnchorPoint, or taken)
 }
 
 inline void write_object_put(Writer& w, const ObjectPutMsg& m) {

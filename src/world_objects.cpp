@@ -116,6 +116,10 @@ struct Api {
     // TLDCoop_DLC: doors, closets and lockers inside interiors (OpenClose) open or shut for everyone
     ptrdiff_t open_close_open = -1;               // OpenClose.m_IsOpen
     const MethodInfo* oc_open = nullptr, *oc_close = nullptr;  // OpenClose.Open/Close(bool isImmediate, bool fromLink)
+    // TLDCoop_DLC: climbing ropes put down on an anchor (a boulder, a ledge)
+    FieldInfo* rope_points = nullptr;             // static RopeAnchorPoint.s_RopeAnchorPoints
+    ptrdiff_t rope_deployed = -1, rope_snapped = -1;  // RopeAnchorPoint.m_RopeDeployed / m_RopeSnapped
+    const MethodInfo* rope_set = nullptr;         // RopeAnchorPoint.SetRopeActiveState(bool state, bool isInteraction)
     ptrdiff_t lock_state = -1;                    // Lock.m_LockState (0 locked, 1 unlocked, 2 forced)
     const MethodInfo* unlock_companion = nullptr; // Lock.UnlockCompanionLock(): its other side (a door's) opens too
     const MethodInfo* force_lock = nullptr;       // Lock.FinishForceLock(bool complete)
@@ -308,7 +312,8 @@ void list_into(FieldInfo* field, Kind kind, std::vector<Object>& out) {
 
 bool is_lock(Kind k) { return k == Kind::Lock || k == Kind::Safe || k == Kind::Repair; }  // (polled, not hooked)
 // TLDCoop_DLC: polled like the locks, but both ways (opened and shut again): an interior's door (OpenClose)
-bool is_polled(Kind k) { return is_lock(k) || k == Kind::Door; }
+bool is_polled(Kind k) { return is_lock(k) || k == Kind::Door || k == Kind::Rope; }  // (and a climbing rope)
+bool both_ways(Kind k) { return k == Kind::Door || k == Kind::Rope; }
 
 // Locks and safes: on containers (Container.m_Lock / m_Safe), lockers and safes (OpenClose) and doors (LoadScene).
 void locks_into(std::vector<Object>& out) {
@@ -328,6 +333,12 @@ void locks_into(std::vector<Object>& out) {
         if (api.open_close_open >= 0 && api.oc_open && api.oc_close && seen.insert(oc).second) out.push_back(Object{Kind::Door, oc});
     });
     each_in(api.doors, [&](Il2CppObject* door) { add(Kind::Lock, door, api.interaction_lock); });
+    // TLDCoop_DLC: climbing ropes on their anchors (Shatsca 06.11: a rope put down on a boulder wasn't there for the
+    // other player, who couldn't climb it)
+    if (api.rope_deployed >= 0 && api.rope_set)
+        each_in(api.rope_points, [&](Il2CppObject* p) {
+            if (seen.insert(p).second) out.push_back(Object{Kind::Rope, p});
+        });
     // TLDCoop_DLC: furniture to repair: found every few seconds (TLD keeps no list of them)
     static std::vector<uintptr_t> repairables;
     static double found_at = -1e9;
@@ -395,6 +406,8 @@ uint8_t value_of(const Object& x) {
         case Kind::Safe: return get<bool>(x.o, api.safe_cracked) ? 1 : 0;
         case Kind::Repair: return get<bool>(x.o, api.repaired) ? 1 : 0;
         case Kind::Door: return get<bool>(x.o, api.open_close_open) ? 1 : 0;
+        case Kind::Rope:  // down (and not snapped)
+            return get<bool>(x.o, api.rope_deployed) && !(api.rope_snapped >= 0 && get<bool>(x.o, api.rope_snapped)) ? 1 : 0;
         default: break;
     }
     return 0;
@@ -403,7 +416,7 @@ bool done(const Object& x) { return value_of(x) != 0; }
 
 const char* kind_name(Kind k) {
     return k == Kind::BreakDown ? "breakdown" : k == Kind::Harvestable ? "plant" : k == Kind::Lock ? "lock"
-         : k == Kind::Safe ? "safe" : k == Kind::Body ? "body" : k == Kind::Repair ? "repairable" : k == Kind::Door ? "door" : "placeable";
+         : k == Kind::Safe ? "safe" : k == Kind::Body ? "body" : k == Kind::Repair ? "repairable" : k == Kind::Door ? "door" : k == Kind::Rope ? "rope anchor" : "placeable";
 }
 const char* done_name(Kind k) {
     return k == Kind::BreakDown ? "broken down" : k == Kind::Harvestable ? "harvested" : k == Kind::Lock ? "open" : "cracked";
@@ -416,6 +429,7 @@ const char* state_name(Kind k, uint8_t v) {
     if (k == Kind::Safe) return v ? "cracked" : "locked";
     if (k == Kind::Repair) return v ? "repaired" : "broken";
     if (k == Kind::Door) return v ? "open" : "shut";
+    if (k == Kind::Rope) return v ? "with a rope down" : "without a rope";
     if (k == Kind::Placement) return placement_name(v);
     return v ? done_name(k) : "whole";
 }
@@ -429,13 +443,14 @@ const char* verb(const net::ObjectState& s) {
         case Kind::Body: return "died, leaving";
         case Kind::Repair: return s.done ? "repaired" : "left broken";
         case Kind::Door: return s.done ? "opened" : "shut";
+        case Kind::Rope: return s.done ? "put a rope down on" : "took the rope from";
     }
     return "changed";
 }
 
 std::string key_of(Kind k, const std::string& id) {
     return (k == Kind::BreakDown ? "b/" : k == Kind::Harvestable ? "h/" : k == Kind::Lock ? "l/" : k == Kind::Safe ? "s/"
-            : k == Kind::Body ? "d/" : k == Kind::Repair ? "r/" : k == Kind::Door ? "o/" : "p/") + id;
+            : k == Kind::Body ? "d/" : k == Kind::Repair ? "r/" : k == Kind::Door ? "o/" : k == Kind::Rope ? "c/" : "p/") + id;
 }
 
 net::ObjectState state_of(const Object& x, const std::string& id) {
@@ -775,6 +790,16 @@ bool apply_placement(const net::ObjectState& s) {
 // the yield, which the other player got), back as loading a save that has it whole does (BreakDown.Deserialize:
 // active), harvested or not as Harvestable.Deserialize does. False when it already was.
 bool apply(const Object& x, const net::ObjectState& s) {
+    if (x.kind == Kind::Rope) {  // TLDCoop_DLC: as TLD's own deploy/take finishing does (the rope shown, climbable)
+        if (value_of(x) == s.done) return false;
+        bool state = s.done != 0, interaction = false;
+        void* args[] = {&state, &interaction};
+        il2::invoke(api.rope_set, x.o, args);
+        put<bool>(x.o, api.rope_deployed, state);
+        if (api.rope_snapped >= 0 && state) put<bool>(x.o, api.rope_snapped, false);
+        g_lock_seen[reinterpret_cast<uintptr_t>(x.o)] = value_of(x);
+        return true;
+    }
     if (x.kind == Kind::Door) {  // TLDCoop_DLC: as a player's click does (its linked doors too), animated
         if (value_of(x) == s.done) return false;
         bool immediate = false, from_link = false;
@@ -1023,7 +1048,7 @@ void apply_list(const net::ObjectListMsg& m) {
         const std::string id = id_of(x.o), key = key_of(x.kind, id);
         if (const auto it = host.find(key); it != host.end()) {
             ++matched;
-            if ((is_lock(x.kind) && done(x) && !it->second->done) || (x.kind == Kind::Door && value_of(x) != it->second->done)) {
+            if ((is_lock(x.kind) && done(x) && !it->second->done) || (both_ways(x.kind) && value_of(x) != it->second->done)) {
                 if (const auto ours = g_ours.find(key); ours != g_ours.end() && now - ours->second < kOursMs) {
                     ++kept;  // we just opened it: the host hasn't heard yet
                     continue;
@@ -1148,7 +1173,7 @@ void scan_locks() {
         const auto [it, fresh] = g_lock_seen.try_emplace(reinterpret_cast<uintptr_t>(x.o), v);
         if (fresh || it->second == v) continue;
         it->second = v;
-        if (v || x.kind == Kind::Door) changed_here(x, id_of(x.o), name_of(x.o));  // (locked again only by TLD loading: not a change)
+        if (v || both_ways(x.kind)) changed_here(x, id_of(x.o), name_of(x.o));  // (locked again only by TLD loading: not a change)
     }
 }
 
@@ -1694,6 +1719,14 @@ bool init() {
     api.open_close_open = il2::field_offset(open_close, "m_IsOpen");
     api.oc_open = il2::find_method_params(open_close, "Open", {"System.Boolean", "System.Boolean"});
     api.oc_close = il2::find_method_params(open_close, "Close", {"System.Boolean", "System.Boolean"});
+    if (Il2CppClass* rope = il2::find_class(kGame, "", "RopeAnchorPoint")) {  // TLDCoop_DLC
+        api.rope_points = il2::il2cpp_class_get_field_from_name(rope, "s_RopeAnchorPoints");
+        api.rope_deployed = il2::field_offset(rope, "m_RopeDeployed");
+        api.rope_snapped = il2::field_offset_quiet(rope, "m_RopeSnapped");
+        api.rope_set = il2::find_method_params(rope, "SetRopeActiveState", {"System.Boolean", "System.Boolean"});
+    }
+    logx::info("objects: climbing ropes on anchors %s", api.rope_points && api.rope_deployed >= 0 && api.rope_set
+                                                            ? "shared (put down, taken)" : "not shared (TLD's parts missing)");
     logx::info("objects: interiors' doors and closets (OpenClose) %s", api.open_close_open >= 0 && api.oc_open && api.oc_close
                                                                             ? "shared open and shut" : "not shared (TLD's calls missing)");
     api.lock_state = il2::field_offset(lock, "m_LockState");
