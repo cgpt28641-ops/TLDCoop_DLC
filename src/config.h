@@ -42,6 +42,8 @@ struct Settings {
     bool house_lights = true;
     // TLDCoop_DLC: [food] Food Tweaker (built in): realistic calories and meat cooking times; the host's choice (MODS)
     bool food_tweaker = false;
+    // TLDCoop_DLC: [sky] Better Night Sky (built in, MIT): finer stars and a phased moon; each player's own look
+    bool night_sky = true;
     float hl_intensity = 2.0f;      // how bright (the mod's 0-3)
     float hl_range = 1.4f;          // how far they reach (x their own range, at most 20 m)
     bool hl_white = false;          // whiter light

@@ -50,6 +50,7 @@ add_library(tldcoop SHARED
   src/dynamic_trees.cpp
   src/seamless_interiors.cpp  # TLDCoop_DLC: Seamless Interiors (karsontr13), with permission
   src/custom_pictures.cpp
+  src/night_sky.cpp  # TLDCoop_DLC: Better Night Sky (built in)
   src/food_tweaker.cpp  # TLDCoop_DLC: Food Tweaker (built in)
   src/coop_activity.cpp  # TLDCoop_DLC: what a player's body is busy with (avatar motion capture)
   src/loading_screen.cpp  # TLDCoop_DLC: the start screen (Karol's picture)
