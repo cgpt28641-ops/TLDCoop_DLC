@@ -711,6 +711,8 @@ bool rig_bone_wanted(const std::string& n) {
     return false;
 }
 
+bool female_rig(const std::string& id);  // (below)
+
 // The arm bones, for holding things (late_update).
 void attach_bones(Avatar& a, Il2CppObject* body) {
     drop_bones(a);
