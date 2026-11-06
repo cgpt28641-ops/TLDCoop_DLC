@@ -51,6 +51,7 @@ add_library(tldcoop SHARED
   src/seamless_interiors.cpp  # TLDCoop_DLC: Seamless Interiors (karsontr13), with permission
   src/custom_pictures.cpp
   src/night_sky.cpp  # TLDCoop_DLC: Better Night Sky (built in)
+  src/fuel_transfer.cpp  # TLDCoop_DLC: drain a kerosene lamp into a canister
   src/food_tweaker.cpp  # TLDCoop_DLC: Food Tweaker (built in)
   src/coop_activity.cpp  # TLDCoop_DLC: what a player's body is busy with (avatar motion capture)
   src/loading_screen.cpp  # TLDCoop_DLC: the start screen (Karol's picture)

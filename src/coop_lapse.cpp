@@ -70,6 +70,7 @@ struct Api {
     const MethodInfo* component_go = nullptr;   // Component.get_gameObject()
     const MethodInfo* object_name = nullptr;    // Object.get_name()
     const MethodInfo* hud_accel = nullptr;      // Panel_HUD.EnableTimeOfDayScaleDisplay(bool) (TLDCoop_DLC)
+    ptrdiff_t bar_duration = -1, bar_elapsed = -1;  // m_ProgressBarDurationSeconds, m_ProgressBarElapsedSeconds
 } api;
 
 constexpr ptrdiff_t kDelegateMethod = 0x28;  // Il2CppDelegate.method: the MethodInfo it calls
@@ -218,6 +219,8 @@ PassAccelerateFn g_pass_accelerate = nullptr;
 LaunchFn g_launch = nullptr;
 using BarEndedFn = void (*)(Il2CppObject* self, bool success, bool cancel, const MethodInfo* method);
 BarEndedFn g_bar_ended = nullptr;
+bool g_bar_ended_hooked = false;
+BarEndListener g_bar_listener = nullptr;  // TLDCoop_DLC: fuel_transfer's drain
 
 void set_scale_detour(Il2CppObject* tod, float scale, const MethodInfo* method) {
     const lapse::Kind kind = g_reapplying ? lapse::Kind::Reapply
@@ -327,12 +330,25 @@ void launch_detour(Il2CppObject* self, Il2CppString* name, float seconds, float 
 
 void bar_ended_detour(Il2CppObject* self, bool success, bool cancel, const MethodInfo* method) {
     g_eat = Eat::No;
+    const float total = api.bar_duration >= 0 ? il2::read_field<float>(self, api.bar_duration) : 0.0f;
+    const float done = api.bar_elapsed >= 0 ? il2::read_field<float>(self, api.bar_elapsed) : 0.0f;
+    const float progress = success ? 1.0f : total > 0 ? std::clamp(done / total, 0.0f, 1.0f) : 0.0f;
     g_bar_ended(self, success, cancel, method);
+    if (BarEndListener l = g_bar_listener) {  // once
+        g_bar_listener = nullptr;
+        l(success, cancel, progress);
+    }
 }
 
 }  // namespace
 
 bool body_lapse() { return g_body.active; }
+
+bool on_bar_end(BarEndListener listener) {
+    if (!g_bar_ended_hooked) return false;
+    g_bar_listener = listener;
+    return true;
+}
 
 void heal_boost(float factor) { g_heal_boost = factor > 0 ? factor : 1.0f; }
 
@@ -454,6 +470,8 @@ bool init() {
     api.bar_scale = il2::field_offset(api.bar_class, "m_DayLengthScaleAccelerated");
     api.load_panel = il2::find_method_params(il2::find_class(kGame, "", "InterfaceManager"), "LoadPanel", {"System.Type"});
     api.bar_ended = il2::find_method_params(api.bar_class, "ProgressBarEnded", {"System.Boolean", "System.Boolean"});
+    api.bar_duration = il2::field_offset(api.bar_class, "m_ProgressBarDurationSeconds");
+    api.bar_elapsed = il2::field_offset(api.bar_class, "m_ProgressBarElapsedSeconds");
     api.get_pm = il2::find_method(game_manager, "GetPlayerManagerComponent", 0);
     Il2CppClass* pm = il2::find_class(kGame, "", "PlayerManager");
     api.food_eaten = il2::field_offset(pm, "m_FoodItemEaten");
@@ -495,7 +513,9 @@ bool init() {
                                             {"System.Boolean"});
     if (!api.hud_accel || !hook("Panel_HUD.EnableTimeOfDayScaleDisplay", api.hud_accel, &hud_accel_detour, &g_hud_accel))
         logx::warn("lapse: a sped-up action's ring (breaking down...) won't show in co-op");
-    if (!api.bar_ended || !hook("Panel_GenericProgressBar.ProgressBarEnded", api.bar_ended, &bar_ended_detour, &g_bar_ended))
+    g_bar_ended_hooked =
+        api.bar_ended && hook("Panel_GenericProgressBar.ProgressBarEnded", api.bar_ended, &bar_ended_detour, &g_bar_ended);
+    if (!g_bar_ended_hooked)
         logx::warn("lapse: a cancelled meal isn't seen as over by the others until its time is up");
     if (api.food_eaten < 0 || !api.component_go) logx::warn("lapse: the others won't see what we eat");
     return g_ready;

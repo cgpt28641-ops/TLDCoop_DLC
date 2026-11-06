@@ -44,6 +44,8 @@ struct Settings {
     bool food_tweaker = false;
     // TLDCoop_DLC: [sky] Better Night Sky (built in, MIT): finer stars and a phased moon; each player's own look
     bool night_sky = true;
+    // TLDCoop_DLC: [fuel] drain: a kerosene lamp's fuel back into a canister (Better Fuel Management's Drain); own
+    bool fuel_drain = true;
     float hl_intensity = 2.0f;      // how bright (the mod's 0-3)
     float hl_range = 1.4f;          // how far they reach (x their own range, at most 20 m)
     bool hl_white = false;          // whiter light

@@ -17,6 +17,7 @@
 #include "house_lights.h"
 #include "food_tweaker.h"
 #include "night_sky.h"
+#include "fuel_transfer.h"
 #include "slot_machine.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
@@ -185,6 +186,7 @@ void apply_net_settings(const config::Settings& s, bool startup) {
     house_lights::set_settings(s);
     food_tweaker::set_settings(s);  // TLDCoop_DLC
     night_sky::set_settings(s);     // TLDCoop_DLC
+    fuel_transfer::set_settings(s); // TLDCoop_DLC
     coop_report::set_name(s.name);
     dynamic_trees::set_settings(s);
     seamless_interiors::set_settings(s);
@@ -239,6 +241,7 @@ void start_networking() {
         house_lights::set_settings(s);
         food_tweaker::set_settings(s);  // TLDCoop_DLC
         night_sky::set_settings(s);     // TLDCoop_DLC
+        fuel_transfer::set_settings(s); // TLDCoop_DLC
         coop_report::set_name(s.name);
         dynamic_trees::set_settings(s);
         seamless_interiors::set_settings(s);
@@ -836,6 +839,7 @@ void on_runtime_ready() {
     house_lights::init();  // TLDCoop_DLC
     food_tweaker::init();  // TLDCoop_DLC: realistic calories and cooking times (MODS: FOOD TWEAKER)
     night_sky::init();     // TLDCoop_DLC: Better Night Sky (coop.ini [sky])
+    fuel_transfer::init(); // TLDCoop_DLC: DRAIN FUEL on a kerosene lamp (coop.ini [fuel])
     slot_machine::init();  // TLDCoop_DLC: the automat (coop.ini [automat] test=1)
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC

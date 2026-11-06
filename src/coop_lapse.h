@@ -31,5 +31,9 @@ void heal_boost(float factor);
 // What we eat or drink now, while TLD's progress bar for it is up (milestone 13: the others see our avatar eat it,
 // State's kStateEating): its gear prefab. "" otherwise.
 std::string eating();
+// TLDCoop_DLC: told once when TLD's progress bar next ends (success, cancelled by the player, how far it got 0-1).
+// False if that end can't be seen (the hook is missing).
+using BarEndListener = void (*)(bool success, bool cancel, float progress);
+bool on_bar_end(BarEndListener listener);
 
 }  // namespace coop_lapse

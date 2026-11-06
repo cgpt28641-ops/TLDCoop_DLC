@@ -85,6 +85,10 @@ constexpr const char* kDefaultIni =
     "; enabled: the host's choice for everyone (MODS page); 0 = the game's own values\n"
     "enabled=0\n"
     "\n"
+    "[fuel]\n"
+    "; drain: DRAIN FUEL on a kerosene lamp's examine screen: its fuel back into the kerosene containers in your pack\n"
+    "drain=1\n"
+    "\n"
     "[sky]\n"
     "; Better Night Sky (built in): finer stars and a moon with its phases. Your own look (0 = TLD's sky)\n"
     "enabled=1\n"
@@ -288,6 +292,7 @@ Settings load() {
     s.ambient_lights = GetPrivateProfileIntW(L"ambient", L"enabled", 1, ini.c_str()) != 0;
     s.food_tweaker = GetPrivateProfileIntW(L"food", L"enabled", 0, ini.c_str()) != 0;  // TLDCoop_DLC
     s.night_sky = GetPrivateProfileIntW(L"sky", L"enabled", 1, ini.c_str()) != 0;      // TLDCoop_DLC
+    s.fuel_drain = GetPrivateProfileIntW(L"fuel", L"drain", 1, ini.c_str()) != 0;      // TLDCoop_DLC
     {  // TLDCoop_DLC: [houselights]
         auto num = [&](const wchar_t* key, float& v, float lo, float hi) {
             const std::string t = read(ini, key, "", L"houselights");
