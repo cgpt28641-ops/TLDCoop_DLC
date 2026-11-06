@@ -9,6 +9,7 @@ from rig import load, qnorm
 from bvh import BVH
 from retarget import retarget, POSED
 from preview import strip
+from gait import cycle
 
 FPS = 30
 # name, CMU take, start s, end s, loop, upper only (legs keep the gait), heading mode, keep the hips' height
@@ -23,6 +24,14 @@ CLIPS = [
     ('air',    '13_39', 1.50, 1.62, True, False, 'clip',  False),  # mid-jump: in the air
     ('fall',   '90_17', 3.0, 4.6, False, False, 'clip',   True),   # slipping and falling
     ('carry',  '111_36', 3.0, 9.0, True, True,  'smooth', True),   # walking, carrying: a big carry
+    ('g_idle', '82_08', 0.5, 8.0, True, False, 'clip',   True),   # standing still (the gait's idle)
+]
+# The gait: one full stride each (left heel strike to the next; gait.py), its speed scales its playback. name, take,
+# the window to find a steady stride in.
+GAIT = [
+    ('g_walk',  '07_01', 0.3, 2.4),   # walk
+    ('g_run',   '35_17', 0.1, 1.2),   # run/jog
+    ('g_creep', '77_14', 1.2, 3.4),   # careful creeping: walking crouched
 ]
 
 def crossfade(frames, n):
@@ -56,6 +65,18 @@ def crossfade(frames, n):
             res.append((local, hips))
     return res
 
+def pack(rig, frames):
+    rest = rig.rest_pos[rig.index['Hips_jnt']]
+    q = []; h = []
+    for local, hips in frames:
+        for bn in POSED:
+            v = local.get(bn, rig.rest_rot[rig.index[bn]])
+            if v[3] < 0: v = -v
+            q += [int(round(c * 32767)) for c in v]
+        d = (hips - rest) * 1000
+        h += [int(round(c)) for c in d]
+    return q, h
+
 def main(cmu, preview=None):
     rigs = {'M': load(os.path.join(os.path.dirname(__file__), 'rig_local.json'), 'Body_mackenzie_indoor'),
             'F': load(os.path.join(os.path.dirname(__file__), 'rig_local.json'), 'Body_astrid')}
@@ -69,27 +90,32 @@ def main(cmu, preview=None):
         for rig_name, rig in rigs.items():
             frames = retarget(rig, b, t0, t1, fps=FPS, heading=heading, keep_y=keep_y)
             if loop and len(frames) > 30: frames = crossfade(frames, int(0.4 * FPS))
-            rest = {bn: rig.rest_pos[rig.index[bn]] for bn in ['Hips_jnt']}
-            q = []; h = []
-            for local, hips in frames:
-                for bn in POSED:
-                    v = local.get(bn, rig.rest_rot[rig.index[bn]])
-                    if v[3] < 0: v = -v
-                    q += [int(round(c * 32767)) for c in v]
-                d = (hips - rest['Hips_jnt']) * 1000
-                h += [int(round(c)) for c in d]
+            q, h = pack(rig, frames)
             var = 'kMocap_%s_%s' % (name, rig_name)
             lines.append('const int16_t %s_rot[%d] = {%s};' % (var, len(q), ','.join(map(str, q))))
             lines.append('const int16_t %s_hips[%d] = {%s};' % (var, len(h), ','.join(map(str, h))))
-            table.append('    {"%s", \'%s\', %d, %s, %s, %s_rot, %s_hips},' % (name, rig_name, len(frames),
+            table.append('    {"%s", \'%s\', %d, %s, %s, %s_rot, %s_hips, 0.0f},' % (name, rig_name, len(frames),
                          'true' if loop else 'false', 'true' if upper else 'false', var, var))
             if preview and rig_name == 'M':
                 strip(rig, frames, os.path.join(preview, 'clip_%s.png' % name), n=10, title='%s (%s %.1f-%.1f s)' % (name, take, t0, t1))
             print(name, rig_name, len(frames), 'frames')
+    for name, take, t0, t1 in GAIT:
+        b = BVH(os.path.join(cmu, 'data', '%03d' % int(take.split('_')[0]), take + '.bvh'))
+        for rig_name, rig in rigs.items():
+            frames, speed, start, length, gap = cycle(rig, b, t0, t1, fps=FPS)
+            q, h = pack(rig, frames)
+            var = 'kMocap_%s_%s' % (name, rig_name)
+            lines.append('const int16_t %s_rot[%d] = {%s};' % (var, len(q), ','.join(map(str, q))))
+            lines.append('const int16_t %s_hips[%d] = {%s};' % (var, len(h), ','.join(map(str, h))))
+            table.append('    {"%s", \'%s\', %d, true, false, %s_rot, %s_hips, %.3ff},' % (name, rig_name, len(frames), var, var, speed))
+            if preview and rig_name == 'M':
+                strip(rig, frames, os.path.join(preview, 'clip_%s.png' % name), n=10, title='%s (%s, stride at %.2f s, %.2f m/s)' % (name, take, start, speed))
+            print(name, rig_name, len(frames), 'frames, %.2f m/s, stride %.2f s at %.2f s, seam %.3f m' % (speed, length, start, gap))
     lines += ['', 'struct MocapClip {', '    const char* name;', '    char rig;          // M or F',
               '    int frames;        // at 30 fps', '    bool loop;', '    bool upper;        // from the spine up (the legs keep the gait)',
               '    const int16_t* rot;   // frames x kMocapBones x (x y z w) / 32767: local rotations',
-              '    const int16_t* hips;  // frames x (x y z) mm: the hips\' local position minus its rest', '};',
+              '    const int16_t* hips;  // frames x (x y z) mm: the hips\' local position minus its rest',
+              '    float speed;       // a gait stride: its speed over the ground (m/s) at 1x; 0 not a gait', '};',
               'const MocapClip kMocapClips[] = {'] + table + ['};']
     open(os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'avatar_mocap.inc'), 'w').write('\n'.join(lines) + '\n')
 

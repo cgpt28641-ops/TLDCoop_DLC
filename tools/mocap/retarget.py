@@ -60,10 +60,11 @@ def smooth(a, n):
     pad = np.pad(a, ((n // 2, n - 1 - n // 2),) + ((0, 0),) * (a.ndim - 1), mode='edge')
     return np.stack([np.convolve(pad[:, i], k, mode='valid') for i in range(a.shape[1])], 1) if a.ndim > 1 else np.convolve(pad, k, mode='valid')
 
-def retarget(rig, bvh, start, end, fps=30, heading='clip', travel='remove', keep_y=True):
+def retarget(rig, bvh, start, end, fps=30, heading='clip', travel='remove', keep_y=True, times=None):
     P, E = bvh.positions()
     src = lambda name: E[name] if name in ('LeftHandIndex1', 'RightHandIndex1') and name in E else P[:, bvh.index[name]]
-    idx = [int(round(t / bvh.dt)) for t in np.arange(start, end, 1.0 / fps)]
+    if times is None: times = np.arange(start, end, 1.0 / fps)
+    idx = [int(round(t / bvh.dt)) for t in times]
     idx = [min(i, len(P) - 1) for i in idx]
     # the actor's leg length (hip to foot at the first frame of the file, ~T pose) against the rig's
     W0, P0 = rig.fk()
@@ -88,7 +89,7 @@ def retarget(rig, bvh, start, end, fps=30, heading='clip', travel='remove', keep
     elif heading == 'smooth': head = smooth(ang, int(1.0 / bvh.dt))
     else: head = np.zeros(len(P))
     hips_xz = P[:, bvh.index['Hips']][:, [0, 2]]
-    trend = smooth(hips_xz, int(1.0 / bvh.dt)) if travel == 'remove' else None
+    trend = smooth(hips_xz, int(1.0 / bvh.dt)) if travel in ('remove', 'sway') else None
     rest_hips_local = rig.rest_pos[rig.index['Hips_jnt']].copy()
     rest_hips_world_y = P0[rig.index['Hips_jnt']][1]
     hips_parent = rig.parent[rig.index['Hips_jnt']]
@@ -110,7 +111,10 @@ def retarget(rig, bvh, start, end, fps=30, heading='clip', travel='remove', keep
         hy = (P[f, bvh.index['Hips'], 1] - ground) * scale
         hips_pos = rest_hips_local.copy()
         if keep_y: hips_pos[1] = rest_hips_local[1] + (hy - rest_hips_world_y)
-        if travel != 'remove':
+        if travel == 'sway':  # the hips' sway about their path (side to side, back and forth in the stride)
+            d = Rh @ np.array([hips_xz[f, 0] - trend[f, 0], 0, hips_xz[f, 1] - trend[f, 1]]) * scale
+            hips_pos[0] += d[0]; hips_pos[2] += d[2]
+        elif travel != 'remove':
             d = Rh @ np.array([hips_xz[f, 0] - hips_xz[idx[0], 0], 0, hips_xz[f, 1] - hips_xz[idx[0], 1]]) * scale
             hips_pos[0] += d[0]; hips_pos[2] += d[2]
         # the bones, in order (parents first): swing each onto the actor's direction

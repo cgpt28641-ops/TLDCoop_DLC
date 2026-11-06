@@ -418,6 +418,9 @@ struct Avatar {
     MocapPlay mocap, mocap_out;
     uint8_t mocap_activity = 0;
     double mocap_last = 0;
+    float gait_w = 0, gait_creep = 0;  // TLDCoop_DLC: the mocap gait's share of the body; how crouched it is
+    double gait_phase = 0, gait_idle_t = 0;  // TLDCoop_DLC: where in the stride (0-1), in the standing clip (s)
+    float vel_x = 0, vel_z = 0;  // TLDCoop_DLC: their velocity over the ground (smoothed), to tell backing off
     int crouch_flag = -1;  // TLDCoop_DLC: the crouch flag last logged
     int gait_told = 0;     // TLDCoop_DLC: gait/crouch changes logged (capped)
 };
@@ -433,6 +436,7 @@ std::map<std::string, uintptr_t> g_action_clips;  // asset path -> clip (0: in n
 // Off by default: TLD's Shader Forge skinned shader drew the story characters invisible (it likely alpha-tests
 // _MainTex, whose alpha is empty in these textures). Our own shaders are standard lit and ignore alpha.
 bool g_use_tld_shaders = false;
+bool g_mocap_gait = true;  // TLDCoop_DLC: the gait from motion capture (dev `pose gait 0` shows the body pack's clips)
 std::map<std::string, uintptr_t> g_tld_shader;  // our fallback shader name -> TLD shader to use (0 = keep ours)
 
 double g_last_alive_check = 0;
@@ -2137,44 +2141,138 @@ Quat mocap_rot(const MocapClip& c, int frame, int bone) {
     return net::pose::normalized({q[0] / 32767.0f, q[1] / 32767.0f, q[2] / 32767.0f, q[3] / 32767.0f});
 }
 
-void mocap_pose(Avatar& a, const MocapPlay& p) {
-    const MocapClip& c = *p.clip;
-    double f = p.t * 30.0;
-    if (c.loop) f = std::fmod(f, static_cast<double>(c.frames));
-    else f = std::fmin(f, c.frames - 1.0);
-    const int f0 = static_cast<int>(f), f1 = c.loop ? (f0 + 1) % c.frames : std::min(f0 + 1, c.frames - 1);
-    const float k = static_cast<float>(f - f0);
-    const float w = smooth01(p.w);
+// One clip's pose at a time: frame numbers and the blend between them.
+struct MocapAt {
+    const MocapClip* c = nullptr;
+    int f0 = 0, f1 = 0;
+    float k = 0, w = 0;  // between the frames; this layer's share
+};
+MocapAt mocap_at(const MocapClip* c, double t, float w) {
+    MocapAt m;
+    m.c = c;
+    m.w = w;
+    double f = t * 30.0;
+    if (c->loop) {
+        f = std::fmod(f, static_cast<double>(c->frames));
+        if (f < 0) f += c->frames;  // (a gait played backwards)
+    } else {
+        f = std::fmin(std::fmax(f, 0.0), c->frames - 1.0);
+    }
+    m.f0 = std::min(static_cast<int>(f), c->frames - 1);
+    m.f1 = c->loop ? (m.f0 + 1) % c->frames : std::min(m.f0 + 1, c->frames - 1);
+    m.k = static_cast<float>(f - std::floor(f));
+    return m;
+}
+
+// Several clips mixed by their shares (in turn: each the share of what's mixed so far), then eased over the pose the
+// gait clips left by `master`. An upper-body clip has no say in the hips and legs.
+void mocap_mix(Avatar& a, const MocapAt* layers, int n, float master) {
+    if (master <= 0.001f) return;
     for (int b = 0; b < kMocapBones; ++b) {
-        if (c.upper && mocap_leg(b)) continue;
         Il2CppObject* tf = target(a.mocap_bones[b]);
         if (!tf) continue;
-        const Quat want = qslerp(mocap_rot(c, f0, b), mocap_rot(c, f1, b), k);
+        Quat mix{};
+        float sum = 0;
+        for (int i = 0; i < n; ++i) {
+            const MocapAt& m = layers[i];
+            if (!m.c || m.w <= 0.0001f || (m.c->upper && mocap_leg(b))) continue;
+            const Quat q = qslerp(mocap_rot(*m.c, m.f0, b), mocap_rot(*m.c, m.f1, b), m.k);
+            sum += m.w;
+            mix = sum == m.w ? q : qslerp(mix, q, m.w / sum);
+        }
+        if (sum <= 0.0001f) continue;
+        const float w = master * std::fmin(1.0f, sum);
         Quat now{};
         if (w < 0.999f) il2::invoke_value(api.get_local_rotation, tf, now);
-        Quat q = w < 0.999f ? qslerp(now, want, w) : want;
+        Quat q = w < 0.999f ? qslerp(now, mix, w) : mix;
         void* args[] = {&q};
         il2::invoke(api.set_local_rotation, tf, args);
     }
-    if (c.upper) return;
-    if (Il2CppObject* hips = target(a.mocap_bones[0])) {
-        const int16_t* h0 = c.hips + f0 * 3;
-        const int16_t* h1 = c.hips + f1 * 3;
-        Vector3 want{a.hips_rest[0] + (h0[0] + (h1[0] - h0[0]) * k) / 1000.0f,
-                     a.hips_rest[1] + (h0[1] + (h1[1] - h0[1]) * k) / 1000.0f,
-                     a.hips_rest[2] + (h0[2] + (h1[2] - h0[2]) * k) / 1000.0f};
-        Vector3 now{};
-        il2::invoke_value(api.get_local_position, hips, now);
-        set_vec(api.set_local_position, hips, {now.x + (want.x - now.x) * w, now.y + (want.y - now.y) * w, now.z + (want.z - now.z) * w});
+    Il2CppObject* hips = target(a.mocap_bones[0]);
+    if (!hips) return;
+    float off[3] = {}, sum = 0;
+    for (int i = 0; i < n; ++i) {
+        const MocapAt& m = layers[i];
+        if (!m.c || m.w <= 0.0001f || m.c->upper) continue;
+        const int16_t* h0 = m.c->hips + m.f0 * 3;
+        const int16_t* h1 = m.c->hips + m.f1 * 3;
+        for (int j = 0; j < 3; ++j) off[j] += m.w * (h0[j] + (h1[j] - h0[j]) * m.k) / 1000.0f;
+        sum += m.w;
     }
+    if (sum <= 0.0001f) return;
+    const float w = master * std::fmin(1.0f, sum);
+    const Vector3 want{a.hips_rest[0] + off[0] / sum, a.hips_rest[1] + off[1] / sum, a.hips_rest[2] + off[2] / sum};
+    Vector3 now{};
+    il2::invoke_value(api.get_local_position, hips, now);
+    set_vec(api.set_local_position, hips, {now.x + (want.x - now.x) * w, now.y + (want.y - now.y) * w, now.z + (want.z - now.z) * w});
 }
 
-// Runs the clips; true while a whole-body clip has most of the body (no crouch pose under it then).
-bool mocap_step(Avatar& a) {
+void mocap_pose(Avatar& a, const MocapPlay& p) {
+    const MocapAt m = mocap_at(p.clip, p.t, 1.0f);
+    mocap_mix(a, &m, 1, smooth01(p.w));
+}
+
+const MocapClip* mocap_named(const char* name, bool female) {
+    for (const MocapClip& c : kMocapClips)
+        if (c.rig == (female ? 'F' : 'M') && std::strcmp(c.name, name) == 0) return &c;
+    return nullptr;
+}
+
+// TLDCoop_DLC: the gait from motion capture (Karol 05.11: walking, running and crouching looked poor): standing, a walk
+// and a run mixed by their speed, a crouched creep while they move crouched (TLD's crouch pose while still). The
+// strides share one phase (each starts at the left heel strike), each played at their speed over its own; backwards
+// when they back off. Off while a bundle clip has the body (eating, sleeping, a handover) or they're down. Returns how
+// much the creep covers (the crouch pose gives way to it).
+float gait_step(Avatar& a, float dt) {
+    const MocapClip* idle = mocap_named("g_idle", a.female);
+    const MocapClip* walk = mocap_named("g_walk", a.female);
+    const MocapClip* run = mocap_named("g_run", a.female);
+    const MocapClip* creep = mocap_named("g_creep", a.female);
+    if (!idle || !walk || !run || !creep) return 0;
+    const bool on = g_mocap_gait && a.fresh && !a.lying && !a.shown_down && a.action.empty() && !a.handover_on;
+    a.gait_w = std::clamp(a.gait_w + (on ? dt * 4 : -dt * 4), 0.0f, 1.0f);
+    const float v = a.speed;
+    const bool crouched = a.crouch > 0.5f;
+    const float move = smooth01((v - 0.15f) / 0.4f);
+    const float fast = smooth01((v - 2.3f) / 0.8f);
+    a.gait_creep += ((crouched ? 1.0f : 0.0f) - a.gait_creep) * std::fmin(1.0f, dt * 6);
+    const float c = a.gait_creep;
+    // the shares: standing (only upright), walking, running, creeping (crouched and moving)
+    const float w_idle = (1 - c) * (1 - move), w_walk = (1 - c) * move * (1 - fast), w_run = (1 - c) * move * fast;
+    const float w_creep = c * move;
+    // backing off: the strides run backwards
+    const float yaw = a.shown_yaw * kDeg;
+    const float along = a.vel_x * std::sin(yaw) + a.vel_z * std::cos(yaw);
+    const float dir = along < -0.3f * v ? -1.0f : 1.0f;
+    float rate = 0, wsum = 0;
+    for (auto [clip, w] : {std::pair{walk, w_walk}, std::pair{run, w_run}, std::pair{creep, w_creep}}) {
+        if (w <= 0) continue;
+        const float r = std::clamp(v / std::max(0.3f, clip->speed), 0.5f, 1.8f);
+        rate += w * r / (clip->frames / 30.0f);
+        wsum += w;
+    }
+    if (wsum > 0) a.gait_phase = std::fmod(a.gait_phase + dt * dir * rate / wsum + 1.0, 1.0);
+    a.gait_idle_t += dt;
+    const MocapAt layers[] = {
+        mocap_at(idle, a.gait_idle_t, w_idle),
+        mocap_at(walk, a.gait_phase * walk->frames / 30.0, w_walk),
+        mocap_at(run, a.gait_phase * run->frames / 30.0, w_run),
+        mocap_at(creep, a.gait_phase * creep->frames / 30.0, w_creep),
+    };
+    // crouched and still: TLD's crouch pose alone (this only fades out under it)
+    const float master = smooth01(a.gait_w) * (1 - c * (1 - move));
+    mocap_mix(a, layers, 4, master);
+    return smooth01(a.gait_w) * w_creep;
+}
+
+// Runs the gait and the activity's clips; how much of the crouch pose stays (none under a whole-body clip, less as the
+// creep takes over).
+float mocap_step(Avatar& a) {
     const double now = net::now_ms();
     const float dt = a.mocap_last > 0 ? static_cast<float>(std::fmin(0.1, (now - a.mocap_last) / 1000.0)) : 0.0f;
     a.mocap_last = now;
-    if (!api.get_local_rotation || !api.set_local_rotation || !api.get_local_position || !a.mocap_bones[0]) return false;
+    if (!api.get_local_rotation || !api.set_local_rotation || !api.get_local_position || !a.mocap_bones[0]) return 1;
+    const float creep = gait_step(a, dt);
     uint8_t want = a.fresh && !a.lying && !a.shown_down ? a.last.activity : 0;
     // work in place (kneeling, at a panel) while they walk: an older sender's mistake, shown as nothing
     const bool on_foot = want == net::ActClimb || want == net::ActAir || want == net::ActCarry;
@@ -2202,7 +2300,8 @@ bool mocap_step(Avatar& a) {
     if (a.mocap_out.clip) mocap_pose(a, a.mocap_out);
     if (a.mocap.clip) mocap_pose(a, a.mocap);
     const auto whole = [](const MocapPlay& p) { return p.clip && !p.clip->upper ? p.w : 0.0f; };
-    return std::fmax(whole(a.mocap), whole(a.mocap_out)) > 0.5f;
+    if (std::fmax(whole(a.mocap), whole(a.mocap_out)) > 0.5f) return 0;
+    return 1 - creep;
 }
 
 void late_one(Avatar& a) {
@@ -2214,8 +2313,8 @@ void late_one(Avatar& a) {
         a.clip_hand[1] = d.y;
         a.clip_hand[2] = d.x * std::sin(yaw) + d.z * std::cos(yaw);
     }
-    const bool mocap_whole = has_bones(a) && mocap_step(a);  // TLDCoop_DLC: what their body is busy with
-    if (!mocap_whole && a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch);
+    const float crouch_left = has_bones(a) ? mocap_step(a) : 1.0f;  // TLDCoop_DLC: gait and what their body is busy with
+    if (crouch_left > 0.01f && a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch * crouch_left);
     if (gesture(a)) return;  // TLDCoop_DLC: (it placed what they hold too)
     if (!a.held.go) return;
     if (has_bones(a) && !a.shown_down && place_action_item(a)) return;
@@ -2475,6 +2574,9 @@ void drive_animation(Avatar& a, const net::StateMsg& s, double now) {
         const float dx = s.x - a.last_pos.x, dz = s.z - a.last_pos.z;
         const float v = std::sqrt(dx * dx + dz * dz) / static_cast<float>(dt);
         a.speed += (v - a.speed) * static_cast<float>(std::fmin(1.0, dt * 8.0));  // smooth over ~1/8 s
+        const float k = static_cast<float>(std::fmin(1.0, dt * 6.0));  // TLDCoop_DLC: which way (the mocap gait)
+        a.vel_x += (dx / static_cast<float>(dt) - a.vel_x) * k;
+        a.vel_z += (dz / static_cast<float>(dt) - a.vel_z) * k;
     }
     a.last_pos = {s.x, s.y, s.z};
     a.last_pos_time = now;
@@ -3368,6 +3470,9 @@ std::string tune_pose(const std::string& args) {
         if (field == "yaw") g_bed_yaw = v;
         else if (field == "lift") g_bed_lift = v;
         else return "pose: bed yaw|lift VALUE";
+    } else if (what == "gait") {  // TLDCoop_DLC: pose gait 0|1 (the motion capture gait, or the body pack's clips)
+        g_mocap_gait = field != "0" && field != "off";
+        return g_mocap_gait ? "pose: gait from motion capture" : "pose: gait from the body pack's clips";
     } else if (what == "crouch" && value) {
         if (field == "depth") g_crouch.depth = v;
         else if (field == "back") g_crouch.back = v;
