@@ -11,6 +11,7 @@
 #include <string>
 
 #include "coop_notices.h"
+#include "custom_text.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
@@ -249,6 +250,7 @@ Il2CppObject* make_proxy_detour(Il2CppString* name, Il2CppObject* proxy, Il2CppO
 }
 
 Il2CppString* loc_detour(Il2CppString* key, const MethodInfo* method) {
+    if (Il2CppString* ours = custom_text::find(key)) return ours;  // TLDCoop_DLC: ClothingExpanded's names and others
     if (!starts_with(key, "TLDCOOP_")) return g_loc(key, method);
     const std::string k = text(key);
     for (Def& d : g_defs) {

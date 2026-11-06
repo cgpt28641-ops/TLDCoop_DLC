@@ -36,6 +36,7 @@
 #include "wildlife_targets.h"
 #include "world_containers.h"
 #include "world_items.h"
+#include "clothing_expanded.h"
 #include "world_fires.h"
 #include "world_join.h"
 #include "world_mode.h"
@@ -939,6 +940,9 @@ void run(const std::string& line) {
         int step = 1;
         in >> step;
         if (!coop_death::next_survivor(step)) logx::warn("dev: survivor: we aren't dead");
+    } else if (cmd == "clothing") {
+        // clothing: ClothingExpanded's pack and items (give GEAR_JeansToolbelt to try one)
+        clothing_expanded::describe();
     } else if (cmd == "needs") {
         std::string charge;
         in >> charge;

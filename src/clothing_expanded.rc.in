@@ -1,0 +1,5 @@
+// TLDCoop_DLC: ClothingExpanded's pack (TonisGaming), inside the DLL (clothing_expanded.cpp writes it to TLDCoop\clothing).
+// Configured by CMake with the absolute paths of third_party/clothing-expanded.
+301 RCDATA "@CE_DIR@/clothingexpanded_assets_all.bundle"
+302 RCDATA "@CE_DIR@/clothingexpanded_unitybuiltinshaders_c1d995b77ba295f65f21e50ed586f479.bundle"
+303 RCDATA "@CE_DIR@/catalog_clothingexpanded.json"

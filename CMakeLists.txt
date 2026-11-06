@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 # Static CRT: players (and the bot) don't need the Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(TLDCoop LANGUAGES C CXX)
+project(TLDCoop LANGUAGES C CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,6 +39,10 @@ add_library(tldnet STATIC src/net/session.cpp src/net/udp_transport.cpp src/net/
 target_include_directories(tldnet PUBLIC src)
 target_link_libraries(tldnet PUBLIC ws2_32)
 
+# TLDCoop_DLC: ClothingExpanded's pack, as resources in the DLL
+set(CE_DIR ${CMAKE_SOURCE_DIR}/third_party/clothing-expanded)
+configure_file(src/clothing_expanded.rc.in ${CMAKE_BINARY_DIR}/clothing_expanded.rc @ONLY)
+
 # The mod. The game loads it as winhttp.dll.
 add_library(tldcoop SHARED
   src/dllmain.cpp
@@ -52,6 +56,9 @@ add_library(tldcoop SHARED
   src/custom_pictures.cpp
   src/night_sky.cpp  # TLDCoop_DLC: Better Night Sky (built in)
   src/fuel_transfer.cpp  # TLDCoop_DLC: drain a kerosene lamp into a canister
+  src/custom_text.cpp  # TLDCoop_DLC: our entries in TLD's string table
+  src/clothing_expanded.cpp  # TLDCoop_DLC: ClothingExpanded (TonisGaming)
+  ${CMAKE_BINARY_DIR}/clothing_expanded.rc  # (its bundles and catalog)
   src/food_tweaker.cpp  # TLDCoop_DLC: Food Tweaker (built in)
   src/coop_activity.cpp  # TLDCoop_DLC: what a player's body is busy with (avatar motion capture)
   src/loading_screen.cpp  # TLDCoop_DLC: the start screen (Karol's picture)

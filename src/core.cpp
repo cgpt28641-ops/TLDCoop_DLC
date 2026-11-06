@@ -18,6 +18,7 @@
 #include "food_tweaker.h"
 #include "night_sky.h"
 #include "fuel_transfer.h"
+#include "clothing_expanded.h"
 #include "slot_machine.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
@@ -618,6 +619,7 @@ void on_frame() {
     TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
     TIMED("house_lights::on_frame", house_lights::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("night_sky::on_frame", night_sky::on_frame());  // TLDCoop_DLC
+    TIMED("clothing_expanded::on_frame", clothing_expanded::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("slot_machine::on_frame", slot_machine::on_frame(scene, in_game));  // TLDCoop_DLC: the automat (test)
     TIMED("dynamic_trees::on_frame", dynamic_trees::on_frame(scene, in_game));
     TIMED("seamless_interiors::on_frame", seamless_interiors::on_frame(scene, in_game));  // TLDCoop_DLC
@@ -840,6 +842,7 @@ void on_runtime_ready() {
     food_tweaker::init();  // TLDCoop_DLC: realistic calories and cooking times (MODS: FOOD TWEAKER)
     night_sky::init();     // TLDCoop_DLC: Better Night Sky (coop.ini [sky])
     fuel_transfer::init(); // TLDCoop_DLC: DRAIN FUEL on a kerosene lamp (coop.ini [fuel])
+    clothing_expanded::init();  // TLDCoop_DLC: ClothingExpanded (28 items, its pack in the DLL)
     slot_machine::init();  // TLDCoop_DLC: the automat (coop.ini [automat] test=1)
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC

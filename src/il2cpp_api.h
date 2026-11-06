@@ -77,7 +77,9 @@ struct Il2CppThread;
     X(il2cpp_gc_wbarrier_set_field, void, (Il2CppObject*, void**, void*))                              \
     X(il2cpp_field_set_value, void, (Il2CppObject*, FieldInfo*, void*))                                \
     X(il2cpp_class_from_type, Il2CppClass*, (const Il2CppType*))                                       \
-    X(il2cpp_array_new, Il2CppObject*, (Il2CppClass*, uintptr_t))
+    X(il2cpp_array_new, Il2CppObject*, (Il2CppClass*, uintptr_t))                                      \
+    X(il2cpp_field_get_value, void, (Il2CppObject*, FieldInfo*, void*))                                \
+    X(il2cpp_class_get_element_class, Il2CppClass*, (Il2CppClass*))
 
 namespace il2 {
 
