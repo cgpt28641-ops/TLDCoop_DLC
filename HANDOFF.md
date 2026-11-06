@@ -1197,3 +1197,9 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Do zrobienia przez Karola: aplikacja/bot na discord.com/developers (Message Content Intent), zaproszenie bota
   (View Channels, Send Messages, Read Message History, Attach Files), sekret repo DISCORD_BOT_TOKEN. Gałąź `discord`
   już istnieje (pierwszy przebieg bez tokenu: OK). Potem: zaplanowane zadanie co godzinę na czytanie skrzynki.
+- 14:35: most przeniesiony do OSOBNEGO prywatnego repo **cgpt28641-ops/tldcoop-discord** (Karol tak woli): bridge.py,
+  .github/workflows/discord.yml (co 30 min + `gh workflow run discord.yml -R cgpt28641-ops/tldcoop-discord --ref main`),
+  inbox/ i outbox/ na main tego repo. Z repo moda usunięte (workflow, tools/discord, branches-ignore). Stara gałąź
+  `discord` w TLDCoop_DLC została (proxy nie pozwala usunąć) — niegroźna. Domyślny kanał wiadomości: #updates.
+  Kanały: #updates, #błędy (logi), #pomysły (mody), #claude-komendy (zlecenia graczy, !status !dll !zmiany !test
+  !stop, pytania), #chat. Czeka na token DISCORD_BOT_TOKEN w tldcoop-discord.
