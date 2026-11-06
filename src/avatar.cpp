@@ -189,6 +189,7 @@ struct Api {
     const MethodInfo* get_local_rotation = nullptr;  // TLDCoop_DLC: Transform.get_localRotation() (motion capture)
     const MethodInfo* set_local_rotation = nullptr;  // TLDCoop_DLC: Transform.set_localRotation(Quaternion)
     const MethodInfo* get_local_position = nullptr;  // TLDCoop_DLC: Transform.get_localPosition()
+    const MethodInfo* raycast = nullptr;  // TLDCoop_DLC: static Physics.Raycast(origin, dir, out hit, dist, mask, triggers)
     const MethodInfo* get_forward = nullptr;         // Transform.get_forward()
     const MethodInfo* find_child = nullptr;          // Transform.Find(string)
     const MethodInfo* renderer_bounds = nullptr;     // Renderer.get_bounds()
@@ -421,6 +422,11 @@ struct Avatar {
     float gait_w = 0, gait_creep = 0;  // TLDCoop_DLC: the mocap gait's share of the body; how crouched it is
     double gait_phase = 0, gait_idle_t = 0;  // TLDCoop_DLC: where in the stride (0-1), in the standing clip (s)
     float vel_x = 0, vel_z = 0;  // TLDCoop_DLC: their velocity over the ground (smoothed), to tell backing off
+    // TLDCoop_DLC: the body's own facing (standing, it lags their view and steps round to it), how fast it turns
+    float body_yaw = 0, turn_speed = 0;
+    bool body_yaw_set = false, turning = false;
+    float foot_d[2] = {}, hips_drop = 0;
+    double feet_last = 0;  // TLDCoop_DLC: the feet raised/lowered to the ground under them; the hips
     int crouch_flag = -1;  // TLDCoop_DLC: the crouch flag last logged
     int gait_told = 0;     // TLDCoop_DLC: gait/crouch changes logged (capped)
 };
@@ -2238,7 +2244,8 @@ float gait_step(Avatar& a, float dt) {
     a.gait_creep += ((crouched ? 1.0f : 0.0f) - a.gait_creep) * std::fmin(1.0f, dt * 6);
     const float c = a.gait_creep;
     // the shares: standing (only upright), walking, running, creeping (crouched and moving)
-    const float w_idle = (1 - c) * (1 - move), w_walk = (1 - c) * move * (1 - fast), w_run = (1 - c) * move * fast;
+    float w_idle = (1 - c) * (1 - move), w_walk = (1 - c) * move * (1 - fast);
+    const float w_run = (1 - c) * move * fast;
     const float w_creep = c * move;
     // backing off: the strides run backwards
     const float yaw = a.shown_yaw * kDeg;
@@ -2252,6 +2259,13 @@ float gait_step(Avatar& a, float dt) {
         wsum += w;
     }
     if (wsum > 0) a.gait_phase = std::fmod(a.gait_phase + dt * dir * rate / wsum + 1.0, 1.0);
+    // stepping round on the spot (the body turning to their view): part of the walk's stride, a stride per 180 deg
+    const float turn = (1 - c) * (1 - move) * smooth01(std::fabs(a.turn_speed) / 120.0f) * 0.6f;
+    if (turn > 0.001f) {
+        w_idle -= turn;
+        w_walk += turn;
+        a.gait_phase = std::fmod(a.gait_phase + dt * std::fabs(a.turn_speed) / 180.0f * (1 - move), 1.0);
+    }
     a.gait_idle_t += dt;
     const MocapAt layers[] = {
         mocap_at(idle, a.gait_idle_t, w_idle),
@@ -2304,6 +2318,108 @@ float mocap_step(Avatar& a) {
     return 1 - creep;
 }
 
+// --- TLDCoop_DLC: feet on the ground, and the head and chest after their view ------------------------------------
+
+struct GroundHit {  // UnityEngine.RaycastHit
+    Vector3 point, normal;
+    uint32_t face;
+    float distance;
+    float uv[2];
+    int32_t collider;
+};
+
+// The ground under a point (from 0.6 m above it, 1.4 m down): its height and slope. False: none there.
+bool ground_under(PVec at, float& y, PVec& normal) {
+    if (!api.raycast) return false;
+    Vector3 origin{at.x, at.y + 0.6f, at.z}, down{0, -1, 0};
+    GroundHit hit{};
+    float dist = 1.4f;
+    int32_t mask = -5;     // Physics.DefaultRaycastLayers
+    int32_t triggers = 1;  // QueryTriggerInteraction.Ignore
+    void* args[] = {&origin, &down, &hit, &dist, &mask, &triggers};
+    bool got = false;
+    if (!il2::invoke_value(api.raycast, nullptr, got, args) || !got) return false;
+    y = hit.point.y;
+    normal = net::pose::normalized(PVec{hit.normal.x, hit.normal.y, hit.normal.z});
+    return normal.y > 0.5f;  // (a wall or a steep rock face isn't ground to stand on)
+}
+
+// Each foot put on the ground under it, as high above it as the clip has it above the flat (its swing kept): on
+// stairs and slopes one foot higher, the hips moved with the lower one; the foot tilted with the ground under it.
+// Eased, so a step onto a stair doesn't snap. Not while they climb, sit, kneel, fall or lie.
+void plant_feet(Avatar& a, float dt) {
+    const uint8_t act = a.mocap_activity;
+    const bool on = api.raycast && has_legs(a) && !a.lying && !a.shown_down && !a.on_wolf && g_mocap_gait &&
+                    (act == 0 || act == net::ActSearch || act == net::ActWork || act == net::ActCarry);
+    const float k = std::fmin(1.0f, dt * 12);
+    Il2CppObject* root = target(a.root_transform);
+    if (!on || !root) {
+        for (float& d : a.foot_d) d -= d * k;
+        a.hips_drop -= a.hips_drop * k;
+        if (std::fabs(a.hips_drop) < 0.002f) return;
+    }
+    const float yaw = a.shown_yaw * kDeg;
+    const PVec fwd{std::sin(yaw), 0, std::cos(yaw)}, up{0, 1, 0};
+    const PVec base = position_of(root);
+    const Arm legs[2] = {{kLeftThigh, kLeftKnee, kLeftFoot}, {kRightThigh, kRightKnee, kRightFoot}};
+    PVec feet[2], normals[2] = {up, up};
+    Quat turns[2];
+    for (int i = 0; i < 2; ++i) {
+        feet[i] = position_of(bone(a, legs[i].hand));
+        turns[i] = rotation_of(bone(a, legs[i].hand));
+        float gy = base.y;
+        PVec n = up;
+        float want = 0;
+        if (on && ground_under(PVec{feet[i].x, base.y, feet[i].z}, gy, n)) {
+            want = std::clamp(gy - base.y, -0.45f, 0.45f);
+            normals[i] = n;
+        }
+        a.foot_d[i] += (want - a.foot_d[i]) * k;
+    }
+    // the hips with the lower foot (down a slope; up, when both feet are above where TLD has them)
+    const float drop = std::clamp(std::fmin(a.foot_d[0], a.foot_d[1]), -0.45f, 0.25f);
+    a.hips_drop += (drop - a.hips_drop) * k;
+    if (std::fabs(a.foot_d[0]) < 0.003f && std::fabs(a.foot_d[1]) < 0.003f && std::fabs(a.hips_drop) < 0.003f) return;
+    Il2CppObject* hips = bone(a, kHips);
+    set_vec(api.set_position, hips, uv3(position_of(hips) + up * a.hips_drop));
+    for (int i = 0; i < 2; ++i) {
+        const PVec to = feet[i] + up * a.foot_d[i];
+        const PVec knee = position_of(bone(a, legs[i].elbow));
+        reach(a, legs[i], to, knee + fwd * 0.6f);
+        // the foot as the clip had it, tilted with the slope under it (at most 25 degrees)
+        PVec n = normals[i];
+        if (n.y < 0.906f) n = net::pose::normalized(PVec{n.x, 0, n.z} * (0.423f / std::max(1e-3f, net::pose::length(PVec{n.x, 0, n.z}))) + up * 0.906f);
+        set_rotation(bone(a, legs[i].hand), net::pose::from_to(up, n) * turns[i]);
+    }
+}
+
+// The head and chest after their view: up and down by their pitch, and round by how far their view is off the body's
+// facing (standing, the body lags it: see the root's yaw). Shared out over the upper spine, neck and head.
+void look_pose(Avatar& a) {
+    if (!g_mocap_gait || a.lying || a.shown_down || a.handover_on || !has_bones(a)) return;
+    const uint8_t act = a.mocap_activity;
+    if (act == net::ActClimb || act == net::ActAir) return;
+    Il2CppObject* spine = rig_bone(a, "Spine2_jnt");
+    Il2CppObject* neck = rig_bone(a, "Neck_jnt");
+    Il2CppObject* head = bone(a, kHead);
+    if (!spine || !neck || !head) return;
+    const float off = std::clamp(std::fmod(a.yaw - a.shown_yaw + 540.0f, 360.0f) - 180.0f, -70.0f, 70.0f);
+    const float pitch = std::clamp(g_pitch_sign * a.pitch, -60.0f, 60.0f);
+    // aiming poses its own lean, and the arms take the pitch: only the head's share then
+    const bool aiming = (a.held_flags & net::kHeldAiming) != 0;
+    const PVec up{0, 1, 0};
+    const float shares[3] = {aiming ? 0.0f : 0.3f, aiming ? 0.0f : 0.3f, aiming ? 0.5f : 0.4f};
+    Il2CppObject* bones[3] = {spine, neck, head};
+    for (int i = 0; i < 3; ++i) {
+        if (shares[i] <= 0) continue;
+        // round (about up), then up/down (about the side axis of where it now faces)
+        turn_bone(bones[i], up, off * shares[i]);
+        const float yaw = (a.shown_yaw + off) * kDeg;
+        const PVec side{std::cos(yaw), 0, -std::sin(yaw)};
+        turn_bone(bones[i], side, -pitch * shares[i]);
+    }
+}
+
 void late_one(Avatar& a) {
     if (!a.shown || a.visibility != "shown") return;
     if (has_bones(a)) {
@@ -2315,6 +2431,13 @@ void late_one(Avatar& a) {
     }
     const float crouch_left = has_bones(a) ? mocap_step(a) : 1.0f;  // TLDCoop_DLC: gait and what their body is busy with
     if (crouch_left > 0.01f && a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch * crouch_left);
+    if (has_bones(a)) {  // TLDCoop_DLC: feet on the ground, head and chest after the view
+        const double now = net::now_ms();
+        const float dt = a.feet_last > 0 ? static_cast<float>(std::fmin(0.1, (now - a.feet_last) / 1000.0)) : 0.0f;
+        a.feet_last = now;
+        plant_feet(a, dt);
+        look_pose(a);
+    }
     if (gesture(a)) return;  // TLDCoop_DLC: (it placed what they hold too)
     if (!a.held.go) return;
     if (has_bones(a) && !a.shown_down && place_action_item(a)) return;
@@ -2766,6 +2889,30 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
         } else {
             a.on_wolf = false;
         }
+        {  // TLDCoop_DLC: standing, the body keeps its facing while they look about, and steps round once the view is
+           // well off it (the head and chest follow the view: look_pose); walking, aiming or busy, it faces the view
+            const bool lag = !down && !a.on_wolf && a.handover_blend < 0.001f && !(a.held_flags & net::kHeldAiming) &&
+                             s.activity == 0 && a.speed < 0.3f && g_mocap_gait;
+            const float d = std::fmod(yaw - a.body_yaw + 540.0f, 360.0f) - 180.0f;
+            float step = 0;
+            if (!a.body_yaw_set || dt <= 0) {
+                a.body_yaw = yaw;
+                a.body_yaw_set = true;
+            } else if (!lag) {
+                step = d * std::fmin(1.0f, dt * 12);
+                a.turning = false;
+            } else {
+                if (std::fabs(d) > 55) a.turning = true;
+                if (a.turning) {
+                    const float most = 220.0f * dt;
+                    step = std::clamp(d, -most, most);
+                    if (std::fabs(d) < 4) a.turning = false;
+                }
+            }
+            a.body_yaw = std::fmod(a.body_yaw + step + 360.0f, 360.0f);
+            a.turn_speed = dt > 0 ? step / dt : 0;
+            if (!a.on_wolf) yaw = a.body_yaw;
+        }
         set_vec(api.set_position, root_transform, {x, y + (tip_over ? 0.2f : 0.0f), z});
         set_vec(api.set_euler, root_transform, {tip_over ? -80.0f : 0.0f, yaw, 0.0f});
         a.shown_yaw = yaw;
@@ -3070,6 +3217,10 @@ bool init() {
     api.get_local_rotation = il2::find_method(transform, "get_localRotation", 0);
     api.set_local_rotation = il2::find_method(transform, "set_localRotation", 1);
     api.get_local_position = il2::find_method(transform, "get_localPosition", 0);
+    if (Il2CppClass* physics = il2::find_class("UnityEngine.PhysicsModule.dll", "UnityEngine", "Physics"))
+        api.raycast = il2::find_method_params_quiet(physics, "Raycast",
+                                                    {"UnityEngine.Vector3", "UnityEngine.Vector3", "UnityEngine.RaycastHit&",
+                                                     "System.Single", "System.Int32", "UnityEngine.QueryTriggerInteraction"});
     api.get_forward = il2::find_method(transform, "get_forward", 0);
     api.find_child = il2::find_method_params(transform, "Find", {"System.String"});
     api.renderer_bounds = il2::find_method(renderer, "get_bounds", 0);
