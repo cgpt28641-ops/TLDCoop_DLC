@@ -1267,3 +1267,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   TLD-owy CaseInsensitiveResourceLocator widzi nowy catalog (jak u ModComponent powinien); pozycja przycisku; ikony/
   paperdoll; zapis/wczytanie save z nowymi przedmiotami. Bez DLC (TFTFT) bazowe GEAR_ToolBelt/RifleScabbardA/Crampons
   mogą nie istnieć → te przedmioty FAILED.
+
+### 2026-11-06 ~22:00 local — HOTFIX 5407beb: crash przy uruchamianiu świata (Shatsca), bez logu
+- Shatsca (#claude-komendy 20:48): gra wywala przy włączaniu/uruchamianiu świata z nowym dll; logu nie ma (prosiłem o
+  TLDCoop\coop.log + coop-prev.log na #błędy).
+- Domyślnie WYŁĄCZONE do testu: [clothing] enabled=0 (clothing_expanded::init tylko gdy 1) i [sky] enabled=0 (Night Sky).
+  custom_text: zamiast wywołania Localization.get_Language wewnątrz hooka Localization.Get — odczyt pola s_Language
+  (podejrzenie rekursji/wywołania w trakcie ładowania tabel).
+- Podejrzani: Night Sky (UniStorm.Init przy starcie świata, bundle 2019), ClothingExpanded (catalog/mapowanie, any_bare →
+  GetPrefabFromName/WaitForCompletion przy zmianie sceny), custom_text (powyżej). Po logu: włączać po jednym.
