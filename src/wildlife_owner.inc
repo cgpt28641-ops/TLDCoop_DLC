@@ -1682,6 +1682,7 @@ void own_frame(const std::string& scene, bool in_game, double now) {
     }
     if (g_own_scene != scene) {
         own_reset("another scene", false);
+        g_region_variant.clear();  // TLDCoop_DLC (v50): the spawn areas are new ones
         g_own_scene = scene;
         g_own_last_capture = 0;
         g_own_arrived_ms = now;

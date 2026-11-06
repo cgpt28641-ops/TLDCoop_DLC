@@ -21,7 +21,7 @@ CLIPS = [
     ('search', '62_19', 3.3, 4.8, True,  True,  'clip',   True),   # opening a box: in a container
     ('work',   '79_34', 2.9, 5.3, True,  True,  'clip',   True),   # hands in front: workbench, reading
     ('sit',    '82_05', 3.0, 8.0, True,  False, 'clip',   True),   # sitting on the ground: ice fishing, a seat
-    ('air',    '13_39', 1.50, 1.62, True, False, 'clip',  False),  # mid-jump: in the air
+    ('air',    '13_39', 1.50, 1.62, False, False, 'clip', False),  # mid-jump: in the air (held, not looped)
     ('fall',   '90_17', 3.0, 4.6, False, False, 'clip',   True),   # slipping and falling
     ('carry',  '111_36', 3.0, 9.0, True, True,  'smooth', True),   # walking, carrying: a big carry
     ('g_idle', '82_08', 0.5, 8.0, True, False, 'clip',   True),   # standing still (the gait's idle)

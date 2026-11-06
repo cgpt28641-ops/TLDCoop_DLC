@@ -1705,6 +1705,7 @@ void mirror(const std::string& scene, double now) {
         g_mirror_scene = scene;
         g_failed_kinds = 0;
         g_no_model.clear();
+        g_region_variant.clear();  // TLDCoop_DLC (v50): the spawn areas are new ones
         logx::info("wildlife: mirroring the host's animals in '%s'", scene.c_str());
     }
     hide_our_animals(now);

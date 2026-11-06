@@ -23,6 +23,7 @@ struct Api {
     const MethodInfo* panel_enabled = nullptr;   // Panel_Base.IsEnabled() (virtual)
     const MethodInfo* game_object = nullptr;     // Component.get_gameObject()
     const MethodInfo* in_hierarchy = nullptr;    // GameObject.get_activeInHierarchy()
+    const MethodInfo* go_scene = nullptr;        // GameObject.get_scene() (a Scene: its handle, 0 for an asset)
     Il2CppObject* t_controller = nullptr;        // typeof(vp_FPSController)
     const MethodInfo* grounded = nullptr;        // vp_FPSController.get_Grounded()
 } api;
@@ -47,7 +48,7 @@ struct PanelKind {
     Il2CppObject* type = nullptr;
     std::vector<uintptr_t> found;  // its instances (prefab assets among them: never in a scene, never open)
     double looked = -1e18;
-    bool seen_live = false;        // one of them has been up in the game (then it's the panel TLD uses)
+    bool seen_live = false;        // one of them is in a scene (then it's the panel TLD uses: no more looking)
 };
 PanelKind g_panels[] = {
     {"Panel_BodyHarvest", net::ActKneel}, {"Panel_Cooking", net::ActKneel}, {"Panel_FeedFire", net::ActKneel},
@@ -67,6 +68,13 @@ bool in_game(Il2CppObject* o) {
     return alive(go) && api.in_hierarchy && il2::invoke_value(api.in_hierarchy, go, on) && on;
 }
 
+// In a scene (a loaded instance, shown or not), not a prefab asset.
+bool in_scene(Il2CppObject* o) {
+    Il2CppObject* go = api.game_object ? il2::invoke(api.game_object, o) : nullptr;
+    int32_t handle = 0;
+    return alive(go) && api.go_scene && il2::invoke_value(api.go_scene, go, handle) && handle != 0;
+}
+
 bool panel_open(PanelKind& p, double now) {
     if (!p.type) return false;
     bool any_alive = false;
@@ -74,17 +82,20 @@ bool panel_open(PanelKind& p, double now) {
         Il2CppObject* o = il2::il2cpp_gchandle_get_target(h);
         if (!alive(o)) continue;
         any_alive = true;
+        if (!p.seen_live && in_scene(o)) p.seen_live = true;
         if (!in_game(o)) continue;
         p.seen_live = true;
         bool on = false;
         if (il2::invoke_value(il2::virtual_method(o, api.panel_enabled), o, on) && on) return true;
     }
     // TLD makes a panel the first time it's needed: look again now and then until we have one that's been up
-    if ((!any_alive || !p.seen_live) && now - p.looked > 5000 && now - g_searched > 500) {
+    // (one kind every 1.5 s at most, each every 10 s: FindObjectsOfTypeAll walks every object)
+    if ((!any_alive || !p.seen_live) && now - p.looked > 10000 && now - g_searched > 1500) {
         p.looked = now;
         g_searched = now;
         for (uintptr_t h : p.found) il2::il2cpp_gchandle_free(h);
         p.found.clear();
+        p.seen_live = false;
         void* a[] = {p.type};
         Il2CppObject* all = il2::invoke(api.find_all, nullptr, a);
         for (size_t i = 0; i < il2::array_length(all) && p.found.size() < 4; ++i)
@@ -147,6 +158,7 @@ bool init() {
     api.panel_enabled = il2::find_method(il2::find_class(kGame, "", "Panel_Base"), "IsEnabled", 0);
     api.game_object = il2::find_method(il2::find_class(kCore, "UnityEngine", "Component"), "get_gameObject", 0);
     api.in_hierarchy = il2::find_method(il2::find_class(kCore, "UnityEngine", "GameObject"), "get_activeInHierarchy", 0);
+    api.go_scene = il2::find_method_quiet(il2::find_class(kCore, "UnityEngine", "GameObject"), "get_scene", 0);
     if (Il2CppClass* controller = il2::find_class(kGame, "", "vp_FPSController")) {
         api.t_controller = il2::type_object(controller);
         api.grounded = il2::find_method_quiet(controller, "get_Grounded", 0);

@@ -416,6 +416,7 @@ struct Avatar {
     // fading out under it, the activity they're for, when it last ran (our clock)
     std::array<uintptr_t, kMocapBones> mocap_bones{};
     float hips_rest[3] = {0, 1.0f, 0};
+    bool mocap_f = false;  // the clips for the shorter rig (Astrid's: hips at 0.99 m; some male bodies share it)
     MocapPlay mocap, mocap_out;
     uint8_t mocap_activity = 0;
     double mocap_last = 0;
@@ -726,7 +727,11 @@ void attach_bones(Avatar& a, Il2CppObject* body) {
                     Vector3 p{};
                     il2::invoke_value(api.get_local_position, t, p);
                     if (p.y > 0.6f && p.y < 1.4f) a.hips_rest[0] = p.x, a.hips_rest[1] = p.y, a.hips_rest[2] = p.z;
-                    else a.hips_rest[0] = 0, a.hips_rest[1] = a.female ? 0.994f : 1.052f, a.hips_rest[2] = 0;
+                    else a.hips_rest[0] = 0, a.hips_rest[1] = female_rig(a.shown_body) ? 0.994f : 1.052f, a.hips_rest[2] = 0;
+                    // which of the two rigs it is (every body pack body is one of them: hips at 1.052 or 0.994 m,
+                    // their joints' rest turns the same within each): by its hips, not by who it is (Atwood, Jace and
+                    // two patrons are men on the shorter rig)
+                    a.mocap_f = a.hips_rest[1] < 1.02f;
                 }
             }
         for (int b = 0; b < kBoneCount; ++b)
@@ -2230,10 +2235,10 @@ const MocapClip* mocap_named(const char* name, bool female) {
 // when they back off. Off while a bundle clip has the body (eating, sleeping, a handover) or they're down. Returns how
 // much the creep covers (the crouch pose gives way to it).
 float gait_step(Avatar& a, float dt) {
-    const MocapClip* idle = mocap_named("g_idle", a.female);
-    const MocapClip* walk = mocap_named("g_walk", a.female);
-    const MocapClip* run = mocap_named("g_run", a.female);
-    const MocapClip* creep = mocap_named("g_creep", a.female);
+    const MocapClip* idle = mocap_named("g_idle", a.mocap_f);
+    const MocapClip* walk = mocap_named("g_walk", a.mocap_f);
+    const MocapClip* run = mocap_named("g_run", a.mocap_f);
+    const MocapClip* creep = mocap_named("g_creep", a.mocap_f);
     if (!idle || !walk || !run || !creep) return 0;
     const bool on = g_mocap_gait && a.fresh && !a.lying && !a.shown_down && a.action.empty() && !a.handover_on;
     a.gait_w = std::clamp(a.gait_w + (on ? dt * 4 : -dt * 4), 0.0f, 1.0f);
@@ -2294,7 +2299,7 @@ float mocap_step(Avatar& a) {
     if (want != a.mocap_activity) {
         if (a.gait_told < 300) ++a.gait_told, say(a, "activity %d -> %d (speed %.2f m/s)", a.mocap_activity, want, a.speed);
         a.mocap_activity = want;
-        const MocapClip* c = mocap_clip(want, a.female);
+        const MocapClip* c = mocap_clip(want, a.mocap_f);
         if (c != a.mocap.clip) {
             if (a.mocap.clip && a.mocap.w > a.mocap_out.w) a.mocap_out = a.mocap;  // it fades out under the new one
             a.mocap = MocapPlay{c, 0, 0};
@@ -2814,6 +2819,8 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
     if (a.visibility != "shown") {
         // Where it appears matters: right after a load it must be where the other player really is.
         a.visibility = "shown";
+        a.body_yaw_set = false;  // TLDCoop_DLC: faces their view straight away (no turn from where it was last seen)
+        a.turning = false;
         const game::PlayerState me = game::read_player();
         const float dx = s.x - me.position.x, dy = s.y - me.position.y, dz = s.z - me.position.z;
         say(a, "shown in '%s' at (%.1f, %.1f, %.1f), %.1f m from us", s.scene.c_str(), s.x, s.y, s.z,
