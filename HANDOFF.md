@@ -1286,3 +1286,14 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - [clothing] dalej domyślnie 0 — do testu enabled=1 (poprosiłem Shatscę/Karola).
 - Bridge Discorda: wzmianki bota (@bot albo rola bota) od kerel123/shatsca → bot od razu daje 👀 i dopisuje do
   inbox/mentions.lst (czytam najpierw); workflow co 10 min (cron */10).
+
+### 2026-11-07 ~12:40 local — repo publiczne i przemianowane: cgpt28641-ops/polar-link
+- 06.11 21:09 UTC skończyły się minuty Actions (prywatne repo, Windows ×2) → Karol zrobił repo publicznym i zmienił
+  nazwę na **polar-link** (żeby nie kojarzyło się z grą). Link do dll:
+  https://github.com/cgpt28641-ops/polar-link/releases/download/dll-latest/winhttp.dll (stary przekierowuje).
+- Bridge Discorda biegnie teraz z tego repo (.github/workflows/discord.yml, co 10 min): checkout prywatnego
+  tldcoop-discord sekretem DISCORD_REPO_TOKEN (fine-grained, Contents RW), DISCORD_BOT_TOKEN; krok „Can save” (git push
+  --dry-run) — bez prawa zapisu bridge nie rusza (inaczej posty szłyby w kółko). Log publiczny: tylko „bridge ok”.
+  W tldcoop-discord workflow tylko ręczny (bez cron). Uruchamianie: `gh workflow run discord.yml -R cgpt28641-ops/polar-link`.
+- Wzmianki bota (user lub rola) od kerel123/shatsca → 👀 od razu + inbox/mentions.lst (Claude czyta najpierw, co 10 min).
+- Shatsca: paliwo działa; ClothingExpanded test na dll 11:11 UTC 07.11 (fix locator id) — czekamy na wynik.
