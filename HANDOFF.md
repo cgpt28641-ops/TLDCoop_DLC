@@ -1307,3 +1307,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   każdego kroku („asking Addressables…”, „is the catalog in?”, „making GEAR_…”). Jeśli dalej crash — następny krok:
   zamiast catalogu Addressables własny AssetBundle.LoadFromFile + hooki InstantiateGearItem (jak automat_items).
 - tld_types.txt w uploads jest z 2.59 — RVA z 2.60 się nie zgadzają (nie da się zmapować adresu crasha).
+
+## 07.11 ~19:40 UTC — ClothingExpanded: crash 3 (afaaa6b)
+- Log Shatsca 19:26: catalog już się wczytuje („the catalog is in; making the items”), crash przy pierwszym
+  przedmiocie (GEAR_CargoToolbelt), GameAssembly+0x3cd25a.
+- Nowy dll: `g_step` przed każdym krokiem map_item + `map_guarded` (__try/__except). Przy błędzie log
+  „clothing: GEAR_X: a FAULT at the step '…'”, ClothingExpanded wyłącza się na sesję, gra ma nie padać.
+- Poproszono Shatsca o test z `[clothing] enabled=1` i coop.log na #błędy. Następny krok: naprawić wskazany krok.
