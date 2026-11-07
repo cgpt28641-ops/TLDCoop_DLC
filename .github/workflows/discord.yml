@@ -32,7 +32,8 @@ jobs:
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_DEFAULT_CHANNEL: ${{ vars.DISCORD_DEFAULT_CHANNEL }}
-        run: python3 bridge.py . > /dev/null 2>&1 && echo "bridge: ok" || { echo "bridge: FAILED"; exit 1; }
+        run: |
+          if python3 bridge.py . > /dev/null 2>&1; then echo "bridge ok"; else echo "bridge FAILED"; exit 1; fi
       - name: Save
         working-directory: bridge
         run: |
