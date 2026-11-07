@@ -1273,6 +1273,45 @@ bool in_a_container(Il2CppObject* gi) {
     return false;
 }
 
+// TLDCoop_DLC (07.11, Shatsca: "na jednym slocie ogniska robi się woda oraz mięso, i jak Szymon kładzie puszki to
+// lądują pod ogniskiem"): the other player's item on a cooking slot (its record names a place point) was only put at
+// that spot here: not on our slot (the can fell under the fire, and our slot stayed free for another pot). It goes on
+// our slot nearest that spot (TLD's GearPlacePoint.PlaceGear), unless something of ours is on it already.
+void seat_on_slot(Il2CppObject* gi, const std::string& gear, const Vector3& pos, const char* prefab) {
+    if (!gi || !api.slot_type || !api.find_all || !api.slot_place || api.slot_gear < 0) return;
+    if (json_string(gear, "m_PlacePointGuidSerialized").empty() && json_string(gear, "m_PlacePointGuid").empty()) return;
+    bool inactive_too = false;
+    void* fa[] = {api.slot_type, &inactive_too};
+    Il2CppObject* slots = il2::invoke(api.find_all, nullptr, fa);
+    Il2CppObject* best = nullptr;
+    float best_d = 0.6f;
+    for (size_t i = 0; i < il2::array_length(slots); ++i) {
+        Il2CppObject* slot = il2::array_object_at(slots, i);
+        if (!alive(slot)) continue;
+        Vector3 at{};
+        Quaternion r{};
+        pose_of(slot, at, r);
+        const float d = distance(at, pos);
+        if (d < best_d) best_d = d, best = slot;
+    }
+    if (!best) {
+        logx::info("items: the other player's %s is on a cooking slot in their game; no slot here near (%.1f, %.1f, %.1f)",
+                   prefab, pos.x, pos.y, pos.z);
+        return;
+    }
+    Il2CppObject* on = get<Il2CppObject*>(best, api.slot_gear);
+    if (on == gi) return;
+    if (alive(on)) {
+        logx::info("items: the other player's %s is on a cooking slot in their game; ours has %s on it, left beside",
+                   prefab, name_of(on).c_str());
+        return;
+    }
+    bool reposition = true;
+    void* pa[] = {gi, &reposition};
+    il2::invoke(api.slot_place, best, pa);
+    logx::info("items: the other player's %s put on our cooking slot there (%.2f m off)", prefab, best_d);
+}
+
 void apply_put(const net::ItemPutMsg& m, double now) {
     if (net::is_unique_gear(m.prefab)) {  // (never sent; a game from before keeps theirs to themselves too)
         logx::info("items: the other player's %s (%s) is one of a kind: ours stays ours", m.prefab.c_str(),
@@ -1315,6 +1354,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         if (!placed) {
             set_pose(gi, pos, rot);
             seamless_interiors::settle_in_room(gi);  // TLDCoop_DLC: into a room closed here
+            if (moved) seat_on_slot(gi, m.gear, pos, m.prefab.c_str());
         }
         k.prefab = m.prefab;
         k.pos = k.told = pos;
@@ -1439,6 +1479,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     }
     set_pose(made, pos, rot);
     seamless_interiors::settle_in_room(made);  // TLDCoop_DLC: into a room closed here
+    seat_on_slot(made, gear, pos, m.prefab.c_str());
     const std::string got = pdid_of(made);
     if (got != m.pdid && !got.empty()) {
         g_alias_in[m.pdid] = got;
@@ -2322,6 +2363,13 @@ bool init() {
     api.object_guid = il2::field_offset(gear, "m_ObjectGuid");
     api.radial_parent = il2::field_offset(gear, "m_RadialObjectSpawnerParent");
     api.place_point = il2::field_offset_quiet(gear, "m_PlacePointGuid");
+    if (Il2CppClass* slot = il2::find_class(kGame, "", "GearPlacePoint")) {
+        api.slot_type = il2::type_object(slot);
+        if (api.slot_type) il2::il2cpp_gchandle_new(api.slot_type, false);
+        api.slot_place = il2::find_method_params(slot, "PlaceGear", {"GearItem", "System.Boolean"});
+        api.slot_gear = il2::field_offset(slot, "m_PlacedGear");
+    }
+    api.find_all = il2::find_method_params(object, "FindObjectsOfType", {"System.Type", "System.Boolean"});
     api.narrative = il2::field_offset(gear, "m_NarrativeCollectibleItem");
     api.create_save_data = il2::find_method(gear, "CreateSaveData", 0);
     api.sd_prefab = il2::field_offset(save_data, "m_PrefabName");
