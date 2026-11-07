@@ -79,6 +79,11 @@ struct Api {
     // GearItem
     Il2CppObject* gear_type = nullptr;
     ptrdiff_t in_inventory = -1, no_save = -1, object_guid = -1, radial_parent = -1, place_point = -1;
+    // TLDCoop_DLC (07.11): a friend's item placed on a fire's cooking slot sits on our slot too
+    Il2CppObject* slot_type = nullptr;            // typeof(GearPlacePoint)
+    const MethodInfo* find_all = nullptr;         // static Object.FindObjectsOfType(Type, bool)
+    const MethodInfo* slot_place = nullptr;       // GearPlacePoint.PlaceGear(GearItem, bool reposition)
+    ptrdiff_t slot_gear = -1;                     // GearPlacePoint.m_PlacedGear
     ptrdiff_t narrative = -1;                      // m_NarrativeCollectibleItem: a note, key, postcard... (one of a kind)
     const MethodInfo* create_save_data = nullptr;  // GearItem.CreateSaveData(): TLD's save record for it
     ptrdiff_t sd_prefab = -1, sd_gear = -1;        // GearSaveData.m_PrefabName / m_SearializedGear
