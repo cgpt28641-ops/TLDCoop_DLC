@@ -56,6 +56,7 @@ add_library(tldcoop SHARED
   src/custom_pictures.cpp
   src/night_sky.cpp  # TLDCoop_DLC: Better Night Sky (built in)
   src/fuel_transfer.cpp  # TLDCoop_DLC: drain a kerosene lamp into a canister
+  src/coop_summon.cpp  # TLDCoop_DLC: F1 teleportplayer (host calls a friend)
   src/custom_text.cpp  # TLDCoop_DLC: our entries in TLD's string table
   src/clothing_expanded.cpp  # TLDCoop_DLC: ClothingExpanded (TonisGaming)
   ${CMAKE_BINARY_DIR}/clothing_expanded.rc  # (its bundles and catalog)

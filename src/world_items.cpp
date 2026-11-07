@@ -132,6 +132,7 @@ struct Api {
     ptrdiff_t lamp = -1;                           // GearItem.m_KeroseneLampItem
     const MethodInfo* lamp_load = nullptr;         // KeroseneLampItem.Deserialize(string)
     const MethodInfo* lamp_pct = nullptr;          // KeroseneLampItem.GetPercentFuelRemaining()
+    ptrdiff_t lamp_fuel = -1;                      // KeroseneLampItem.m_CurrentFuelLiters (ItemLiquidVolume: int64, 1e-9 l)
     const MethodInfo* lamp_on = nullptr;           // KeroseneLampItem.IsOn()
     const MethodInfo* gear_condition = nullptr;    // GearItem.GetRoundedCondition()
     const MethodInfo* snare_placed = nullptr;      // SnareItem.OnSnarePlaced(): set, rolling from now
@@ -718,14 +719,43 @@ std::string light_state(Il2CppObject* gi) {
 
 // TLDCoop_DLC: the other player's record of a lamp we have lying: its fuel and whether it's lit, as loading a save does
 // ("a full lamp's fuel was all gone": ours kept what it had when it was first made here).
+// TLDCoop_DLC (Shatsca 07.11: a lamp under half full came back full after GIVE): TLD's Deserialize of the lamp's
+// record gave the wrong fuel in 2.60 (49% in the host's game came out 100% in the friend's, 99% came out 0%). The
+// fuel the record names ("m_CurrentFuelLitersProxy") goes straight into the lamp's field after it.
+bool record_fuel(const std::string& lamp_text, int64_t& units) {
+    const size_t at = lamp_text.find("m_CurrentFuelLitersProxy");
+    if (at == std::string::npos) return false;
+    size_t p = at + 24;
+    const size_t stop = std::min(lamp_text.size(), p + 80);
+    while (p < stop && !(std::isdigit(static_cast<unsigned char>(lamp_text[p])) || lamp_text[p] == '-')) ++p;
+    if (p >= stop) return false;
+    char* end = nullptr;
+    const std::string num = lamp_text.substr(p, 40);
+    const double v = std::strtod(num.c_str(), &end);
+    if (end == num.c_str() || !std::isfinite(v) || v < 0) return false;
+    const bool liters = num.find('.') < static_cast<size_t>(end - num.c_str()) || v < 1000;
+    units = static_cast<int64_t>(liters ? v * 1e9 : v);
+    return true;
+}
+
+void set_lamp_fuel(Il2CppObject* lamp, const std::string& text) {
+    static int shown = 0;
+    if (shown++ < 3) logx::info("items: a lamp's record: %.300s", text.c_str());
+    int64_t units = 0;
+    if (api.lamp_fuel >= 0 && record_fuel(text, units)) put<int64_t>(lamp, api.lamp_fuel, units);
+}
+
+// TLDCoop_DLC: the other player's record of a lamp we have lying: its fuel and whether it's lit, as loading a save does
+// ("a full lamp's fuel was all gone": ours kept what it had when it was first made here).
 void load_lamp(Il2CppObject* gi, const std::string& gear) {
-    Il2CppObject* lamp = api.lamp >= 0 ? get<Il2CppObject*>(gi, api.lamp) : nullptr;
+    Il2CppObject* lamp = api.lamp >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.lamp) : nullptr;
     const std::string text = json_string(gear, "m_KeroseneLampItemSerialized");
     if (!alive(lamp) || !api.lamp_load || text.empty()) return;
     float before = -1, after = -1;
     if (api.lamp_pct) il2::invoke_value(api.lamp_pct, lamp, before);
     void* args[] = {il2::il2cpp_string_new(text.c_str())};
     il2::invoke(api.lamp_load, lamp, args);
+    set_lamp_fuel(lamp, text);
     if (api.lamp_pct) il2::invoke_value(api.lamp_pct, lamp, after);
     if (std::fabs(after - before) >= 1)
         logx::info("items: the other player's lamp has %.0f%% fuel (ours said %.0f%%)", after, before);
@@ -1485,6 +1515,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     set_pose(made, pos, rot);
     seamless_interiors::settle_in_room(made);  // TLDCoop_DLC: into a room closed here
     seat_on_slot(made, gear, pos, m.prefab.c_str());
+    load_lamp(made, gear);  // TLDCoop_DLC: its fuel as the record says (TLD's own load got it wrong)
     const std::string got = pdid_of(made);
     if (got != m.pdid && !got.empty()) {
         g_alias_in[m.pdid] = got;
@@ -2190,7 +2221,9 @@ Il2CppObject* gear_from_record(const std::string& prefab, const std::string& rec
     void* args[] = {sane ? sane : name_args[0], il2::il2cpp_string_new(record.c_str()), nullptr, &positioning_fix,
                     &in_container};
     Il2CppObject* made = il2::invoke(api.instantiate, nullptr, args);
-    return alive(made) ? made : nullptr;
+    if (!alive(made)) return nullptr;
+    load_lamp(made, record);  // TLDCoop_DLC: a lamp given keeps its fuel (Shatsca 07.11: under half, came back full)
+    return made;
 }
 
 std::vector<Il2CppObject*> pack() { return g_ready ? pack_items() : std::vector<Il2CppObject*>{}; }
@@ -2439,6 +2472,7 @@ bool init() {
         }
         api.lamp_load = il2::find_method_params(lamp, "Deserialize", {"System.String"});
         api.lamp_pct = il2::find_method_quiet(lamp, "GetPercentFuelRemaining", 0);
+        api.lamp_fuel = il2::field_offset_quiet(lamp, "m_CurrentFuelLiters");
         api.lamp_on = il2::find_method_quiet(lamp, "IsOn", 0);
     }
     api.gear_condition = il2::find_method_quiet(gear, "GetRoundedCondition", 0);

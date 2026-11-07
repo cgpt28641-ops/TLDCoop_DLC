@@ -226,7 +226,8 @@ enum class Msg : uint8_t {
     Rooms = 47, RoomPlace = 48, WildFrame = 49, WildCtl = 50, WildSounds = 51, WildHit = 52, FlareShot = 53,
     LogsWant = 54, LogsFile = 55,
     HouseLights = 56,  // TLDCoop_DLC (v49): House Lights' switch in a scene: u8 on, scene[64] (either way; the host passes it on)
-    Automat = 57       // TLDCoop_DLC: the slot machine (test builds): u8 op, scene blob, then the op's fields (src/slot_machine.cpp)
+    Automat = 57,      // TLDCoop_DLC: the slot machine (test builds): u8 op, scene blob, then the op's fields (src/slot_machine.cpp)
+    Summon = 58        // TLDCoop_DLC: host -> a friend: come to me (F1 teleportplayer): scene[64], x, y, z, yaw (src/coop_summon.cpp)
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 

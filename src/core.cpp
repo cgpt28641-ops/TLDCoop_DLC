@@ -17,6 +17,7 @@
 #include "house_lights.h"
 #include "food_tweaker.h"
 #include "night_sky.h"
+#include "coop_summon.h"
 #include "fuel_transfer.h"
 #include "clothing_expanded.h"
 #include "slot_machine.h"
@@ -618,6 +619,7 @@ void on_frame() {
     TIMED("coop_features::on_frame", coop_features::on_frame());
     TIMED("ambient_lights::on_frame", ambient_lights::on_frame(scene, in_game));
     TIMED("house_lights::on_frame", house_lights::on_frame(scene, in_game));  // TLDCoop_DLC
+    TIMED("coop_summon::on_frame", coop_summon::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("night_sky::on_frame", night_sky::on_frame());  // TLDCoop_DLC
     TIMED("clothing_expanded::on_frame", clothing_expanded::on_frame(scene, in_game));  // TLDCoop_DLC
     TIMED("slot_machine::on_frame", slot_machine::on_frame(scene, in_game));  // TLDCoop_DLC: the automat (test)
@@ -841,6 +843,7 @@ void on_runtime_ready() {
     house_lights::init();  // TLDCoop_DLC
     food_tweaker::init();  // TLDCoop_DLC: realistic calories and cooking times (MODS: FOOD TWEAKER)
     night_sky::init();     // TLDCoop_DLC: Better Night Sky (coop.ini [sky])
+    coop_summon::init();   // TLDCoop_DLC: F1 teleportplayer (host)
     fuel_transfer::init(); // TLDCoop_DLC: DRAIN FUEL on a kerosene lamp (coop.ini [fuel])
     if (config::load().clothing) clothing_expanded::init();  // TLDCoop_DLC: ClothingExpanded (coop.ini [clothing])
     else logx::info("clothing: off (coop.ini [clothing] enabled=0)");
