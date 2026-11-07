@@ -27,6 +27,15 @@ jobs:
           repository: cgpt28641-ops/tldcoop-discord
           token: ${{ secrets.DISCORD_REPO_TOKEN }}
           path: bridge
+      # Without write access to the private repo the bridge's posts would be sent again on every run (the outbox
+      # couldn't be emptied): it doesn't run then.
+      - name: Can save
+        env:
+          GH_TOKEN: ${{ secrets.DISCORD_REPO_TOKEN }}
+        run: |
+          if [ "$(gh api repos/cgpt28641-ops/tldcoop-discord --jq .permissions.push 2>/dev/null)" != "true" ]; then
+            echo "DISCORD_REPO_TOKEN can't write to tldcoop-discord (Contents: Read and write needed)"; exit 1
+          fi
       - name: Read and post
         working-directory: bridge
         env:
