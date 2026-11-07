@@ -1297,3 +1297,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   W tldcoop-discord workflow tylko ręczny (bez cron). Uruchamianie: `gh workflow run discord.yml -R cgpt28641-ops/polar-link`.
 - Wzmianki bota (user lub rola) od kerel123/shatsca → 👀 od razu + inbox/mentions.lst (Claude czyta najpierw, co 10 min).
 - Shatsca: paliwo działa; ClothingExpanded test na dll 11:11 UTC 07.11 (fix locator id) — czekamy na wynik.
+
+### 2026-11-07 ~20:15 local — ClothingExpanded dalej crashuje u Shatscy (dll 12:02 UTC z fixem locator id)
+- Log: „loading the pack's catalog” → 0,35 s → [FAULT] GameAssembly+0x3cd25a (adres 0), gra 2.60 189457. Locator id
+  nie był przyczyną (albo nie jedyną). Wspólne w obu wersjach: pierwsze zajrzenie do operacji ładowania w następnej
+  klatce (najpierw get_IsDone przez il2cpp_class_get_method_from_name, potem m_Status przez get_field_from_name na
+  generycznej klasie) — podejrzane o crash w runtime.
+- Teraz (commit po 0ae0a10): bez zaglądania do operacji; po 8 s co 4 s próba GetPrefabFromName(pierwszy klucz), log
+  każdego kroku („asking Addressables…”, „is the catalog in?”, „making GEAR_…”). Jeśli dalej crash — następny krok:
+  zamiast catalogu Addressables własny AssetBundle.LoadFromFile + hooki InstantiateGearItem (jak automat_items).
+- tld_types.txt w uploads jest z 2.59 — RVA z 2.60 się nie zgadzają (nie da się zmapować adresu crasha).
