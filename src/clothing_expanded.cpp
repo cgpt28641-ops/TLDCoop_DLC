@@ -670,13 +670,31 @@ std::string prefab_name(Il2CppObject* gear) {
     return n;
 }
 
+// The accessory exists in this game (the tool belt and the rifle scabbard come with a DLC; Shatsca 06.11: "nie mam
+// dlc, te przedmioty możesz zapauzować"): no ATTACH for it otherwise. Asked once per accessory.
+bool accessory_here(const char* key) {
+    static std::vector<std::pair<std::string, bool>> known;
+    const std::string k = lower(key);
+    for (const auto& [name, here] : known)
+        if (name == k) return here;
+    const bool here = prefab(key) != nullptr;
+    known.emplace_back(k, here);
+    logx::info("clothing: %s %s", key, here ? "is in this game" : "isn't in this game (a DLC's?): no ATTACH for it");
+    return here;
+}
+
 // What our button does for this item: its made item (attach: one with this base; detach: this one), or none.
 Act act_for(const std::string& name, const Item*& out) {
     const std::string n = lower(name);
     for (const Item& it : kItems)
         if (lower(it.key) == n) return out = &it, Act::Detach;
     for (const Item& it : kItems)  // attach: the first made item of this base (crampons: the real ones' first)
-        if (lower(it.base) == n && lower(it.extra) != "gear_improvisedcrampons") return out = &it, Act::Attach;
+        if (lower(it.base) == n && lower(it.extra) != "gear_improvisedcrampons") {
+            // crampons: either kind will do
+            const bool crampons = lower(it.extra) == "gear_crampons";
+            if (!accessory_here(it.extra) && !(crampons && accessory_here("GEAR_ImprovisedCrampons"))) break;
+            return out = &it, Act::Attach;
+        }
     out = nullptr;
     return Act::None;
 }
