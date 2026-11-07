@@ -1314,3 +1314,19 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Nowy dll: `g_step` przed każdym krokiem map_item + `map_guarded` (__try/__except). Przy błędzie log
   „clothing: GEAR_X: a FAULT at the step '…'”, ClothingExpanded wyłącza się na sesję, gra ma nie padać.
 - Poproszono Shatsca o test z `[clothing] enabled=1` i coop.log na #błędy. Następny krok: naprawić wskazany krok.
+
+## 07.11 ~23:05 UTC — logi F11 Shatsca/Szymon: ubrania krok 'data', ślady, sloty ogniska, schronienie
+- ClothingExpanded (log Shatsca 22:40): „a FAULT at the step 'data'” (GameAssembly+0x3cd25a, adres 0); osłona zadziałała,
+  gra żyła dalej. set_data rozbite na kroki, każdy osobno w __try: „data: prefab reference” (konieczny — błąd wyłącza
+  paczkę), tag, weight, numbers, name, icon (+„icon object”), cover pictures (opcjonalne: log „goes on without it”).
+  Następny log powie, który dokładnie.
+- Ślady drugiego gracza (zgłoszenie „znowu się nie wyświetlają”): avatar_tracks wyłączone od 03.11 przez podejrzenie
+  czarnej ziemi, a ta okazała się od widoków przez drzwi. Włączone z powrotem, `[tracks] enabled=1` (0 wyłącza).
+- Ognisko (zgłoszenie: woda i mięso na jednym slocie; puszki Szymona lądują pod ogniskiem): rzecz drugiego gracza
+  ze slotu (rekord ma m_PlacePointGuidSerialized) była tylko stawiana w tym miejscu, nie na slot. Teraz `seat_on_slot`:
+  najbliższy GearPlacePoint ≤0,6 m, PlaceGear(gi, true), chyba że na naszym slocie już coś leży (log).
+- Śnieżne schronienie (Szymon widzi, Shatsca nie): SnowShelterManager w ogóle nie jest synchronizowany. Na razie tylko
+  log `objects: snow shelters here …` (SerializeAll) przy wejściu drugiego gracza / liście hosta. Spytano, czy Szymon je
+  zbudował. Do zrobienia: synchronizacja schronień (SerializeAll/DeserializeAll, budowa/rozbiórka).
+- Lampa (22:15: <½ paliwa, położona, Szymon podniósł i dał przez GIVE) — opis ucięty, spytano co było nie tak.
+- Uwaga: „day N” w telemetrii różni się między graczami (własny licznik dni), zegar zgodny — to nie błąd.
