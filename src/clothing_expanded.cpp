@@ -317,6 +317,7 @@ bool write_pack() {
 
 bool start_catalog() {
     const std::string path = (g_dir / L"catalog_clothingexpanded.json").string();
+    logx::info("clothing: asking Addressables to load the pack's catalog");
     bool auto_release = false;
     void* a[] = {str(path.c_str()), &auto_release, nullptr};
     Il2CppObject* boxed = il2::invoke(api.load_catalog, nullptr, a);
@@ -326,27 +327,8 @@ bool start_catalog() {
         return false;
     }
     g_catalog_op = il2::il2cpp_gchandle_new(op, false);
-    logx::info("clothing: loading the pack's catalog (%s)", path.c_str());
+    logx::info("clothing: the pack's catalog is loading (%s)", path.c_str());
     return true;
-}
-
-// AsyncOperationBase<T>.m_Status, read (no call into the generic class's methods): 0 None (still loading),
-// 1 Succeeded, 2 Failed.
-FieldInfo* field_up(Il2CppObject* o, const char* name) {
-    for (Il2CppClass* k = o ? il2::il2cpp_object_get_class(o) : nullptr; k; k = il2::il2cpp_class_get_parent(k))
-        if (FieldInfo* f = il2::il2cpp_class_get_field_from_name(k, name)) return f;
-    return nullptr;
-}
-
-// 0: still loading, 1: in, -1: failed
-int catalog_status() {
-    Il2CppObject* op = target(g_catalog_op);
-    if (!op) return -1;
-    static FieldInfo* status = nullptr;
-    if (!status) status = field_up(op, "m_Status");
-    if (!status) return -1;
-    const int32_t st = get<int32_t>(op, static_cast<ptrdiff_t>(il2::il2cpp_field_get_offset(status)));
-    return st == 0 ? 0 : st == 1 ? 1 : -1;
 }
 
 // --- making an item ---------------------------------------------------------------------------------------------------
@@ -608,7 +590,11 @@ bool map_item(const Item& it) {
 
 void map_all(const char* why) {
     int ok = 0, bad = 0;
-    for (const Item& it : kItems) (map_item(it) ? ok : bad)++;
+    static int told = 0;
+    for (const Item& it : kItems) {
+        if (told < 40) ++told, logx::info("clothing: making %s", it.key);  // (where it stops, if it does)
+        (map_item(it) ? ok : bad)++;
+    }
     g_mapped = ok;
     g_failed = bad;
     logx::info("clothing: %d of %zu items ready%s (%s)", ok, std::size(kItems), bad ? ", some FAILED" : "", why);
@@ -1158,14 +1144,20 @@ void on_frame(const std::string& scene, bool in_game) {
             g_load_started = now;
             return;
         case State::Loading: {
-            const int st = catalog_status();
-            if (st == 0 && now - g_load_started < kCatalogTimeoutMs) return;
-            if (st != 1) {
-                logx::warn("clothing: the pack's catalog didn't load (%s); no ClothingExpanded items",
-                           st == 0 ? "timed out" : "failed");
+            // The load's state isn't asked (06.11-07.11: TLD crashed 0.3 s after the load started, at our first look
+            // at the operation, twice, with or without the locator id fixed): after a few seconds the catalog is in
+            // when its first prefab can be found.
+            static double last_probe = 0;
+            if (now - g_load_started < 8000 || now - last_probe < 4000) return;
+            last_probe = now;
+            if (now - g_load_started > kCatalogTimeoutMs) {
+                logx::warn("clothing: the pack's catalog didn't come in (timed out); no ClothingExpanded items");
                 g_state = State::Failed;
                 return;
             }
+            logx::info("clothing: is the catalog in? (looking for %s)", kItems[0].key);
+            if (!prefab(kItems[0].key)) return;
+            logx::info("clothing: the catalog is in; making the items");
             map_all("catalog in");
             g_state = State::Ready;
             g_scene = scene;
