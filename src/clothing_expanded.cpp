@@ -114,6 +114,7 @@ std::string g_scene;
 std::filesystem::path g_dir;
 int g_mapped = 0, g_failed = 0;
 const char* g_step = "";  // map_item's step now (a fault's log line names it)
+bool g_fault_inside = false;  // a fault caught inside map_item that stops the pack (set_data)
 std::vector<uintptr_t> g_keep;  // made objects held for good (GearItemData copies, icon data, the prefabs)
 using VoidFn = void (*)(Il2CppObject*, const MethodInfo*);
 using UpdateButtonsFn = void (*)(Il2CppObject*, Il2CppObject*, bool, const MethodInfo*);
@@ -363,32 +364,72 @@ Il2CppObject* icon_texture(const Item& it) {
     return nullptr;
 }
 
-void set_data(Il2CppObject* data, const Item& it) {
+// GearItemData, in steps: each one guarded on its own (07.11: Shatsca's log, "a FAULT at the step 'data'" at
+// GameAssembly+0x3cd25a, address 0). The prefab reference is a must; without the others the item still works.
+void data_reference(Il2CppObject* data, const Item& it) {
     put_ref(data, api.d_ref, new_object(api.gear_ref_class, api.gear_ref_ctor, it.key));
+}
+void data_tag(Il2CppObject* data, const Item&) {
     if (api.d_tag >= 0) memset(reinterpret_cast<char*>(data) + api.d_tag, 0, 16);  // no TLD tag (ModComponent: none)
+}
+void data_weight(Il2CppObject* data, const Item& it) {
     int64_t kg = 0;
     float w = it.weight;
     void* a[] = {&w};
     if (api.from_kg && il2::invoke_value(api.from_kg, nullptr, kg, a)) put<int64_t>(data, api.d_weight, kg);
+}
+void data_numbers(Il2CppObject* data, const Item& it) {
     put<float>(data, api.d_max_hp, it.max_hp);
     put<float>(data, api.d_decay, it.days_decay > 0 ? it.max_hp / it.days_decay : 0.0f);
+}
+void data_name(Il2CppObject* data, const Item& it) {
     put_ref(data, api.d_name, localized(it.name_id));
     put_ref(data, api.d_desc, localized(it.desc_id));
-    const std::string icon = "ico_GearItem__" + short_name(it.key);
-    if (Il2CppObject* tex = icon_texture(it)) {
-        void* ta[] = {api.t_icon_data};
-        Il2CppObject* icon_data = keep(il2::invoke(api.so_create, nullptr, ta));
-        if (icon_data) {
-            put_ref(icon_data, api.icon_tex, tex);
-            int flags = kDontUnloadUnusedAsset;
-            void* fa[] = {&flags};
-            il2::invoke(api.hide_flags, icon_data, fa);
-            put_ref(data, api.d_icon, icon_data);
-        }
-    } else {
+}
+void data_icon(Il2CppObject* data, const Item& it) {
+    Il2CppObject* tex = icon_texture(it);
+    if (!tex) {
         logx::warn("clothing: no icon for %s in the pack", it.key);
+        return;
     }
+    g_step = "data: icon object";
+    void* ta[] = {api.t_icon_data};
+    Il2CppObject* icon_data = keep(il2::invoke(api.so_create, nullptr, ta));
+    if (!icon_data) return;
+    put_ref(icon_data, api.icon_tex, tex);
+    int flags = kDontUnloadUnusedAsset;
+    void* fa[] = {&flags};
+    il2::invoke(api.hide_flags, icon_data, fa);
+    put_ref(data, api.d_icon, icon_data);
+}
+void data_cover(Il2CppObject* data, const Item& it) {
+    const std::string icon = "ico_GearItem__" + short_name(it.key);
     for (ptrdiff_t off : api.d_cover) put_ref(data, off, new_object(api.tex_ref_class, api.tex_ref_ctor, icon.c_str()));
+}
+
+using DataStep = void (*)(Il2CppObject*, const Item&);
+bool data_step(const char* step, DataStep fn, Il2CppObject* data, const Item& it) {
+    g_step = step;
+    __try {
+        fn(data, it);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool set_data(Il2CppObject* data, const Item& it) {
+    if (!data_step("data: prefab reference", data_reference, data, it)) return false;
+    const struct {
+        const char* step;
+        DataStep fn;
+    } rest[] = {{"data: tag", data_tag},     {"data: weight", data_weight}, {"data: numbers", data_numbers},
+                {"data: name", data_name},   {"data: icon", data_icon},     {"data: cover pictures", data_cover}};
+    for (const auto& s : rest) {
+        if (!data_step(s.step, s.fn, data, it))
+            logx::warn("clothing: %s: a FAULT at the step '%s'; the item goes on without it", it.key, g_step);
+    }
+    return true;
 }
 
 void set_clothing(Il2CppObject* c, const Item& it) {
@@ -563,8 +604,10 @@ bool map_item(const Item& it) {
     il2::invoke(api.hide_flags, data, fa);
     il2::invoke(api.hide_flags, go, fa);
     keep(go);
-    g_step = "data";
-    set_data(data, it);
+    if (!set_data(data, it)) {
+        g_fault_inside = true;  // the prefab reference: the item can't be made (map_all: the pack off)
+        return false;
+    }
     // the components
     g_step = "ClothingItem";
     Il2CppObject* clothing = add_component(go, api.t_clothing);
@@ -621,7 +664,9 @@ void map_all(const char* why) {
     for (const Item& it : kItems) {
         if (told < 40) ++told, logx::info("clothing: making %s", it.key);  // (where it stops, if it does)
         bool faulted = false;
+        g_fault_inside = false;
         (map_guarded(it, &faulted) ? ok : bad)++;
+        faulted = faulted || g_fault_inside;
         if (faulted) {
             logx::error("clothing: %s: a FAULT at the step '%s'; ClothingExpanded is off for this run", it.key, g_step);
             g_state = State::Failed;
