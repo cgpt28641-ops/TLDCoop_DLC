@@ -1330,3 +1330,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   zbudował. Do zrobienia: synchronizacja schronień (SerializeAll/DeserializeAll, budowa/rozbiórka).
 - Lampa (22:15: <½ paliwa, położona, Szymon podniósł i dał przez GIVE) — opis ucięty, spytano co było nie tak.
 - Uwaga: „day N” w telemetrii różni się między graczami (własny licznik dni), zegar zgodny — to nie błąd.
+
+## 08.11 ~00:20 PL — teleportplayer (F1), paliwo lampy, ślady domyślnie
+- Shatsca: lampa „była pełna, a miała poniżej połowy”. Logi: host 49% → u klienta po wczytaniu rekordu 100%; klient 99% →
+  u hosta 0%. Deserialize lampy w 2.60 daje złe paliwo. Teraz `set_lamp_fuel`: po Deserialize wartość
+  „m_CurrentFuelLitersProxy” z rekordu wprost do m_CurrentFuelLiters (int64, 1e-9 l; liczba z kropką lub <1000 = litry).
+  load_lamp także przy tworzeniu przedmiotu drugiego gracza i w gear_from_record (GIVE). Pierwsze 3 rekordy lampy w logu
+  („a lamp's record: …”) — sprawdzić format.
+- Nowy moduł `coop_summon` + Msg::Summon (58): hook uConsole.RunCommand; `teleportplayer NAZWA|all` (też `tpplayer`)
+  w konsoli F1 hosta → gracz teleportowany na pozycję hosta (TeleportPlayer), tylko w tym samym regionie.
+- Ślady: domyślnie włączone bez wpisu w coop.ini (Shatsca nie chce edytować pliku).
