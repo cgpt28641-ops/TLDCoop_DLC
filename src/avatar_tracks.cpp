@@ -6,6 +6,8 @@
 
 #include "avatar_tracks.h"
 
+#include <windows.h>
+
 #include <cmath>
 #include <map>
 #include <string>
@@ -13,6 +15,7 @@
 #include "avatar.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "paths.h"
 
 namespace avatar_tracks {
 namespace {
@@ -25,7 +28,6 @@ constexpr int kHumanFootprint = 0;     // SnowImprintType
 constexpr float kStride = 0.75f;       // m between prints (one foot each)
 constexpr float kSide = 0.12f;         // m from the middle to a foot
 constexpr ptrdiff_t kCachedPtr = 0x10;
-constexpr bool kEnabled = false;
 
 struct V3 {
     float x, y, z;
@@ -132,11 +134,12 @@ void step(Track& t, Il2CppObject* trail, const V3& at, float yaw) {
 }  // namespace
 
 bool init() {
-    // TLDCoop_DLC: off for now. With these trails in the game the snow round the player rendered black at dusk while
-    // the trees stayed lit (Karol's screenshots 22:54, the first evening with them); not shown to be the cause, but the
-    // only change to TLD's snow imprints that evening.
-    if (!kEnabled) {
-        logx::info("tracks: off (the others leave no footprints)");
+    // TLDCoop_DLC: off from 03.11 (the snow black at dusk, Karol's screenshots 22:54); that turned out to be the door
+    // views lit by the room's light (HANDOFF 03.11), not these trails: back on 07.11 (Shatsca: "ślady śniegu znowu się
+    // nie wyświetlają"). coop.ini [tracks] enabled=0 turns them off.
+    const auto ini = paths::instance_dir() / L"coop.ini";
+    if (!GetPrivateProfileIntW(L"tracks", L"enabled", 1, ini.c_str())) {
+        logx::info("tracks: off (coop.ini [tracks] enabled=0; the others leave no footprints)");
         return false;
     }
     Il2CppClass* trail = il2::find_class(kGame, "", "FootstepTrail");

@@ -571,6 +571,8 @@ void changed_here(const Object& x, const std::string& id, const std::string& nam
 // placements of the whole region. Loading those again in the friend's game each time one of its rooms was built
 // (every few seconds while walking past houses) switched off the animals it had just been handed (Szymon: wolves gone
 // within 3 s of the handover, the host spawning more: "horda wilków").
+void log_shelters(const char* when);
+
 void send_list(uint8_t to, bool light = false) {
     net::ObjectListMsg m;
     m.scene = g_scene;
@@ -605,6 +607,7 @@ void send_list(uint8_t to, bool light = false) {
                m.objects.size(), count_of(m.spawns, "\"m_ObjectName\""), m.spawns.size(),
                count_of(m.placements, "\"m_Guid\""), m.placements.size(), to);
     if (light) logx::info("objects: (a room came up: the region's spawns and placements not sent again)");
+    log_shelters("(the other player came)");
 }
 
 // --- placements a player moves -------------------------------------------------------------------------------------
@@ -892,6 +895,21 @@ void apply_stored() {
                missing ? " (some aren't here)" : "");
 }
 
+// TLDCoop_DLC (07.11, Shatsca: "śnieżne schronienie ... Szymonowi się wyświetla a mi nie"): the snow shelters in
+// this game (SnowShelterManager.SerializeAll), logged when the other player comes and when the host's list comes, to
+// see whose they are. Not shared yet.
+void log_shelters(const char* when) {
+    static const MethodInfo* save = nullptr;
+    static bool looked = false;
+    if (!looked) {
+        looked = true;
+        save = il2::find_method(il2::find_class(kGame, "", "SnowShelterManager"), "SerializeAll", 0);
+    }
+    Il2CppObject* text = save ? il2::invoke(save, nullptr) : nullptr;
+    const std::string t = text ? il2::to_utf8(reinterpret_cast<Il2CppString*>(text)) : std::string();
+    logx::info("objects: snow shelters here %s: %zu chars: %.600s", when, t.size(), t.c_str());
+}
+
 // Client: the host's list for our scene. What the host has broken down or harvested goes here too; what we have broken
 // down or harvested and the host doesn't comes back (unless we did it just now: the host may not have heard yet).
 // TLD's random spawns (which backpack, car, crate... of each set is there) as the host's game picked them, the way
@@ -1086,6 +1104,7 @@ void apply_list(const net::ObjectListMsg& m) {
                "back, %d ours kept, %zu not here (%d random spawn picks left to the spawns); %zu body(ies), %zu made here",
                m.objects.size() - locks - bodies, g_scene.c_str(), locks, applied, restored, kept,
                m.objects.size() - bodies - matched, picks, bodies, made);
+    log_shelters("(the host's list came)");
 }
 
 // What a player broke down without a TLD id, put back by its spawner: broken down again. TLDCoop_DLC: the objects
