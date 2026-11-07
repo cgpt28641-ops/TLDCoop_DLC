@@ -30,10 +30,9 @@ jobs:
       # Without write access to the private repo the bridge's posts would be sent again on every run (the outbox
       # couldn't be emptied): it doesn't run then.
       - name: Can save
-        env:
-          GH_TOKEN: ${{ secrets.DISCORD_REPO_TOKEN }}
+        working-directory: bridge
         run: |
-          if [ "$(gh api repos/cgpt28641-ops/tldcoop-discord --jq .permissions.push 2>/dev/null)" != "true" ]; then
+          if ! git push --dry-run -q origin HEAD:main 2>/dev/null; then
             echo "DISCORD_REPO_TOKEN can't write to tldcoop-discord (Contents: Read and write needed)"; exit 1
           fi
       - name: Read and post
