@@ -1,0 +1,50 @@
+# TLDCoop_DLC: the Discord bridge's runner. The bridge (bridge.py) and the server's messages live in the PRIVATE repo
+# cgpt28641-ops/tldcoop-discord; it runs here because this repo is public (Actions minutes; 07.11 the private pool ran
+# out). It checks that repo out with the secret DISCORD_REPO_TOKEN (a fine-grained token: Contents read/write on
+# tldcoop-discord only), runs the bridge with DISCORD_BOT_TOKEN, and pushes inbox/outbox back there. Nothing of the
+# messages is printed in this public log (the bridge prints counts only).
+name: discord
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: cgpt28641-ops/tldcoop-discord
+          token: ${{ secrets.DISCORD_REPO_TOKEN }}
+          path: bridge
+      - name: Read and post
+        working-directory: bridge
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_DEFAULT_CHANNEL: ${{ vars.DISCORD_DEFAULT_CHANNEL }}
+        run: python3 bridge.py . > /dev/null 2>&1 && echo "bridge: ok" || { echo "bridge: FAILED"; exit 1; }
+      - name: Save
+        working-directory: bridge
+        run: |
+          git config user.name "TLDCoop bridge"
+          git config user.email "bridge@users.noreply.github.com"
+          mkdir -p inbox outbox
+          git add -A inbox outbox
+          if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
+          git commit -q -m "discord: $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3; do
+            git pull -q --rebase origin main || true
+            if git push -q origin HEAD:main; then exit 0; fi
+            sleep 5
+          done
+          exit 1
