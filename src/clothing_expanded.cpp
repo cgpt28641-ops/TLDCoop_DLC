@@ -113,6 +113,7 @@ uintptr_t g_catalog_op = 0;  // gchandle: the catalog's AsyncOperationBase
 std::string g_scene;
 std::filesystem::path g_dir;
 int g_mapped = 0, g_failed = 0;
+const char* g_step = "";  // map_item's step now (a fault's log line names it)
 std::vector<uintptr_t> g_keep;  // made objects held for good (GearItemData copies, icon data, the prefabs)
 using VoidFn = void (*)(Il2CppObject*, const MethodInfo*);
 using UpdateButtonsFn = void (*)(Il2CppObject*, Il2CppObject*, bool, const MethodInfo*);
@@ -536,12 +537,14 @@ void fix_shaders(Il2CppObject* go) {
 }
 
 bool map_item(const Item& it) {
+    g_step = "prefab";
     Il2CppObject* go = prefab(it.key);
     if (!go) {
         logx::warn("clothing: %s isn't in the pack's catalog", it.key);
         return false;
     }
     if (component(go, api.t_gear)) return true;  // made already
+    g_step = "base item";
     Il2CppObject* base = prefab_component(it.base, api.t_gear);
     Il2CppObject* base_data = base ? get<Il2CppObject*>(base, api.gear_data) : nullptr;
     if (!base_data) {
@@ -550,6 +553,7 @@ bool map_item(const Item& it) {
     }
     // GearItemData: the base item's, ours
     void* ia[] = {base_data};
+    g_step = "copy of the data";
     Il2CppObject* data = keep(il2::invoke(api.instantiate, nullptr, ia));
     if (!data) return false;
     void* na[] = {str(it.key)};
@@ -559,16 +563,22 @@ bool map_item(const Item& it) {
     il2::invoke(api.hide_flags, data, fa);
     il2::invoke(api.hide_flags, go, fa);
     keep(go);
+    g_step = "data";
     set_data(data, it);
     // the components
+    g_step = "ClothingItem";
     Il2CppObject* clothing = add_component(go, api.t_clothing);
     if (Il2CppObject* base_clothing = prefab_component(it.base, api.t_clothing)) {
+        g_step = "ClothingItem copy";
         copy_fields(clothing, base_clothing, api.clothing_class, nullptr);
     }
+    g_step = "ClothingItem numbers";
     if (clothing) set_clothing(clothing, it);
+    g_step = "hover icons";
     if (Il2CppObject* base_hover = prefab_component(it.base, api.t_hover)) {
         copy_fields(add_component(go, api.t_hover), base_hover, api.hover_class, nullptr);
     }
+    g_step = "GearItem";
     Il2CppObject* gear = add_component(go, api.t_gear);
     if (!gear || !clothing) {
         logx::warn("clothing: %s: Unity didn't add the gear components", it.key);
@@ -576,16 +586,33 @@ bool map_item(const Item& it) {
     }
     put_ref(gear, api.gear_data, data);
     put<int32_t>(gear, api.gear_start, static_cast<int32_t>(enum_of(api.start_enum, it.start, 1)));
+    g_step = "Repairable";
     set_repair(go, gear, it);
+    g_step = "Harvest";
     set_harvest(go, it);
+    g_step = "Inspect";
     set_inspect(go, it);
+    g_step = "buffs";
     set_buffs(go, gear, it);
     int32_t layer = static_cast<int32_t>(api.layer_gear);
     void* la[] = {&layer};
     il2::invoke(api.go_layer, go, la);
+    g_step = "shaders";
     fix_shaders(go);
+    g_step = "GearItem.Awake";
     il2::invoke(api.gear_awake, gear);  // as ModComponent: the prefab's component caches (m_ClothingItem...)
     return true;
+}
+
+// A fault in TLD's code while an item is made (07.11: an access violation, the game gone) caught: that item's step in
+// the log, ClothingExpanded off for this run, the game goes on.
+bool map_guarded(const Item& it, bool* faulted) {
+    __try {
+        return map_item(it);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *faulted = true;
+        return false;
+    }
 }
 
 void map_all(const char* why) {
@@ -593,7 +620,14 @@ void map_all(const char* why) {
     static int told = 0;
     for (const Item& it : kItems) {
         if (told < 40) ++told, logx::info("clothing: making %s", it.key);  // (where it stops, if it does)
-        (map_item(it) ? ok : bad)++;
+        bool faulted = false;
+        (map_guarded(it, &faulted) ? ok : bad)++;
+        if (faulted) {
+            logx::error("clothing: %s: a FAULT at the step '%s'; ClothingExpanded is off for this run", it.key, g_step);
+            g_state = State::Failed;
+            g_failed = bad;
+            return;
+        }
     }
     g_mapped = ok;
     g_failed = bad;
@@ -1159,6 +1193,7 @@ void on_frame(const std::string& scene, bool in_game) {
             if (!prefab(kItems[0].key)) return;
             logx::info("clothing: the catalog is in; making the items");
             map_all("catalog in");
+            if (g_state == State::Failed) return;
             g_state = State::Ready;
             g_scene = scene;
             return;
