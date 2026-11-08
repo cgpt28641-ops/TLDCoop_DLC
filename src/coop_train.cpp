@@ -319,8 +319,15 @@ Frame snapshot(uint8_t flags) {
             static V3 cab{};
             static bool have_cab = false;
             const bool leaning = api.window_lean >= 0 && get<Il2CppObject*>(g_train, api.window_lean) != nullptr;
-            if (!leaning) cab = f.local, have_cab = true;
-            else if (have_cab) f.local = cab;
+            if (!leaning) {
+                cab = f.local, have_cab = true;
+            } else if (have_cab) {
+                // TLDCoop_DLC (Kerel 16:25: "nie widać wychylania"): the body leans out up to 45 cm from where it
+                // stood, not the camera's whole way
+                const float dx = f.local.x - cab.x, dy = f.local.y - cab.y, dz = f.local.z - cab.z;
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz), k = d > 0.45f ? 0.45f / d : 1.0f;
+                f.local = V3{cab.x + dx * k, cab.y + dy * k, cab.z + dz * k};
+            }
         }
     }
     return f;
@@ -344,6 +351,12 @@ void follow(double now, float dt) {
             void* a[] = {s};
             il2::invoke(api.set_spline, ctl, a);
             g_spline_seen = nullptr;
+            // TLDCoop_DLC (Shatsca 16:24: "R jedzie do przodu, N do tyłu"): onto another track its direction is the
+            // driver's (connected tracks may run the other way; Curvy turns the direction there) - only then, not
+            // every frame (that turned the train round each frame before)
+            int32_t dir = g_last.dir;
+            void* da[] = {&dir};
+            il2::invoke(api.set_dir, ctl, da);
             if (g_switches++ < 40) logx::info("train: onto the driver's track %s", g_last.spline.c_str());
         }
     }
@@ -390,6 +403,9 @@ void place(const Frame& f) {
         void* a[] = {s};
         il2::invoke(api.set_spline, ctl, a);
         g_spline_seen = nullptr;
+        int32_t dir = f.dir;  // (another track: its direction as theirs)
+        void* da[] = {&dir};
+        il2::invoke(api.set_dir, ctl, da);
     }
     float pos = f.pos;
     void* pa[] = {&pos};
