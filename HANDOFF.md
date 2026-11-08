@@ -1419,3 +1419,18 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Item 11: WhaleOilHeaterItem (GearItem.m_WhaleOilHeaterItem): lit counts as burning_light (lit/out sent, host
   resends while lit); load_heater applies the record's m_WhaleOilHeaterSerialized (m_IsOn → TurnOn/TurnOff,
   m_BurnRate → SetBurnRate, m_Fuel). Not detected: burn-rate change or refuel alone (goes with the next resend).
+
+### 2026-11-08 ~14:45–15:15 local — train fixes after the first co-op test (CI green; NOT tested)
+- Test (builds 12:55/13:47): train turned round fore/aft (follow() set MovementDirection each frame — removed, also
+  from place()); others' wheels still (UpdateEngine was skipped — now runs between two apply_engine); passenger
+  couldn't walk (UpdateControls skipped — now runs; only MaybeShiftUp/MaybeShiftDown/ToggleBrakes blocked);
+  leaning out floated the body (local spot frozen while SteamTrain.m_WindowLean set); rider avatar ran
+  (avatar drive_animation: speed 0 while coop_train::riding); horn (TootSteamWhistle hooked, kHorn frame,
+  reliable); cab door lock (m_OptionalLock.m_LockState in TrainParts, SetLockState); region crossing locked both
+  (passenger loaded first and took the train — the 4 s grace from step 3 fixes it).
+- Each save keeps the train in its own last scene (Kerel: "nie widzę pociągu"): frames carry the asset GUID
+  (TrainCar.m_AssetReference.m_AssetGUID); a driver's or the host's idle frame for our scene with no train here →
+  TrainCar.FindOrCreateTrainCar(guid, asset, out made), placed by the pending frame; one saying elsewhere → ours hidden.
+- F1 `train_flip`: MovementDirection the other way (Shatsca's host save has the train turned by the old build).
+- coop_save: a friend's game saves at once when the link to the host drops (Kerel: host left, couldn't save).
+- Still open from Kerel's reports: boat loading contents, "new terrain" crossing, military messages need everyone near.
