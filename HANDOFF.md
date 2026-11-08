@@ -1461,3 +1461,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Items: host keeps whole records (g_scene_records, world_keep Tag ItemRecord = 11), refreshed 20/s while in the scene;
   answer_want answers a friend in a scene the host isn't in from them (Kerel: base empty when he came in first).
 - Open: Kerel's invisible placed furniture (Szymon sees it), green-tinted map areas, radar in a mine, backpack marker.
+
+### 08.11 ~20:20 (logs 20:10 + Shatsca 18:27)
+- world_items remove_ours: an id naming a non-loose copy (dropper still had one in the pack) → scan_loose finds the
+  loose one (prybar ×4 duplicate). Sprint bar: UIRect.set_alpha is abstract → il2::virtual_method (was 100k+
+  EntryPointNotFound). just_zoom / wildlife_sync: skip destroyed camera / emitter objects (m_CachedPtr).
+- coop_lapse: hook Fire.ReduceDurationByTODSeconds; skipped in co-op during a body lapse or 1.5 s after it ends
+  (g_ended_ms), not while sleeping / passing time (an action no longer burns fires down; log "a fire would lose …
+  min for our action"). UNTESTED.
+- Shatsca's 17:11 logs (build 15:52, before these fixes): only the old set_alpha spam; asked what his 61-char chat
+  report was about.
