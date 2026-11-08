@@ -1280,6 +1280,9 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                 il2::invoke(api.bh_deserialize, bh, args);
                 logx::info("wildlife: #%u's carcass here as it was harvested in its last game (%zu bytes)", id, own.body.size());
             }
+            // TLDCoop_DLC: killed moments ago (within 10 min): a fresh body, whatever the one that took its place had
+            if (wildlife_carcass::fresh_kill(ai))
+                logx::info("wildlife: #%u is a fresh kill: its carcass not frozen, condition 100%%", id);
             own.body.clear();
         }
         if (is_dead && !own.dead_told) {

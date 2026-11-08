@@ -1003,6 +1003,21 @@ void unfreeze(Il2CppObject* ai) {
     unfreeze_body(get<Il2CppObject*>(ai, api.ai_body));
 }
 
+// TLDCoop_DLC (Karol 08.11 21:20: a wolf shot dead showed "condition 0%, frozen" at once): a fresh kill handed to
+// another game gets its body from the animal that took its place there (one of that game's own, maybe long dead): not
+// frozen, and full condition when that body said 0. Returns whether anything changed.
+bool fresh_kill(Il2CppObject* ai) {
+    if (!alive(ai) || api.ai_body < 0) return false;
+    if (api.ai_dead_time >= 0 && get<float>(ai, api.ai_dead_time) > 600.0f) return false;  // (dead a while: as it is)
+    Il2CppObject* bh = get<Il2CppObject*>(ai, api.ai_body);
+    if (!bh || api.condition < 0) return false;
+    const bool was_frozen = (api.frozen_pct >= 0 && get<float>(bh, api.frozen_pct) > 0) || (api.frozen >= 0 && get<bool>(bh, api.frozen));
+    const bool spoiled = get<float>(bh, api.condition) < 1.0f;
+    if (spoiled) put<float>(bh, api.condition, 100.0f);
+    unfreeze_body(bh);
+    return was_frozen || spoiled;
+}
+
 bool remote_carcass_near(const std::string& prefab, float x, float y, float z) {
     if (prefab.find("Carcass") == std::string::npos) return false;
     const double now = now_ms();

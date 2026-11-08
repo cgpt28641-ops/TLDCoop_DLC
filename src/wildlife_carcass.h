@@ -30,6 +30,7 @@ void on_frame(bool in_game);
 bool harvest(float meat_kg, int hide, int gut);
 // TLDCoop_DLC: a live (or just killed) animal's carcass isn't frozen (a stale record made fresh kills frozen)
 void unfreeze(Il2CppObject* ai);
+bool fresh_kill(Il2CppObject* ai);  // a kill handed over from another game: not frozen, not at 0% (Karol 08.11)
 // TLDCoop_DLC: a friend's new carcass item lies where we've just made one of a dead small animal (they snapped its neck,
 // TLD gave them one): ours goes. True if one went.
 bool remote_carcass_near(const std::string& prefab, float x, float y, float z);
