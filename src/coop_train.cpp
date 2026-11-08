@@ -68,6 +68,8 @@ struct Api {
     ptrdiff_t window_lean = -1;                 // SteamTrain.m_WindowLean (set while leaning out of a window)
     ptrdiff_t optional_lock = -1, lock_state = -1;  // SteamTrain.m_OptionalLock, Lock.m_LockState
     const MethodInfo* set_lock = nullptr;       // Lock.SetLockState(LockState)
+    ptrdiff_t asset_ref = -1;                   // TrainCar.m_AssetReference
+    const MethodInfo* make_car = nullptr;       // static TrainCar.FindOrCreateTrainCar(string, string, out bool)
     ptrdiff_t train_container = -1;             // SteamTrain.m_Container
     ptrdiff_t fuel_source = -1, water_source = -1;  // SteamTrain.m_FuelSource, m_WaterSource (GenericLiquidContainer)
     ptrdiff_t liquid_volume = -1;               // GenericLiquidContainer.m_CurrentVolume (ItemLiquidVolume: int64)
@@ -128,6 +130,7 @@ struct Frame {
     int64_t fuel = -1, water = -1;
     V3 local{};
     float local_yaw = 0;
+    std::string asset;  // the train's Addressables asset (TrainCar.m_AssetReference): to make it where it's missing
     double at = 0;  // when it came (ours)
 };
 
@@ -150,6 +153,7 @@ void write(net::Writer& w, const Frame& f) {
     w.put<float>(f.local.y);
     w.put<float>(f.local.z);
     w.put<float>(f.local_yaw);
+    w.put_blob(f.asset, 64);
 }
 
 bool read(net::Reader& r, Frame& f) {
@@ -171,6 +175,7 @@ bool read(net::Reader& r, Frame& f) {
     f.local.y = r.get<float>();
     f.local.z = r.get<float>();
     f.local_yaw = r.get<float>();
+    f.asset = r.get_blob(64);
     return r.ok() && f.from < net::kMaxPlayers;
 }
 
@@ -273,6 +278,8 @@ Frame snapshot(uint8_t flags) {
     f.flags = flags;
     f.scene = g_scene;
     f.guid = g_guid;
+    if (Il2CppObject* ref = api.asset_ref >= 0 ? get<Il2CppObject*>(g_train, api.asset_ref) : nullptr)
+        f.asset = text(get<Il2CppString*>(ref, 0x10));  // AssetReference.m_AssetGUID
     Il2CppObject* ctl = controller();
     if (ctl) {
         f.spline = spline_guid(ctl);
@@ -457,6 +464,31 @@ void gone_to(const std::string& scene) {
     g_owner = kNobody;
 }
 
+// Their train is in our scene and ours isn't: TLD makes it (TrainCar.FindOrCreateTrainCar, as a save's train cars
+// come back), and their frame puts it in place once it's here.
+std::string g_make_tried;
+void make_train(const Frame& f) {
+    if (!api.make_car || f.asset.empty() || g_make_tried == g_scene + "|" + f.guid) return;
+    g_make_tried = g_scene + "|" + f.guid;
+    bool made = false;
+    void* a[] = {il2::il2cpp_string_new(f.guid.c_str()), il2::il2cpp_string_new(f.asset.c_str()), &made};
+    Il2CppObject* car = il2::invoke(api.make_car, nullptr, a);
+    if (car && car == g_hidden && api.set_active) {  // the copy we hid: back in sight
+        if (Il2CppObject* go = il2::invoke(api.game_object, car)) {
+            bool on = true;
+            void* b[] = {&on};
+            il2::invoke(api.set_active, go, b);
+        }
+        g_hidden = nullptr;
+    }
+    logx::info("train: player %u has the train here and we didn't: %s (%s)", f.from,
+               car ? (made ? "made it" : "found it") : "TLD couldn't make it", f.asset.c_str());
+    g_pending_idle = f;
+    g_pending_idle.flags = kIdle;
+    g_has_pending = true;
+    g_next_find = 0;
+}
+
 void impact_detour(Il2CppObject* self, Il2CppObject* car, int32_t area, const MethodInfo* method) {
     if (g_ready && !g_passing_on && car && car == g_train && g_owner != kNobody && g_owner != g_self) {
         if (!inside_train()) {
@@ -514,6 +546,16 @@ void receive(double now) {
         f.at = now;
         g_riders[f.from] = f;
         g_riding[f.from] = (f.flags & kInside) && !(f.flags & kRelease);
+        // TLDCoop_DLC (Kerel 08.11 "nie widzę pociągu"): each save keeps the train where that game last had it. The
+        // driver's or the host's word on where it is wins: missing here, it's made; here but theirs is elsewhere, ours
+        // goes out of sight.
+        const bool says_where = (f.flags & kOwner) || ((f.flags & kIdle) && f.from == 0);
+        if (says_where && !f.guid.empty()) {
+            if (f.scene == g_scene && !g_train) make_train(f);
+            else if (f.scene != g_scene && g_train && f.guid == g_guid && !inside_train() &&
+                     (g_owner == kNobody || g_owner == f.from))
+                gone_to(f.scene);
+        }
         if (f.scene != g_scene) {
             if ((f.flags & kOwner) && f.from == g_owner) {
                 if (inside_train()) follow_to(f.scene);
@@ -1059,6 +1101,8 @@ bool init() {
                                    reinterpret_cast<void**>(&g_toggle_brakes)))
             logx::warn("train: the engine's levers not hooked; a passenger could move them");
     }
+    api.asset_ref = il2::field_offset(car, "m_AssetReference");
+    api.make_car = il2::find_method(car, "FindOrCreateTrainCar", 3);
     api.toot = il2::find_method(train, "TootSteamWhistle", 0);
     if (!api.toot || !hooks::install_method("SteamTrain.TootSteamWhistle", api.toot, reinterpret_cast<void*>(&toot_detour),
                                             reinterpret_cast<void**>(&g_toot)))
@@ -1095,6 +1139,7 @@ void on_frame(const std::string& scene, bool in_game) {
         g_was_inside = false;
         g_next_find = 0;
         g_hidden = nullptr;
+        g_make_tried.clear();
     }
     g_scene = scene;
     g_in_game = in_game;
@@ -1164,6 +1209,24 @@ void on_frame(const std::string& scene, bool in_game) {
             g_next_send = now + 250;
         }
     }
+}
+
+bool console(const std::string& line) {
+    std::string cmd = line.substr(0, line.find(' '));
+    for (char& c : cmd) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    if (cmd != "train_flip" && cmd != "trainflip") return false;
+    Il2CppObject* ctl = g_ready ? controller() : nullptr;
+    if (!ctl) {
+        logx::info("train: train_flip: no train here");
+        return true;
+    }
+    int32_t dir = 0;
+    il2::invoke_value(api.get_dir, ctl, dir);
+    dir = dir == 0 ? 1 : 0;
+    void* a[] = {&dir};
+    il2::invoke(api.set_dir, ctl, a);
+    logx::info("train: train_flip: the train's direction is now %s", dir == 0 ? "forward" : "backward");
+    return true;
 }
 
 bool riding(unsigned char player) {

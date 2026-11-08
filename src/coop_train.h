@@ -18,6 +18,8 @@ void on_frame(const std::string& scene, bool in_game);
 
 // Where a player's avatar stands while they ride the train in our scene (their spot in the cab, on our train). False
 // when they're not on it (or the train isn't here).
+// F1 `train_flip`: the train's direction on its track the other way (a train an older build turned round).
+bool console(const std::string& line);
 bool riding(unsigned char player);  // they're on the train in our scene (their speed is the train's)
 bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw);
 
