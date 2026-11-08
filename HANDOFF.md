@@ -1471,3 +1471,11 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   min for our action"). UNTESTED.
 - Shatsca's 17:11 logs (build 15:52, before these fixes): only the old set_alpha spam; asked what his 61-char chat
   report was about.
+
+### 08.11 ~20:40 (Shatsca's 17:11 logs, Kerel: check them anyway)
+- wildlife_owner: the dead-body handover to the host now honours blocked_until[0] (a host refusal "no animal of that
+  kind … none could be made" for bear #17804330 in AshCanyon was retried every 250 ms, 1317 WARNs in 6 min).
+- ClothingExpanded icons still "no icon in the pack" on the 17:55 build and no "pack holds" line (GetAllAssetNames
+  likely missing): list_icons_once now logs the loaded bundles and whether ours is found ("clothing: icons: …").
+  The catalog does list Assets/InventoryGridIcons/ico_GearItem__<Name>.png for every item.
+- Also seen: ClothingExpanded remakes all 25 items after each scene change (~450 ms during the load); left as is.
