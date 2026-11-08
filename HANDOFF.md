@@ -1373,3 +1373,21 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   ico_weight/ico_encumbered/... jest w atlasach — log „the weight icon is TLD's …”), światło, dolegliwości; nad ikonami
   stanu: ciepło/kondycja/ciało; pod paskiem zdrowia: powietrze/odczuwalna/wiatr, czerwone gdy odczuwalna < 0.
 - Discord: posty o zmianach na #updates; #chat częściej (żarty, info z Krakowa/Polski).
+
+### 2026-11-08 ~13:20–13:55 local — pass_time fix, Iron Road train sync (CI green; NOT tested in game)
+- Earlier builds today without their own entries: F1 `add NAME [N]` for ClothingExpanded items (uConsole.RunCommand hook
+  → AddItemCONSOLE); sprint bar always visible; warmth removed from the HUD; `ground_pose` (both hands reach the ground
+  for crouched ground work, CMU kneel/fire clips dropped); chop clip upper body only.
+- **pass_time (Shatsca 13:17 report):** F1 `pass_time 13` ran the clock, then near the end TLD set the day scale outside
+  PassTime.Begin/AccelerateTimeOfDay → coop_lapse took it for an action (100x) and froze the world clock at 08:13 →
+  PassTime never finished, screen hung on CANCEL. Fix: in set_scale_detour an accelerated call while
+  PassTime.IsPassingTime() (or Rest.IsSleeping()) is passed through (log "lapse: a Nx speed-up while TLD passes time").
+- **Iron Road train (item 10), `src/coop_train.*`, Msg::Train = 59:** the first player into the cab
+  (SteamTrain.get_IsInsideSteamTrain) drives; they send ~15 frames/s: spline GUID (SteamTrainTrackSpline on the
+  controller's CurvySpline), AbsolutePosition, MovementDirection, EngineState (velocity, sign, pressure, throttle,
+  brakes), fuel/water (GenericLiquidContainer.m_CurrentVolume). Others: SteamTrain.UpdateControls and
+  SteamTrainEngine.UpdateEngine skipped (engine state written from the frame), controller nudged to the predicted
+  place (snap > 4 m), spline switched by GUID. Riders send their local spot in the cab → avatar.cpp `ride_spot`.
+  Leaving the cab sends a reliable release frame; with nobody driving the host sends an idle frame every 3 s (others
+  placed if > 1 m off). Both drive at once → lower id wins. Not done: region transitions with the train (only same
+  scene), firebox/boiler/repairs, track switches/turntable state, train container contents.
