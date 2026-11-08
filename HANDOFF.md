@@ -1362,3 +1362,14 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   udźwig (Inventory.GetTotalWeightKG, Encumber.GetEffectiveCarryCapacityKG; ItemWeight → kg przez FromKilograms(1)),
   paliwo lampy / pochodnia / raca w ręce, dolegliwości (nazwy TLD). Polskie etykiety, gdy gra po polsku.
 - coop.ini `[hud] stats=1` (0 wyłącza). Log „hud: stats: …” mówi, które wartości się znalazły.
+
+## 08.11 ~12:30 PL — ubrania: przyczyna crasha znaleziona; HUD wg Shatsci
+- Log Shatsca 12:01: „a FAULT at the step 'data: name'” dla każdego przedmiotu; 25/28 gotowych (3 potrzebują
+  GEAR_MinersBoots/MinersPants, których 2.60 nie ma). Przyczyna (też wszystkich wcześniejszych crashy GameAssembly+0x3cd25a,
+  adres 0): new_object budował `str(arg)` także dla arg == nullptr → il2cpp_string_new(nullptr) → strlen(NULL).
+  Poprawione w new_object i w str() (null → nullptr). `add GEAR_X` nie działał, bo przedmiot nie miał nazwy.
+- Nadal: „no icon for GEAR_X in the pack” (pack_texture/LoadAsset nie znajduje ikon) — do sprawdzenia; „no buff to copy”.
+- HUD przestawiony (zrzut Shatsca): godzina sama na górze pośrodku (font 24), góra-lewo: waga (+ ikona, jeśli któraś z nazw
+  ico_weight/ico_encumbered/... jest w atlasach — log „the weight icon is TLD's …”), światło, dolegliwości; nad ikonami
+  stanu: ciepło/kondycja/ciało; pod paskiem zdrowia: powietrze/odczuwalna/wiatr, czerwone gdy odczuwalna < 0.
+- Discord: posty o zmianach na #updates; #chat częściej (żarty, info z Krakowa/Polski).
