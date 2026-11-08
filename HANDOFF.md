@@ -1410,3 +1410,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   through; LifeAfterDeathManager.PerformRespawn hooked → alive again; HandlePlayerEnvironment skipped in co-op
   (no weather change or hours passing for the shared world). Lives used up → co-op's body + new survivor as before;
   the save is never deleted. Others' notice now just "X died."
+
+### 2026-11-08 ~14:15–14:35 local — Iron Road: locker, observer, whale oil heater (CI green; NOT tested)
+- Train locker: world_containers id_of → `coop_train::container_key` ("train|GUID") for SteamTrain.m_Container,
+  and all_containers adds it if TLD keeps it off ContainerManager's lists.
+- Observer: driver's frames from another scene while we're not in the cab → our copy SetActive(false) (g_hidden,
+  skipped by find_train until the scene reloads). Saves still keep the train where each game last had it.
+- Item 11: WhaleOilHeaterItem (GearItem.m_WhaleOilHeaterItem): lit counts as burning_light (lit/out sent, host
+  resends while lit); load_heater applies the record's m_WhaleOilHeaterSerialized (m_IsOn → TurnOn/TurnOff,
+  m_BurnRate → SetBurnRate, m_Fuel). Not detected: burn-rate change or refuel alone (goes with the next resend).
