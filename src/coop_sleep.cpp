@@ -412,8 +412,9 @@ std::vector<net::Sleeper> everyone(const net::Status& st) {
     for (const net::PlayerInfo& p : st.players) {
         // TLDCoop_DLC (Kerel 08.11: "jak osoba wyjdzie z serwera, to w trakcie spania dalej czeka na tę osobę"): someone
         // who left (not linked any more, or no word from them at all) isn't waited for, by the host or a friend
-        if (!p.linked) continue;
-        if (!host && std::none_of(states.begin(), states.end(), [&](const net::StateMsg& m) { return m.player == p.id && m.valid; }))
+        // (a friend talks to the host only: other friends are known from the host's roster and their states)
+        if ((host || p.id == 0) && !p.linked) continue;
+        if (!host && p.id != 0 && std::none_of(states.begin(), states.end(), [&](const net::StateMsg& m) { return m.player == p.id && m.valid; }))
             continue;
         net::Sleeper s{p.id, false, net::SleepChoice::None, false};
         for (const net::StateMsg& m : states) {
