@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -967,6 +968,23 @@ void elements_receive() {
                 if (mine != data) {
                     void* a[] = {il2::il2cpp_string_new(data.c_str())};
                     il2::invoke(e.deserialize, e.obj, a);
+                    // TLDCoop_DLC (Karol 16:33: "zmieniłem zwrotnicę i u innego gracza się nie zmieniła"): TLD's
+                    // Deserialize only keeps the state; the switch is thrown (the rails and the lever moved) by its
+                    // own SetToggled, a turntable turned by SetAngle
+                    if (const MethodInfo* set = method_of(e.obj, "SetToggled", 2)) {
+                        bool on = data.find("\"m_Toggled\":true") != std::string::npos, now = false;
+                        void* b[] = {&on, &now};
+                        il2::invoke(set, e.obj, b);
+                        logx::info("train: a switch thrown as player %u threw it (%s)", host ? p.from : from,
+                                   on ? "the other way" : "back");
+                    } else if (const MethodInfo* angle = method_of(e.obj, "SetAngle", 1)) {
+                        const size_t at = data.find("\"m_Angle\":");
+                        if (at != std::string::npos) {
+                            float v = std::strtof(data.c_str() + at + 10, nullptr);
+                            void* b[] = {&v};
+                            il2::invoke(angle, e.obj, b);
+                        }
+                    }
                     ++applied;
                 }
                 const std::string now_data = text(reinterpret_cast<Il2CppString*>(il2::invoke(e.serialize, e.obj)));
