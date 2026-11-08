@@ -79,6 +79,9 @@ struct Api {
     const MethodInfo* set_parent = nullptr;         // Transform.SetParent(Transform, bool)
     const MethodInfo* set_position = nullptr;
     const MethodInfo* get_local_position = nullptr;
+    const MethodInfo* get_parent = nullptr;          // TLDCoop_DLC: Transform.get_parent
+    const MethodInfo* map_world_active = nullptr;    // TLDCoop_DLC: Panel_Map.IsWorldMapActive()
+    ptrdiff_t map_region_icons = -1;                 // TLDCoop_DLC: Panel_Map.m_RegionMapIcons (region -> its icon)
     const MethodInfo* set_local_position = nullptr;
     const MethodInfo* set_local_euler = nullptr;
     const MethodInfo* set_local_scale = nullptr;
@@ -1434,11 +1437,70 @@ void refresh_open_map(Il2CppObject* map, const std::string& shown) {
     g_open_map_spots = count;
 }
 
+// TLDCoop_DLC (Kerel 08.11: everyone on TLD's world map, every region in one): on the world map (TLD's own, all
+// regions in one picture) each player is a dot at their region's icon, a little apart from each other. Their place in
+// the region isn't drawn there (each region has its own map and coordinates), only which region they're in.
+std::map<uint8_t, uintptr_t> g_world_dots;
+void hide_world_dots() {
+    for (auto& [id, h] : g_world_dots) set_active(go_of(live(h)), false);
+}
+bool show_world_marks(Il2CppObject* map, const std::vector<avatar::Seen>& all) {
+    bool world = false;
+    if (!api.map_world_active || api.map_region_icons < 0 || !il2::invoke_value(api.map_world_active, map, world) || !world) {
+        hide_world_dots();
+        return false;
+    }
+    Il2CppObject* icons = get<Il2CppObject*>(map, api.map_region_icons);
+    struct Who {
+        uint8_t key;
+        std::string region, name;
+        Color colour;
+    };
+    std::vector<Who> people;
+    const uint8_t self_id = netrt::status().self_id;
+    const Region& here = region_now();
+    if (here.mappable) people.push_back({kSelfMark, here.name, "TY", colour_for(self_id, "")});
+    for (const avatar::Seen& who : all)
+        if (who.playing && !who.dead && !who.scene.empty())
+            people.push_back({who.player, who.scene, upper(who.name), colour_for(who.player, who.name)});
+    std::map<std::string, int> on_region;
+    std::vector<std::pair<Color, std::string>> legend;
+    hide_world_dots();
+    for (const Who& w : people) {
+        Il2CppObject* icon = dict_get(icons, il2::il2cpp_string_new(w.region.c_str()));
+        Il2CppObject* itf = alive(icon) ? go_transform(icon) : nullptr;
+        Il2CppObject* parent = itf && api.get_parent ? il2::invoke(api.get_parent, itf) : nullptr;
+        if (!parent) continue;  // (a scene that isn't a region of this world map: an interior, a cave)
+        uintptr_t& h = g_world_dots[w.key];
+        if (!live(h)) {
+            drop(h);
+            Il2CppObject* dot = make_sprite(parent, "TLDCoop_WorldDot" + std::to_string(w.key), "crosshair4", kMapDotSize + 4);
+            if (dot) set_int(api.widget_set_depth, dot, 100);
+            h = hold(dot);
+        }
+        Il2CppObject* dot = live(h);
+        Vector3 at{};
+        if (!dot || !il2::invoke_value(api.get_local_position, itf, at)) continue;
+        const int n = on_region[w.region]++;
+        set_color(dot, w.colour);
+        set_active(go_of(dot), true);
+        set_vec(api.set_local_position, transform_of(dot), {at.x + 18.0f * n, at.y - 22.0f, 0});
+        legend.emplace_back(w.colour, w.name);
+    }
+    show_legend(map, legend);
+    return true;
+}
+
 void show_map_marks(const std::vector<avatar::Seen>& all, const game::PlayerState& me) {
     Il2CppObject* map = g_map_ready ? live(g_map) : nullptr;  // loaded already (it is, once the map has opened)
     if (!map_open(map)) {
         hide_marks();
+        hide_world_dots();
         g_open_map_spots = -1;
+        return;
+    }
+    if (show_world_marks(map, all)) {  // TLDCoop_DLC: the world map: who is in which region
+        for (auto& [id, m] : g_marks) set_active(go_of(live(m.icon)), false);
         return;
     }
     refresh_open_map(map, shown_region(map));
@@ -1612,6 +1674,7 @@ bool init() {
     api.set_parent = il2::find_method_params(transform, "SetParent", {"UnityEngine.Transform", "System.Boolean"});
     api.set_position = il2::find_method(transform, "set_position", 1);
     api.get_local_position = il2::find_method(transform, "get_localPosition", 0);
+    api.get_parent = il2::find_method(transform, "get_parent", 0);
     api.set_local_position = il2::find_method(transform, "set_localPosition", 1);
     api.set_local_euler = il2::find_method(transform, "set_localEulerAngles", 1);
     api.set_local_scale = il2::find_method(transform, "set_localScale", 1);
@@ -1685,6 +1748,8 @@ bool init() {
     api.map_region = il2::find_method(map, "GetMapNameOfCurrentScene", 0);
     api.map_can_map = il2::find_method(map, "SceneCanBeMapped", 1);
     api.map_elements = il2::field_offset(map, "m_MapElementsTransform");
+    api.map_world_active = il2::find_method_quiet(map, "IsWorldMapActive", 0);
+    api.map_region_icons = il2::field_offset_quiet(map, "m_RegionMapIcons");
     api.map_player_icon = il2::field_offset(map, "m_PlayerIcon");
     api.map_survey_radius = il2::field_offset(map, "m_DetailSurveyRadiusMeters");
     api.map_objects = il2::field_offset(map, "m_MapObjects");
