@@ -68,6 +68,7 @@ struct Api {
     ptrdiff_t window_lean = -1;                 // SteamTrain.m_WindowLean (set while leaning out of a window)
     ptrdiff_t optional_lock = -1, lock_state = -1;  // SteamTrain.m_OptionalLock, Lock.m_LockState
     const MethodInfo* set_lock = nullptr;       // Lock.SetLockState(LockState)
+    ptrdiff_t it_box = -1, box_load = -1;       // IslandTransitInteraction.m_ExchangeBox, IslandTransitExchangeBox.m_LoadScene
     ptrdiff_t asset_ref = -1;                   // TrainCar.m_AssetReference
     const MethodInfo* make_car = nullptr;       // static TrainCar.FindOrCreateTrainCar(string, string, out bool)
     ptrdiff_t train_container = -1;             // SteamTrain.m_Container
@@ -487,6 +488,27 @@ void make_train(const Frame& f) {
     g_pending_idle.flags = kIdle;
     g_has_pending = true;
     g_next_find = 0;
+}
+
+// TLDCoop_DLC (Kerel 08.11: "Shatsca przeszedł na ten nowy teren, a mi to nie zadziałało"): Iron Road's island
+// transit (IslandTransitInteraction: the boat across, once the exchange box is filled). The box's filling is each
+// game's own; once someone has crossed through it, the others may follow without filling it again.
+using CanTransitFn = bool (*)(Il2CppObject* self, const MethodInfo* method);
+CanTransitFn g_can_transit = nullptr;
+bool can_transit_detour(Il2CppObject* self, const MethodInfo* method) {
+    const bool ok = g_can_transit(self, method);
+    if (ok || !g_ready || !netrt::role() || api.it_box < 0 || api.box_load < 0 || api.ls_scene < 0) return ok;
+    Il2CppObject* box = get<Il2CppObject*>(self, api.it_box);
+    Il2CppObject* ls = alive(box) ? get<Il2CppObject*>(box, api.box_load) : nullptr;
+    const std::string target = alive(ls) ? text(get<Il2CppString*>(ls, api.ls_scene)) : std::string();
+    if (target.empty()) return ok;
+    for (const net::StateMsg& st : netrt::remote_states()) {
+        if (!same_scene_name(st.scene, target)) continue;
+        logx::info("transit: player %u already crossed to %s: we may follow without filling the box", st.player,
+                   target.c_str());
+        return true;
+    }
+    return ok;
 }
 
 void impact_detour(Il2CppObject* self, Il2CppObject* car, int32_t area, const MethodInfo* method) {
@@ -1100,6 +1122,19 @@ bool init() {
             !hooks::install_method("SteamTrainEngine.ToggleBrakes", brakes, reinterpret_cast<void*>(&toggle_brakes_detour),
                                    reinterpret_cast<void**>(&g_toggle_brakes)))
             logx::warn("train: the engine's levers not hooked; a passenger could move them");
+    }
+    {  // Iron Road's island transit
+        Il2CppClass* it = il2::find_class(kGame, "TLD.IslandTransit", "IslandTransitInteraction");
+        Il2CppClass* xb = il2::find_class(kGame, "TLD.IslandTransit", "IslandTransitExchangeBox");
+        const MethodInfo* can = it ? il2::find_method(it, "CanPlayerTransit", 0) : nullptr;
+        if (it && xb && can) {
+            api.it_box = il2::field_offset(it, "m_ExchangeBox");
+            api.box_load = il2::field_offset(xb, "m_LoadScene");
+            if (!hooks::install_method("IslandTransitInteraction.CanPlayerTransit", can,
+                                       reinterpret_cast<void*>(&can_transit_detour),
+                                       reinterpret_cast<void**>(&g_can_transit)))
+                logx::warn("transit: CanPlayerTransit not hooked");
+        }
     }
     api.asset_ref = il2::field_offset(car, "m_AssetReference");
     api.make_car = il2::find_method(car, "FindOrCreateTrainCar", 3);
