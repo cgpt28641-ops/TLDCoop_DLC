@@ -159,7 +159,7 @@ std::string give_id(Il2CppObject* fire) {
     return id_of(fire);
 }
 
-std::vector<Il2CppObject*> all_fires() {
+std::vector<Il2CppObject*> all_fires(bool hidden_too = false) {
     std::vector<Il2CppObject*> out;
     Il2CppObject* list = nullptr;
     il2::il2cpp_field_static_get_value(api.fires, &list);
@@ -169,7 +169,7 @@ std::vector<Il2CppObject*> all_fires() {
     for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i)
         if (Il2CppObject* f = il2::array_object_at(items, static_cast<size_t>(i));
             alive(f) && !seamless_interiors::sync_skips(f) &&  // TLDCoop_DLC: not a Seamless Interiors room still building
-            name_of(f).find("InvisibleFire") == std::string::npos)
+            (hidden_too || name_of(f).find("InvisibleFire") == std::string::npos))
             // TLDCoop_DLC (Karol 08.11: "w pociągu normalnie spada mi temperatura"): Iron Road's hidden fires (the
             // train's firebox, the whale oil heater) belong to their train or heater, which share them; as scene fires
             // the host's list put the train's out in a friend's game (its cab went cold)
@@ -715,6 +715,13 @@ void apply_list(const net::FireListMsg& m_in) {
         if (seamless_interiors::host_lacks_room_of(f))
             if (std::string id = id_of(f); !id.empty()) keep.push_back(std::move(id));
     net::FireListMsg m = m_in;
+    {  // TLDCoop_DLC: our Iron Road hidden fires (the train's firebox, a heater's) stay as ours (Karol: the cab went cold)
+        std::vector<std::string> hidden;
+        for (Il2CppObject* f : all_fires(true))
+            if (name_of(f).find("InvisibleFire") != std::string::npos)
+                if (std::string id = id_of(f); !id.empty()) hidden.push_back(std::move(id));
+        if (!hidden.empty()) m.text = without_destroyed(without_fires(m.text, hidden), hidden);
+    }
     if (!keep.empty()) {
         m.text = without_destroyed(without_fires(m.text, keep), keep);
         logx::info("fires: %zu fire(s) of Seamless Interiors rooms the host hasn't said are up kept as they are here (not "
