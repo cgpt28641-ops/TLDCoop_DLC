@@ -30,11 +30,11 @@ constexpr float kLookDegrees = 35.0f;
 constexpr float kRttMetresPerMs = 0.05f;  // 100 ms of round trip weighs as 5 m
 constexpr float kEngagedBonus = 1000.0f;
 constexpr float kInsideMetres = 300.0f;
-constexpr float kMarginMetres = 12.0f;
+constexpr float kMarginMetres = 25.0f;  // TLDCoop_DLC 08.11: more than kLookingBonus (three players together: a turn of the head handed wolves round and round)
 constexpr float kMarginShare = 0.25f;
 constexpr double kHoldMs = 3000;
 constexpr double kEngagedHoldMs = 750;
-constexpr double kMinSwitchMs = 5000;
+constexpr double kMinSwitchMs = 12000;  // (was 5 s: each handover remakes the wolf in two games)
 constexpr double kEngagedMinSwitchMs = 1500;  // v45: to the one it is after (their game runs the attack)
 
 // AiMode values (TLD's)

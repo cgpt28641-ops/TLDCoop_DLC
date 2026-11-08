@@ -54,6 +54,17 @@ int main() {
         decide(t, f, seats, 0, why);
         check(decide(t, f, seats, 10000, why) == kNobody, "a slightly closer player doesn't take over (margin)");
     }
+    // 08.11: three players together: one looking at the wolf doesn't take it from an owner as near (looking bonus <
+    // margin), however long.
+    {
+        Track t;
+        Facts f;
+        f.owner = 0, f.owner_present = true, f.mode = kModeWander;
+        const std::vector<Seat> seats = {seat(0, 30), seat(1, 28, true), seat(2, 32)};
+        Why why;
+        decide(t, f, seats, 0, why);
+        check(decide(t, f, seats, 60000, why) == kNobody, "a friend standing by and looking doesn't take it");
+    }
     // Engagement: an animal after a player goes to them quickly, whoever is closer.
     {
         Track t;
