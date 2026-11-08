@@ -1444,3 +1444,20 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   Track elements whose text drifts (towers) only go with the host's 15 s full list.
 - Stone/noise maker (Wrap::Palm): grip at hand + fingers·0.085 + palm·(0.02 + half size) — on the palm, not the wrist.
 - world_fires: fires named InvisibleFire (train firebox, heater) left out of the scene fire sync (Karol: cab got cold).
+
+### 2026-11-08 ~16:00–20:10 local — many fixes from the evening's tests (CI green; partly untested)
+- Train: direction set only when switching spline (driver's dir); lean shows up to 45 cm; switches thrown with
+  SetToggled (before Deserialize), turntables SetAngle; host sends parts' conditions every 20 s (kFullConditions);
+  rider eased in the cab + ride_speed for the walk; observer hide; FindOrCreateTrainCar when the train is missing.
+- Fires: InvisibleFire (train firebox, heater) out of scene fire sync and out of the host's FireManager list load.
+- Death: last life → TLD's own end (g_final), body left, save kept. Grey screen after Cheat Death: hook
+  CameraEffects.SetColorScalar(LowHealthEffect): with the max cut (Condition.GetAdjustedMaxHP < m_MaxHP) and hp ≥ half
+  the cut max → TLD's healthy scalar (UNVERIFIED guess; log "low-health grey off").
+- HUD feels-like = Freezing.CalculateBodyTemperature (clothes counted). World map: player dots at region icons
+  (Panel_Map.m_RegionMapIcons, IsWorldMapActive).
+- ClothingExpanded: 3 items needing MinersBoots/MinersPants removed (25 left); icon paths tried in more spellings,
+  the pack's 'ico' asset names logged once.
+- Sleep: players who left (unlinked/no state) not waited for. Food Tweaker cattail 150 kcal.
+- Items: host keeps whole records (g_scene_records, world_keep Tag ItemRecord = 11), refreshed 20/s while in the scene;
+  answer_want answers a friend in a scene the host isn't in from them (Kerel: base empty when he came in first).
+- Open: Kerel's invisible placed furniture (Szymon sees it), green-tinted map areas, radar in a mine, backpack marker.
