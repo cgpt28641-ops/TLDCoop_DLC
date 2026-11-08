@@ -134,6 +134,11 @@ struct Api {
     const MethodInfo* lamp_pct = nullptr;          // KeroseneLampItem.GetPercentFuelRemaining()
     ptrdiff_t lamp_fuel = -1;                      // KeroseneLampItem.m_CurrentFuelLiters (ItemLiquidVolume: int64, 1e-9 l)
     const MethodInfo* lamp_on = nullptr;           // KeroseneLampItem.IsOn()
+    ptrdiff_t heater = -1, heater_state = -1;      // TLDCoop_DLC: GearItem.m_WhaleOilHeaterItem, its m_State
+    ptrdiff_t hs_on = -1, hs_rate = -1, hs_fuel = -1;  // WhaleOilHeaterItemState.m_IsOn, m_BurnRate, m_Fuel
+    const MethodInfo* heater_on = nullptr;         // WhaleOilHeaterItem.TurnOn()
+    const MethodInfo* heater_off = nullptr;        // WhaleOilHeaterItem.TurnOff()
+    const MethodInfo* heater_rate = nullptr;       // WhaleOilHeaterItem.SetBurnRate(int)
     const MethodInfo* gear_condition = nullptr;    // GearItem.GetRoundedCondition()
     const MethodInfo* snare_placed = nullptr;      // SnareItem.OnSnarePlaced(): set, rolling from now
     const MethodInfo* snare_set_state = nullptr;   // SnareItem.SetState(SnareState)
@@ -556,8 +561,17 @@ void forget_world() {
 
 // A snare's state (0 not set, 1 set, 2 broken, 3 with a rabbit); -1 for an item that isn't one.
 // A flare or torch that's burning (kSettleLitMs).
+// TLDCoop_DLC (Iron Road, item 11): the whale oil heater lit (WhaleOilHeaterItem.m_State.m_IsOn).
+bool heater_on(Il2CppObject* gi) {
+    if (api.heater < 0 || api.heater_state < 0 || api.hs_on < 0 || !alive(gi)) return false;
+    Il2CppObject* h = get<Il2CppObject*>(gi, api.heater);
+    Il2CppObject* st = alive(h) ? get<Il2CppObject*>(h, api.heater_state) : nullptr;
+    return st && get<bool>(st, api.hs_on);
+}
+
 bool burning_light(Il2CppObject* gi) {
     if (!alive(gi)) return false;
+    if (heater_on(gi)) return true;
     for (auto [part, burning] : {std::pair{api.flare, api.flare_burning}, std::pair{api.torch, api.torch_burning}}) {
         if (part < 0 || !burning) continue;
         Il2CppObject* item = get<Il2CppObject*>(gi, part);
@@ -759,6 +773,34 @@ void load_lamp(Il2CppObject* gi, const std::string& gear) {
     if (api.lamp_pct) il2::invoke_value(api.lamp_pct, lamp, after);
     if (std::fabs(after - before) >= 1)
         logx::info("items: the other player's lamp has %.0f%% fuel (ours said %.0f%%)", after, before);
+}
+
+// TLDCoop_DLC (Iron Road, item 11): the other player's whale oil heater as their record has it: lit or not, its burn
+// rate and its oil (WhaleOilHeaterItemState in the record: m_IsOn, m_BurnRate, m_Fuel).
+void load_heater(Il2CppObject* gi, const std::string& gear) {
+    Il2CppObject* h = api.heater >= 0 && alive(gi) ? get<Il2CppObject*>(gi, api.heater) : nullptr;
+    Il2CppObject* st = alive(h) && api.heater_state >= 0 ? get<Il2CppObject*>(h, api.heater_state) : nullptr;
+    const size_t at = gear.find("\"m_WhaleOilHeaterSerialized\"");
+    if (!st || at == std::string::npos) return;
+    const size_t end = gear.find('}', at);
+    const std::string text = gear.substr(at, end == std::string::npos ? std::string::npos : end - at + 1);
+    const bool on = text.find("\"m_IsOn\":true") != std::string::npos;
+    const double rate = json_number(text, "m_BurnRate", -1);
+    double fuel = json_number(text, "m_Units", -1);
+    if (fuel < 0) fuel = json_number(text, "m_Fuel", -1);
+    if (fuel >= 0 && api.hs_fuel >= 0) put<int64_t>(st, api.hs_fuel, static_cast<int64_t>(fuel));
+    if (rate >= 0 && api.heater_rate && static_cast<int32_t>(rate) != get<int32_t>(st, api.hs_rate)) {
+        int32_t r = static_cast<int32_t>(rate);
+        void* a[] = {&r};
+        il2::invoke(api.heater_rate, h, a);
+    }
+    const bool was = get<bool>(st, api.hs_on);
+    if (on != was && api.heater_on && api.heater_off) {
+        il2::invoke(on ? api.heater_on : api.heater_off, h);
+        logx::info("items: the other player's whale oil heater is %s", on ? "lit" : "out");
+    }
+    static int shown = 0;
+    if (shown++ < 3) logx::info("items: a heater's record: %.200s", text.c_str());
 }
 
 // TLDCoop_DLC (Karol 04.11: a hide curing on the floor showed "stopień wysuszenia" in the host's game only): how long
@@ -1403,6 +1445,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
         load_opened(gi, m.gear, k);
         load_burn(gi, m.gear, k);
         load_lamp(gi, m.gear);
+        load_heater(gi, m.gear);
         load_evolve(gi, m.gear);
         load_wear(gi, m.gear);
         load_pot(gi, m.gear, m.pdid);
@@ -1437,6 +1480,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                 load_opened(gi, m.gear, k);
                 load_burn(gi, m.gear, k);
                 load_lamp(gi, m.gear);
+        load_heater(gi, m.gear);
                 load_evolve(gi, m.gear);
         load_wear(gi, m.gear);
                 load_pot(gi, m.gear, m.pdid);
@@ -1478,6 +1522,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                 load_opened(gi, m.gear, k);
                 load_burn(gi, m.gear, k);
                 load_lamp(gi, m.gear);
+        load_heater(gi, m.gear);
                 load_evolve(gi, m.gear);
         load_wear(gi, m.gear);
                 load_pot(gi, m.gear, m.pdid);
@@ -1515,6 +1560,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     set_pose(made, pos, rot);
     seamless_interiors::settle_in_room(made);  // TLDCoop_DLC: into a room closed here
     seat_on_slot(made, gear, pos, m.prefab.c_str());
+    load_heater(made, gear);
     load_lamp(made, gear);  // TLDCoop_DLC: its fuel as the record says (TLD's own load got it wrong)
     const std::string got = pdid_of(made);
     if (got != m.pdid && !got.empty()) {
@@ -2222,6 +2268,7 @@ Il2CppObject* gear_from_record(const std::string& prefab, const std::string& rec
                     &in_container};
     Il2CppObject* made = il2::invoke(api.instantiate, nullptr, args);
     if (!alive(made)) return nullptr;
+    load_heater(made, record);
     load_lamp(made, record);  // TLDCoop_DLC: a lamp given keeps its fuel (Shatsca 07.11: under half, came back full)
     return made;
 }
@@ -2447,6 +2494,18 @@ bool init() {
         api.flare_burning = il2::find_method_quiet(flare, "IsBurning", 0);
         api.flare_elapsed = il2::field_offset(flare, "m_ElapsedBurnMinutes");
         api.flare_life = il2::field_offset(flare, "m_BurnLifetimeMinutes");
+    }
+    if (Il2CppClass* heater = il2::find_class(kGame, "", "WhaleOilHeaterItem")) {  // TLDCoop_DLC: Iron Road
+        api.heater = il2::field_offset_quiet(gear, "m_WhaleOilHeaterItem");
+        api.heater_state = il2::field_offset_quiet(heater, "m_State");
+        api.heater_on = il2::find_method_quiet(heater, "TurnOn", 0);
+        api.heater_off = il2::find_method_quiet(heater, "TurnOff", 0);
+        api.heater_rate = il2::find_method_quiet(heater, "SetBurnRate", 1);
+        if (Il2CppClass* hs = il2::find_class(kGame, "", "WhaleOilHeaterItemState")) {
+            api.hs_on = il2::field_offset_quiet(hs, "m_IsOn");
+            api.hs_rate = il2::field_offset_quiet(hs, "m_BurnRate");
+            api.hs_fuel = il2::field_offset_quiet(hs, "m_Fuel");
+        }
     }
     if (Il2CppClass* torch = il2::find_class(kGame, "", "TorchItem")) {
         api.torch = il2::field_offset(gear, "m_TorchItem");
