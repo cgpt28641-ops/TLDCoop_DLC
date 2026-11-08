@@ -54,7 +54,8 @@ def main():
                 return v.get('English') or ''
         return ''
     rows, texts = [], []
-    for name in sorted(MADE):
+    # Shatsca 08.11: items whose base clothes the game doesn't have (MinersBoots, MinersPants) are left out
+    for name in sorted(n for n in MADE if n not in ('ChemicalICrampons', 'ChemicalNCrampons', 'MinerToolbelt')):
         base, extra = MADE[name]
         d = json.load(open(os.path.join(SRC, 'items', name + '.json'), encoding='utf-8'))
         m = d['ModClothingComponent']

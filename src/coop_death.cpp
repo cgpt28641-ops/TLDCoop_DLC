@@ -313,6 +313,7 @@ bool g_dead = false;
 bool g_cheat = false;  // TLDCoop_DLC: this death is TLD's own Cheat Death (config [death] mode=cheat, a life left)
 bool g_lives_set = false;
 bool g_cheat_ok = false;  // its hooks are in
+bool g_final = false;     // TLDCoop_DLC: the last Cheat Death life gone: TLD's end
 using RespawnFn = bool (*)(Il2CppObject* self, int32_t spawn, bool permanent, const MethodInfo* method);
 RespawnFn g_respawn = nullptr;
 using EnvFn = void (*)(Il2CppObject* self, void* environment, const MethodInfo* method);
@@ -1153,7 +1154,17 @@ void death_detour(Il2CppString* cause, const MethodInfo* method) {
             g_death(cause, method);
             return;
         }
-        logx::info("death: no Cheat Death lives left (%d of %d used): co-op's new survivor", used, total);
+        // TLDCoop_DLC (Shatsca 08.11: "po wykorzystaniu 3 szans pojawia się opcja RESPAWN - nie powinno jej być"): the
+        // last life gone, it's TLD's end for this survivor (its own screens and log). Their body stays for the others;
+        // the save is still never deleted (the host's is the world).
+        g_cause = text(cause);
+        g_final = true;
+        g_dead = true;
+        logx::info("death: no Cheat Death lives left (%d of %d used): the end of this survivor (TLD's own screens)",
+                   used, total);
+        leave_body();
+        g_death(cause, method);
+        return;
     }
     if (g_ready && coop() && !g_dead) {
         g_cause = text(cause);
@@ -1176,7 +1187,7 @@ void delete_detour(uint32_t game_id, const MethodInfo* method) {
 
 // Co-op's revive stage: RESPAWN, NEXT SURVIVOR; nothing goes back (TLD's back button) or on to TLD's later stages.
 bool ours(Il2CppObject* self) {
-    if (!g_ready || !g_dead || !coop() || g_cheat) return false;
+    if (!g_ready || !g_dead || !coop() || g_cheat || g_final) return false;
     if (target(g_panel) != self) {
         drop(g_panel);
         g_panel = hold(self);
@@ -1200,7 +1211,7 @@ void back_detour(Il2CppObject* self, const MethodInfo* method) {
 
 // TLD goes on to its end-of-game log when the mode has no lives left (or after END GAME): never while co-op's.
 void to_log_detour(Il2CppObject* self, bool fast, const MethodInfo* method) {
-    if (g_ready && g_dead && coop()) {  // (Cheat Death too: the world never ends in co-op)
+    if (g_ready && g_dead && coop() && !g_final) {  // (Cheat Death too; the last life gone, TLD's end goes on)
         logx::info("death: TLD would end the game (its log); co-op's screen stays");
         return;
     }
@@ -1339,6 +1350,7 @@ void on_frame(const std::string& scene, bool in_game) {
         if (g_dead && scene == "MainMenu") {
             g_dead = false;  // left the game while dead
             g_cheat = false;
+            g_final = false;
             hide_widgets();
         }
         g_others_dead.clear();
@@ -1386,7 +1398,7 @@ void on_frame(const std::string& scene, bool in_game) {
         }
         was = is_dead;
     }
-    if (!g_dead || g_cheat) return;
+    if (!g_dead || g_cheat || g_final) return;
     Il2CppObject* p = panel();
     if (!coop() || !p || !active(go_of(p)) || !on_revive_stage(p)) return;
     restyle(p);
