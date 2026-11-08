@@ -1,4 +1,5 @@
 #include "avatar.h"
+#include "coop_train.h"
 #include "wildlife_sync.h"
 
 #include <algorithm>
@@ -2988,6 +2989,10 @@ void update_one(Avatar& a, const std::string& local_scene, bool local_in_game, d
             a.body_yaw = std::fmod(a.body_yaw + step + 360.0f, 360.0f);
             a.turn_speed = dt > 0 ? step / dt : 0;
             if (!a.on_wolf) yaw = a.body_yaw;
+        }
+        if (!down) {  // TLDCoop_DLC: riding Iron Road's train: their spot in the cab of ours (not trailing behind)
+            float rx = x, ry = y, rz = z, ryaw = yaw;
+            if (coop_train::ride_spot(a.player, rx, ry, rz, ryaw)) x = rx, y = ry, z = rz, yaw = ryaw;
         }
         set_vec(api.set_position, root_transform, {x, y + (tip_over ? 0.2f : 0.0f), z});
         set_vec(api.set_euler, root_transform, {tip_over ? -80.0f : 0.0f, yaw, 0.0f});

@@ -1,0 +1,23 @@
+#pragma once
+// TLDCoop_DLC (Karol 08.11 "przechodzimy do IRON ROAD", item 10: the train): Iron Road's steam train
+// (TLD.SteamTrain.SteamTrain) in co-op. One player drives: the first one into the cab. Their game runs the engine and
+// sends the train ~15 times a second (Msg::Train: spline, place on it, direction, speed, pressure, gear, brakes, fuel,
+// water); every other game in that scene stops its own engine and controls for it and moves its train to match.
+// Anyone inside also sends where they stand in the cab, so their avatar rides along instead of trailing behind.
+// Leaving the cab hands the train back (a last frame, reliable). With nobody driving, the host sends its train every
+// 3 s and a friend's that is more than a metre off is put there. Main thread only.
+
+#include <string>
+
+namespace coop_train {
+
+bool init();
+void on_frame(const std::string& scene, bool in_game);
+
+// Where a player's avatar stands while they ride the train in our scene (their spot in the cab, on our train). False
+// when they're not on it (or the train isn't here).
+bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw);
+
+std::string describe();  // for the log and the dev command `train`
+
+}  // namespace coop_train
