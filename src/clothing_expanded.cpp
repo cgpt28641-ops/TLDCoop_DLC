@@ -73,6 +73,7 @@ struct Api {
     const MethodInfo *shared_materials = nullptr, *shared_material = nullptr;
     const MethodInfo *mat_shader = nullptr, *mat_set_shader = nullptr, *mat_keywords = nullptr, *mat_set_keywords = nullptr;
     const MethodInfo *bundles = nullptr, *bundle_load = nullptr;
+    const MethodInfo* bundle_names = nullptr;  // TLDCoop_DLC: AssetBundle.GetAllAssetNames()
     Il2CppObject *t_gear = nullptr, *t_clothing = nullptr, *t_repair = nullptr, *t_harvest = nullptr, *t_inspect = nullptr,
                  *t_tools = nullptr, *t_hover = nullptr, *t_weight_buff = nullptr, *t_climb_buff = nullptr,
                  *t_carry_buff = nullptr, *t_mesh_renderer = nullptr, *t_texture = nullptr, *t_icon_data = nullptr;
@@ -358,8 +359,31 @@ Il2CppObject* pack_texture(const std::string& path) {
 std::string short_name(const char* key) { return std::string(key).substr(5); }  // "GEAR_X" -> "X"
 
 // The icon's texture: the pack names a few with another case (DeerSkinToolbelt).
+// TLDCoop_DLC (08.11: every item "no icon in the pack"): what the pack holds, once, to see how it names its icons
+void list_icons_once() {
+    static bool done = false;
+    if (done || !api.bundle_names) return;
+    done = true;
+    Il2CppObject* b = pack_bundle();
+    Il2CppObject* arr = b ? il2::invoke(api.bundle_names, b) : nullptr;
+    size_t n = arr ? il2::array_length(arr) : 0, shown = 0;
+    std::string some;
+    for (size_t i = 0; i < n; ++i) {
+        Il2CppString* sn = reinterpret_cast<Il2CppString*>(il2::array_object_at(arr, i));
+        const std::string name = sn ? il2::to_utf8(sn) : std::string();
+        if (lower(name).find("ico") == std::string::npos) continue;
+        if (shown++ < 12) some += (some.empty() ? "" : ", ") + name;
+    }
+    logx::info("clothing: the pack holds %zu asset(s), %zu with 'ico' in the name: %s", n, shown, some.c_str());
+}
+
 Il2CppObject* icon_texture(const Item& it) {
+    list_icons_once();
     const std::string n = short_name(it.key);
+    for (const std::string& path : {"Assets/InventoryGridIcons/ico_GearItem__" + n + ".png",
+                                     lower("Assets/InventoryGridIcons/ico_GearItem__" + n + ".png"),
+                                     "ico_GearItem__" + n, lower("ico_GearItem__" + n)})
+        if (Il2CppObject* t = pack_texture(path)) return t;
     for (const std::string& v : {n, std::string("DeerSkinToolbelt")}) {
         if (v != n && lower(v) != lower(n)) continue;
         if (Il2CppObject* t = pack_texture("Assets/InventoryGridIcons/ico_GearItem__" + v + ".png")) return t;
@@ -1092,6 +1116,7 @@ bool init() {
     api.mat_set_keywords = il2::find_method(material, "set_shaderKeywords", 1);
     api.bundles = il2::find_method(bundle, "GetAllLoadedAssetBundles_Native", 0);
     api.bundle_load = il2::find_method_params(bundle, "LoadAsset", {"System.String", "System.Type"});
+    api.bundle_names = il2::find_method_quiet(bundle, "GetAllAssetNames", 0);
     api.load_catalog = il2::find_method_params(addressables, "LoadContentCatalogAsync",
                                                {"System.String", "System.Boolean", "System.String"});
     api.prefab_by_name = il2::find_method_params(radial, "GetPrefabFromName", {"System.String"});
