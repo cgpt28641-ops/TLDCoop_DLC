@@ -20,7 +20,8 @@ void on_frame(const std::string& scene, bool in_game);
 // when they're not on it (or the train isn't here).
 // F1 `train_flip`: the train's direction on its track the other way (a train an older build turned round).
 bool console(const std::string& line);
-bool riding(unsigned char player);  // they're on the train in our scene (their speed is the train's)
+bool riding(unsigned char player);
+float ride_speed(unsigned char player);  // their walking speed in the cab (m/s)  // they're on the train in our scene (their speed is the train's)
 bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw);
 
 // The train's locker (SteamTrain.m_Container) in our scene, and its id for world_containers ("train|GUID": it moves,

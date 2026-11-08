@@ -202,6 +202,10 @@ bool g_was_inside = false;
 double g_next_send = 0;
 std::array<Frame, net::kMaxPlayers> g_riders{};  // anyone inside: where they stand in the cab
 std::array<bool, net::kMaxPlayers> g_riding{};
+std::array<V3, net::kMaxPlayers> g_ride_local{};     // where each rider is drawn in the cab: eased towards their frames
+std::array<float, net::kMaxPlayers> g_ride_yaw{};
+std::array<bool, net::kMaxPlayers> g_ride_eased{};
+std::array<float, net::kMaxPlayers> g_ride_speed{};  // their walking speed in the cab
 Il2CppObject* g_spline_seen = nullptr;  // the spline whose GUID we last looked up
 std::string g_spline_guid;
 int g_snaps = 0, g_switches = 0;
@@ -570,6 +574,16 @@ void receive(double now) {
             if (f.flags == kHorn) continue;  // (only the horn)
         }
         f.at = now;
+        {  // TLDCoop_DLC (Shatsca 08.11 15:57: in the cab the body moved in jerks): how fast they walk in the cab
+            const Frame& was = g_riders[f.from];
+            if (was.at > 0 && now - was.at < 500 && now > was.at && (was.flags & kInside)) {
+                const float dx = f.local.x - was.local.x, dz = f.local.z - was.local.z;
+                const float v = std::sqrt(dx * dx + dz * dz) / static_cast<float>((now - was.at) / 1000.0);
+                g_ride_speed[f.from] += (std::min(v, 6.0f) - g_ride_speed[f.from]) * 0.5f;
+            } else {
+                g_ride_speed[f.from] = 0;
+            }
+        }
         g_riders[f.from] = f;
         g_riding[f.from] = (f.flags & kInside) && !(f.flags & kRelease);
         // TLDCoop_DLC (Kerel 08.11 "nie widzę pociągu"): each save keeps the train where that game last had it. The
@@ -1220,8 +1234,28 @@ void on_frame(const std::string& scene, bool in_game) {
         g_owner = kNobody;
         g_rate = 0;
     }
-    for (size_t i = 0; i < g_riding.size(); ++i)
+    for (size_t i = 0; i < g_riding.size(); ++i) {
         if (g_riding[i] && now - g_riders[i].at > kRiderLostMs) g_riding[i] = false;
+        if (!g_riding[i]) {
+            g_ride_eased[i] = false;
+            g_ride_speed[i] = 0;
+            continue;
+        }
+        // eased towards their newest spot (frames come ~15 a second): smooth, not a step each frame
+        const Frame& f = g_riders[i];
+        if (!g_ride_eased[i]) {
+            g_ride_local[i] = f.local, g_ride_yaw[i] = f.local_yaw, g_ride_eased[i] = true;
+            continue;
+        }
+        const float k = 1.0f - std::exp(-dt * 12.0f);
+        V3& l = g_ride_local[i];
+        const float dx = f.local.x - l.x, dy = f.local.y - l.y, dz = f.local.z - l.z;
+        if (dx * dx + dy * dy + dz * dz > 4.0f) l = f.local;  // (far: a jump, not a walk)
+        else l.x += dx * k, l.y += dy * k, l.z += dz * k;
+        const float dyaw = std::fmod(f.local_yaw - g_ride_yaw[i] + 540.0f, 360.0f) - 180.0f;
+        g_ride_yaw[i] += dyaw * k;
+        if (now - f.at > 300) g_ride_speed[i] *= 0.9f;  // (standing still: no frames move them)
+    }
     if (!g_train) return;
 
     const bool inside = inside_train();
@@ -1283,6 +1317,8 @@ bool console(const std::string& line) {
     return true;
 }
 
+float ride_speed(unsigned char player) { return player < g_ride_speed.size() ? g_ride_speed[player] : 0.0f; }
+
 bool riding(unsigned char player) {
     float x = 0, y = 0, z = 0, yaw = 0;
     return ride_spot(player, x, y, z, yaw);
@@ -1294,11 +1330,11 @@ bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw) {
     if (f.scene != g_scene || f.guid != g_guid) return false;
     Il2CppObject* tf = train_tf();
     if (!tf) return false;
-    V3 local = f.local, world{};
+    V3 local = g_ride_eased[player] ? g_ride_local[player] : f.local, world{};
     void* a[] = {&local};
     if (!il2::invoke_value(api.to_world, tf, world, a)) return false;
     x = world.x, y = world.y, z = world.z;
-    yaw = yaw_of(tf) + f.local_yaw;
+    yaw = yaw_of(tf) + (g_ride_eased[player] ? g_ride_yaw[player] : f.local_yaw);
     return true;
 }
 

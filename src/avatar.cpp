@@ -2779,7 +2779,7 @@ void drive_animation(Avatar& a, const net::StateMsg& s, double now) {
         // TLDCoop_DLC (Kerel 08.11: riding the train, the avatar ran): on the train its speed is the train's, not theirs
         const bool riding = coop_train::riding(a.player);
         const float dx = riding ? 0.0f : s.x - a.last_pos.x, dz = riding ? 0.0f : s.z - a.last_pos.z;
-        const float v = std::sqrt(dx * dx + dz * dz) / static_cast<float>(dt);
+        const float v = riding ? coop_train::ride_speed(a.player) : std::sqrt(dx * dx + dz * dz) / static_cast<float>(dt);
         a.speed += (v - a.speed) * static_cast<float>(std::fmin(1.0, dt * 8.0));  // smooth over ~1/8 s
         const float k = static_cast<float>(std::fmin(1.0, dt * 6.0));  // TLDCoop_DLC: which way (the mocap gait)
         a.vel_x += (dx / static_cast<float>(dt) - a.vel_x) * k;
