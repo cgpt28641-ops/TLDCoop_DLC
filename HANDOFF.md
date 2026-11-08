@@ -1434,3 +1434,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - F1 `train_flip`: MovementDirection the other way (Shatsca's host save has the train turned by the old build).
 - coop_save: a friend's game saves at once when the link to the host drops (Kerel: host left, couldn't save).
 - Still open from Kerel's reports: boat loading contents, "new terrain" crossing, military messages need everyone near.
+
+### 2026-11-08 ~15:30–16:00 local — transit, train parts as events, stone, hidden fires (CI green; NOT tested)
+- Island transit (Kerel: crossing worked for Shatsca only): IslandTransitInteraction.CanPlayerTransit hooked — true
+  when a remote player is already in the box's LoadScene.m_SceneToLoad.
+- Train parts (Kerel 15:38/15:41: oil and water did nothing): no more periodic full state (DeserializeComponent on a
+  lit boiler reset it). Only events: repair (condition up >0.5) / driver's wear, firebox lit/out via
+  BoilerTryTurnOn/BoilerTurnOff, oil/water poured (+0.05 l), cab lock. SetCondition for condition.
+  Track elements whose text drifts (towers) only go with the host's 15 s full list.
+- Stone/noise maker (Wrap::Palm): grip at hand + fingers·0.085 + palm·(0.02 + half size) — on the palm, not the wrist.
+- world_fires: fires named InvisibleFire (train firebox, heater) left out of the scene fire sync (Karol: cab got cold).
