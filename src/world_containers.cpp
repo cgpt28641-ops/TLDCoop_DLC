@@ -1,5 +1,7 @@
 #include "world_containers.h"
 
+#include "coop_train.h"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -147,6 +149,8 @@ Vector3 position_of(Il2CppObject* component) {
 
 // TLD's own id for the container (what ContainerManager.Serialize saves it by); name and position (cm) without one.
 std::string id_of(Il2CppObject* c) {
+    // TLDCoop_DLC (Iron Road): the steam train's locker moves with it: by the train's own id
+    if (std::string key = coop_train::container_key(c); !key.empty()) return key;
     // TLDCoop_DLC: a Seamless Interiors room's: by its building and spot (the game's ids of a room's differ per game)
     if (std::string key = seamless_interiors::room_key(c); !key.empty()) return key;
     void* args[] = {il2::invoke(api.component_go, c), nullptr};
@@ -179,6 +183,8 @@ std::vector<Il2CppObject*> all_containers() {
                 out.push_back(c);  // TLDCoop_DLC: not a Seamless Interiors room still building (a ready one's are shared)
         }
     }
+    // TLDCoop_DLC (Iron Road): the train's locker, if TLD keeps it off the manager's lists
+    if (Il2CppObject* c = coop_train::container(); c && alive(c) && seen.insert(c).second) out.push_back(c);
     return out;
 }
 

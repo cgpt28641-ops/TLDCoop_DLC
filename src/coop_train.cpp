@@ -63,6 +63,7 @@ struct Api {
     const MethodInfo* euler = nullptr;          // Transform.get_eulerAngles
     const MethodInfo* to_local = nullptr;       // Transform.InverseTransformPoint(Vector3)
     const MethodInfo* to_world = nullptr;       // Transform.TransformPoint(Vector3)
+    ptrdiff_t train_container = -1;             // SteamTrain.m_Container
     ptrdiff_t fuel_source = -1, water_source = -1;  // SteamTrain.m_FuelSource, m_WaterSource (GenericLiquidContainer)
     ptrdiff_t liquid_volume = -1;               // GenericLiquidContainer.m_CurrentVolume (ItemLiquidVolume: int64)
     FieldInfo* load_scenes = nullptr;           // static LoadScene.m_LoadScenesList
@@ -864,6 +865,7 @@ bool init() {
     api.to_local = il2::find_method_params(tf, "InverseTransformPoint", {"UnityEngine.Vector3"});
     api.to_world = il2::find_method_params(tf, "TransformPoint", {"UnityEngine.Vector3"});
     api.fuel_source = il2::field_offset(train, "m_FuelSource");
+    api.train_container = il2::field_offset(train, "m_Container");
     api.water_source = il2::field_offset(train, "m_WaterSource");
     if (liquid) api.liquid_volume = il2::field_offset(liquid, "m_CurrentVolume");
     if (state) {
@@ -1054,6 +1056,17 @@ bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw) {
     x = world.x, y = world.y, z = world.z;
     yaw = yaw_of(tf) + f.local_yaw;
     return true;
+}
+
+Il2CppObject* container() {
+    if (!g_ready || !g_train || !alive(g_train) || api.train_container < 0) return nullptr;
+    Il2CppObject* c = get<Il2CppObject*>(g_train, api.train_container);
+    return alive(c) ? c : nullptr;
+}
+
+std::string container_key(Il2CppObject* c) {
+    if (!c || g_guid.empty()) return {};
+    return c == container() ? "train|" + g_guid : std::string();
 }
 
 std::string describe() {

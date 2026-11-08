@@ -9,6 +9,8 @@
 
 #include <string>
 
+struct Il2CppObject;
+
 namespace coop_train {
 
 bool init();
@@ -17,6 +19,11 @@ void on_frame(const std::string& scene, bool in_game);
 // Where a player's avatar stands while they ride the train in our scene (their spot in the cab, on our train). False
 // when they're not on it (or the train isn't here).
 bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw);
+
+// The train's locker (SteamTrain.m_Container) in our scene, and its id for world_containers ("train|GUID": it moves,
+// so not by name and place). nullptr / "" when it isn't the train's.
+Il2CppObject* container();
+std::string container_key(Il2CppObject* c);
 
 std::string describe();  // for the log and the dev command `train`
 
