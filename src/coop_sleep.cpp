@@ -410,7 +410,11 @@ std::vector<net::Sleeper> everyone(const net::Status& st) {
     const bool host = hosting();
     const std::vector<net::StateMsg> states = netrt::remote_states();
     for (const net::PlayerInfo& p : st.players) {
-        if (host && !p.linked) continue;
+        // TLDCoop_DLC (Kerel 08.11: "jak osoba wyjdzie z serwera, to w trakcie spania dalej czeka na tę osobę"): someone
+        // who left (not linked any more, or no word from them at all) isn't waited for, by the host or a friend
+        if (!p.linked) continue;
+        if (!host && std::none_of(states.begin(), states.end(), [&](const net::StateMsg& m) { return m.player == p.id && m.valid; }))
+            continue;
         net::Sleeper s{p.id, false, net::SleepChoice::None, false};
         for (const net::StateMsg& m : states) {
             if (m.player != p.id || !m.valid || !(m.flags & net::kStateInBed)) continue;
