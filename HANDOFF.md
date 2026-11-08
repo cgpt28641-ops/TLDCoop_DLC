@@ -1340,3 +1340,16 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Nowy moduł `coop_summon` + Msg::Summon (58): hook uConsole.RunCommand; `teleportplayer NAZWA|all` (też `tpplayer`)
   w konsoli F1 hosta → gracz teleportowany na pozycję hosta (TeleportPlayer), tylko w tym samym regionie.
 - Ślady: domyślnie włączone bez wpisu w coop.ini (Shatsca nie chce edytować pliku).
+
+## 08.11 ~02:00 PL — animacje „bardziej ludzkie” (zrzuty Shatsca)
+- Zgłoszenia: ręce przy ciele / „T-rex” przy staniu i chodzeniu; kolana w złą stronę przy niszczeniu (chop); noga
+  ucieka w bok przy ognisku; zapętlone dokładanie/otwieranie puszki; jedzenie: pałka wchodzi w twarz, kubek do góry nogami.
+- Pomiary (tools/mocap, dane CMU w /home/claude/cmu/repo, sparse clone github una-dinosauria/cmu-mocap): chop — kolano
+  za linią biodro–stopa w 100% klatek (przeprost aktora), fire/kneel — skręt uda do -131°.
+- `retarget.humanize` (gen_clips HUMAN per klip): kończyny jak zawias (udo/ramię obrócone tak, by staw zginał się
+  właściwie, dolna kość bez skrętu względem górnej), kolano w tył → IK z kolanem do przodu (biodro i stopa bez zmian),
+  ręce odchylone 10° od ciała (search/work 5°, climb/carry 0), łokcie przy chodzie ×0.55 (bieg 0.75, skradanie 0.8);
+  dłonie i stopy trzymają obrót w świecie. avatar_mocap.inc wygenerowany ponownie (tabela klipów bez zmian).
+- avatar.cpp: przedmiot przy jedzeniu maks. 17 cm (set_held_scale, potem z powrotem 1), napoje (Tea/Coffee/Cup/Water…)
+  obrócone 180° (góra do góry); klipy w miejscu (kneel/fire/search/work) grane ×0,7.
+- Ubrania: `add` z konsoli działa (worek się dodał), więc przedmioty CE się nie zrobiły — czekam na coop.log.
