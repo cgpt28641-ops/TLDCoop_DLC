@@ -1920,7 +1920,17 @@ StatsParts stats_parts() {
     }
     Il2CppObject* weather = il2::invoke(sapi.weather, nullptr);
     bool ok_air = false, ok_feels = false;
-    const float air = invoke_float(sapi.air, weather, ok_air), feels = invoke_float(sapi.feels, weather, ok_feels);
+    const float air = invoke_float(sapi.air, weather, ok_air);
+    // TLDCoop_DLC (Shatsca 08.11 17:11: "odczuwalna temperatura w HUD-zie nie podlicza ubrań na ciele"): TLD's own
+    // feels-like, the one its clothing screen shows (Freezing.CalculateBodyTemperature: the air, the wind chill, the
+    // clothes' warmth, fires); the air with the wind chill only if that can't be read
+    float feels = 0;
+    {
+        bool ok_tld = false;
+        const float tld = invoke_float(sapi.body_temp, il2::invoke(sapi.freezing, nullptr), ok_tld);
+        if (ok_tld) feels = tld, ok_feels = true;
+        else feels = invoke_float(sapi.feels, weather, ok_feels);
+    }
     if (ok_air) snprintf(line, sizeof(line), "%.0f°C", air), add(out.air, line, "   ");
     if (ok_feels) {
         snprintf(line, sizeof(line), "%s %.0f°C", pl ? "ODCZUWALNA" : "FEELS LIKE", feels);
