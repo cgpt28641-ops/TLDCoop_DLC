@@ -168,7 +168,11 @@ std::vector<Il2CppObject*> all_fires() {
     const int32_t count = get<int32_t>(list, kListSize);
     for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i)
         if (Il2CppObject* f = il2::array_object_at(items, static_cast<size_t>(i));
-            alive(f) && !seamless_interiors::sync_skips(f))  // TLDCoop_DLC: not a Seamless Interiors room still building
+            alive(f) && !seamless_interiors::sync_skips(f) &&  // TLDCoop_DLC: not a Seamless Interiors room still building
+            name_of(f).find("InvisibleFire") == std::string::npos)
+            // TLDCoop_DLC (Karol 08.11: "w pociągu normalnie spada mi temperatura"): Iron Road's hidden fires (the
+            // train's firebox, the whale oil heater) belong to their train or heater, which share them; as scene fires
+            // the host's list put the train's out in a friend's game (its cab went cold)
             out.push_back(f);
     return out;
 }
