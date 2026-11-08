@@ -153,6 +153,7 @@ struct Api {
     ptrdiff_t clothing = -1, wet = -1, frozen = -1;  // TLDCoop_DLC: GearItem.m_ClothingItem, its m_PercentWet/Frozen
     ptrdiff_t hp = -1;                               // TLDCoop_DLC: GearItem.m_CurrentHP
     ptrdiff_t evolve_hours = -1;                   // EvolveItem.m_TimeSpentEvolvingGameHours
+    ptrdiff_t evolve_days = -1;                    // EvolveItem.m_TimeToEvolveGameDays
     const MethodInfo* evolve_can = nullptr;        // EvolveItem.CanEvolve()
     ptrdiff_t pot_state = -1;                      // CookingPotItem.m_CookingState (0 cooking, 1 ready, 2 ruined)
     ptrdiff_t pot_cooked = -1, pot_ruined = -1;    // CookingPotItem.m_PercentCooked, m_PercentRuined
@@ -1098,7 +1099,13 @@ void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) 
     m.pdid = wire_id(pdid);
     Il2CppObject* gi = gear_on(object_by_pdid(pdid));
     // In our pack, or (a stack) gone onto one there.
-    const bool taken = taken_now || (gi ? get<bool>(gi, api.in_inventory) : k.units > 0);
+    // TLDCoop_DLC (20:34 logs: 11 birch saplings done curing after a sleep gave everyone "Coin toss: someone else gets
+    // the Birch Sapling" 5-6 times): an item that was curing and goes is TLD's cure finishing (a new item takes its place
+    // in every game), never a take, whatever the pack flag says while TLD swaps it.
+    Il2CppObject* ev = gi && api.evolve >= 0 && api.evolve_hours >= 0 ? get<Il2CppObject*>(gi, api.evolve) : nullptr;
+    const float days = alive(ev) && api.evolve_days >= 0 ? get<float>(ev, api.evolve_days) : 0;
+    const bool cured = days > 0 && get<float>(ev, api.evolve_hours) >= days * 24 - 0.01f;  // its whole time cured
+    const bool taken = !cured && (taken_now || (gi ? get<bool>(gi, api.in_inventory) : k.units > 0));
     m.reason = taken ? net::ItemGoneReason::Taken : net::ItemGoneReason::Destroyed;
     net::Writer w(net::Msg::ItemGone);
     net::write_item_gone(w, m);
@@ -2561,6 +2568,7 @@ bool init() {
         logx::info("items: wetness and condition %s", api.clothing >= 0 && api.wet >= 0 && api.hp >= 0 ? "shared" : "partly shared (fields missing)");
         if (Il2CppClass* evolve = il2::find_class(kGame, "", "EvolveItem")) {
             api.evolve_hours = il2::field_offset_quiet(evolve, "m_TimeSpentEvolvingGameHours");
+            api.evolve_days = il2::field_offset_quiet(evolve, "m_TimeToEvolveGameDays");
             api.evolve_can = il2::find_method(evolve, "CanEvolve", 0);
         }
         api.lamp_load = il2::find_method_params(lamp, "Deserialize", {"System.String"});

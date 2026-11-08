@@ -50,7 +50,7 @@ std::vector<Done> g_done;  // what the packing thread made, for a notice on the 
 // TLDCoop_DLC: parts of our logs' zip waiting to go out, one at a time
 std::deque<net::LogsFileMsg> g_paced;
 double g_paced_ms = 0;
-constexpr double kLogsPaceMs = 300;
+constexpr double kLogsPaceMs = 1500;  // (20:10: 192 KB every 300 ms pushed the rtt to 3.7 s, containers "no answer")
 // TLDCoop_DLC: zips coming in for our "POBIERZ LOGI"
 struct Incoming {
     std::string from, name;
