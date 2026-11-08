@@ -966,8 +966,6 @@ void elements_receive() {
                 if (!alive(e.obj) || text(reinterpret_cast<Il2CppString*>(il2::invoke(e.guid, e.obj))) != guid) continue;
                 const std::string mine = text(reinterpret_cast<Il2CppString*>(il2::invoke(e.serialize, e.obj)));
                 if (mine != data) {
-                    void* a[] = {il2::il2cpp_string_new(data.c_str())};
-                    il2::invoke(e.deserialize, e.obj, a);
                     // TLDCoop_DLC (Karol 16:33: "zmieniłem zwrotnicę i u innego gracza się nie zmieniła"): TLD's
                     // Deserialize only keeps the state; the switch is thrown (the rails and the lever moved) by its
                     // own SetToggled, a turntable turned by SetAngle
@@ -985,6 +983,9 @@ void elements_receive() {
                             il2::invoke(angle, e.obj, b);
                         }
                     }
+                    // (then TLD's own state text, as a save loads it: after, so SetToggled saw the change to make)
+                    void* a[] = {il2::il2cpp_string_new(data.c_str())};
+                    il2::invoke(e.deserialize, e.obj, a);
                     ++applied;
                 }
                 const std::string now_data = text(reinterpret_cast<Il2CppString*>(il2::invoke(e.serialize, e.obj)));
