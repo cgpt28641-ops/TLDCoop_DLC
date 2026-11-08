@@ -134,7 +134,7 @@ Il2CppObject* keep(Il2CppObject* o) {
     if (o) g_keep.push_back(il2::il2cpp_gchandle_new(o, false));
     return o;
 }
-Il2CppString* str(const char* s) { return il2::il2cpp_string_new(s); }
+Il2CppString* str(const char* s) { return s ? il2::il2cpp_string_new(s) : nullptr; }  // (null: none; il2cpp_string_new(nullptr) faults)
 std::string name_of(Il2CppObject* o) {
     return alive(o) ? il2::to_utf8(reinterpret_cast<Il2CppString*>(il2::invoke(api.obj_name, o))) : std::string();
 }
@@ -177,7 +177,9 @@ int64_t enum_of(Il2CppClass* e, const char* name, int64_t fallback) {
 Il2CppObject* new_object(Il2CppClass* k, const MethodInfo* ctor, const char* arg) {
     Il2CppObject* o = k ? il2::il2cpp_object_new(k) : nullptr;
     if (!o || !ctor) return o;
-    void* a[] = {str(arg)};
+    // (no string made for no argument: il2cpp_string_new(nullptr) read address 0 inside GameAssembly, the
+    // GameAssembly+0x3cd25a fault of every ClothingExpanded crash: LocalizedString's ctor has none)
+    void* a[] = {arg ? str(arg) : nullptr};
     il2::invoke(ctor, o, arg ? a : nullptr);
     return o;
 }

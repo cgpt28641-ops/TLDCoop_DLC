@@ -1798,10 +1798,25 @@ bool indoors_now() {
 // condition, the load against what can be carried, the light in hand, the afflictions. Read four times a second;
 // shown with TLD's HUD (solo too). coop.ini [hud] stats=0 turns it off.
 
-constexpr int kStatsFont = 16;
-constexpr float kStatsLeft = 24, kStatsTop = 24, kStatsPad = 9;
-uintptr_t g_stats_root = 0, g_stats_back = 0, g_stats_label = 0;
-std::string g_stats_text, g_stats_shown;
+// (08.11, Shatsca's layout: the time alone at the top centre, bigger; the weight top left by a weight icon; warmth and
+// condition over TLD's status icons; the air and feels-like temperature and the wind under the health bar, red below 0)
+constexpr int kTimeFont = 24, kTopFont = 16, kStatusFont = 15, kAirFont = 13;
+constexpr float kStatsLeft = 24, kStatsTop = 20;
+constexpr float kStatusLeft = 56, kStatusAbove = 122;  // UI units from the bottom: over TLD's status icons
+constexpr float kAirLeft = 56, kAirAbove = 8;          // under its health bar
+uintptr_t g_stats_root = 0;
+struct StatsLabel {
+    uintptr_t label = 0;
+    std::string shown;
+};
+StatsLabel g_time_l, g_top_l, g_status_l, g_air_l;
+uintptr_t g_weight_icon = 0;
+bool g_weight_icon_tried = false;
+struct StatsParts {
+    std::string time, top, status, air;
+    bool cold = false;  // feels-like below 0: the air line red
+};
+StatsParts g_parts;
 
 struct StatsApi {
     bool looked = false;
@@ -1884,60 +1899,56 @@ double weight_kg(const MethodInfo* m, Il2CppObject* o, bool& ok) {
     return ok ? static_cast<double>(u) / sapi.units_per_kg : 0;
 }
 
-std::string stats_text() {
+StatsParts stats_parts() {
     look_up_stats();
+    StatsParts out;
     char line[160];
-    std::string out;
-    auto add = [&](const std::string& l) { out += (out.empty() ? "" : "\n") + l; };
-    const bool pl = !custom_text::text("TLDCOOP_HUD_TIME").empty() && custom_text::text("TLDCOOP_HUD_TIME") == "GODZINA";
+    auto add = [](std::string& to, const std::string& l, const char* sep) { to += (to.empty() ? "" : sep) + l; };
+    const bool pl = custom_text::text("TLDCOOP_HUD_TIME") == "GODZINA";
     const game::WorldState w = game::read_world();
     if (w.valid) {
-        snprintf(line, sizeof(line), "%s %02d:%02d", pl ? "GODZINA" : "TIME", w.hour, w.minute);
-        add(line);
+        snprintf(line, sizeof(line), "%02d:%02d", w.hour, w.minute);
+        out.time = line;
     }
     Il2CppObject* weather = il2::invoke(sapi.weather, nullptr);
     bool ok_air = false, ok_feels = false;
     const float air = invoke_float(sapi.air, weather, ok_air), feels = invoke_float(sapi.feels, weather, ok_feels);
-    if (ok_air || ok_feels) {
-        std::string t;
-        if (ok_air) snprintf(line, sizeof(line), "%s %.0f°C", pl ? "POWIETRZE" : "AIR", air), t = line;
-        if (ok_feels) snprintf(line, sizeof(line), "%s%s %.0f°C", t.empty() ? "" : "  ·  ", pl ? "ODCZUWALNA" : "FEELS LIKE", feels), t += line;
-        add(t);
+    if (ok_air) snprintf(line, sizeof(line), "%.0f°C", air), add(out.air, line, "   ");
+    if (ok_feels) {
+        snprintf(line, sizeof(line), "%s %.0f°C", pl ? "ODCZUWALNA" : "FEELS LIKE", feels);
+        add(out.air, line, "   ");
     }
+    out.cold = ok_feels ? feels < 0 : ok_air && air < 0;
     if (w.valid) {
         snprintf(line, sizeof(line), "%s %.0f km/h%s", pl ? "WIATR" : "WIND", w.wind_mph * 1.609f,
-                 w.indoors ? (pl ? "  (W ŚRODKU)" : "  (INDOORS)") : "");
-        add(line);
+                 w.indoors ? (pl ? " (W ŚRODKU)" : " (INDOORS)") : "");
+        add(out.air, line, "   ");
     }
     Il2CppObject* fr = il2::invoke(sapi.freezing, nullptr);
     Il2CppObject* cond = il2::invoke(sapi.condition, nullptr);
-    std::string t;
-    bool ok_body = false;
-    const float body = invoke_float(sapi.body_temp, fr, ok_body);
-    if (ok_body && body > 20 && body < 45) snprintf(line, sizeof(line), "%s %.1f°C", pl ? "CIAŁO" : "BODY", body), t = line;
-    if (fr && sapi.freeze_now >= 0 && sapi.freeze_max >= 0) {
-        const float mx = get<float>(fr, sapi.freeze_max);
-        if (mx > 0) {
-            snprintf(line, sizeof(line), "%s%s %.0f%%", t.empty() ? "" : "  ·  ", pl ? "CIEPŁO" : "WARMTH",
-                     100.0f * (1.0f - std::clamp(get<float>(fr, sapi.freeze_now) / mx, 0.0f, 1.0f)));
-            t += line;
-        }
+    if (fr && sapi.freeze_now >= 0 && sapi.freeze_max >= 0 && get<float>(fr, sapi.freeze_max) > 0) {
+        snprintf(line, sizeof(line), "%s %.0f%%", pl ? "CIEPŁO" : "WARMTH",
+                 100.0f * (1.0f - std::clamp(get<float>(fr, sapi.freeze_now) / get<float>(fr, sapi.freeze_max), 0.0f, 1.0f)));
+        add(out.status, line, "   ");
     }
     if (cond && sapi.hp >= 0 && sapi.hp_max >= 0 && get<float>(cond, sapi.hp_max) > 0) {
-        snprintf(line, sizeof(line), "%s%s %.0f%%", t.empty() ? "" : "  ·  ", pl ? "KONDYCJA" : "CONDITION",
+        snprintf(line, sizeof(line), "%s %.0f%%", pl ? "KONDYCJA" : "CONDITION",
                  100.0f * get<float>(cond, sapi.hp) / get<float>(cond, sapi.hp_max));
-        t += line;
+        add(out.status, line, "   ");
     }
-    if (!t.empty()) add(t);
+    bool ok_body = false;
+    const float body = invoke_float(sapi.body_temp, fr, ok_body);
+    if (ok_body && body > 20 && body < 45) snprintf(line, sizeof(line), "%s %.1f°C", pl ? "CIAŁO" : "BODY", body), add(out.status, line, "   ");
+    // top left: the weight (by its icon), the light in hand, what ails us
     bool ok_w = false, ok_c = false;
     const double kg = weight_kg(sapi.inv_weight, il2::invoke(sapi.inventory, nullptr), ok_w);
     const double cap = weight_kg(sapi.carry, il2::invoke(sapi.encumber, nullptr), ok_c);
+    const bool icon = live(g_weight_icon) != nullptr;
     if (ok_w) {
-        if (ok_c && cap > 0) snprintf(line, sizeof(line), "%s %.1f / %.1f kg", pl ? "WAGA" : "WEIGHT", kg, cap);
-        else snprintf(line, sizeof(line), "%s %.1f kg", pl ? "WAGA" : "WEIGHT", kg);
-        add(line);
+        if (ok_c && cap > 0) snprintf(line, sizeof(line), "%s%.1f / %.1f kg", icon ? "" : (pl ? "WAGA " : "WEIGHT "), kg, cap);
+        else snprintf(line, sizeof(line), "%s%.1f kg", icon ? "" : (pl ? "WAGA " : "WEIGHT "), kg);
+        add(out.top, line, "\n");
     }
-    // the light in hand
     Il2CppObject* pm = il2::invoke(sapi.player_manager, nullptr);
     Il2CppObject* held = pm && sapi.in_hands >= 0 ? get<Il2CppObject*>(pm, sapi.in_hands) : nullptr;
     if (alive(held)) {
@@ -1947,17 +1958,16 @@ std::string stats_text() {
         bool ok = false;
         if (alive(lamp)) {
             const float pct = invoke_float(sapi.lamp_pct, lamp, ok);
-            if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "LAMPA - PALIWO" : "LAMP FUEL", pct), add(line);
+            if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "LAMPA - PALIWO" : "LAMP FUEL", pct), add(out.top, line, "\n");
         } else if (alive(torch) && sapi.torch_life >= 0 && sapi.torch_burnt >= 0 && get<float>(torch, sapi.torch_life) > 0) {
             const float left = 1.0f - get<float>(torch, sapi.torch_burnt) / get<float>(torch, sapi.torch_life);
             snprintf(line, sizeof(line), "%s %.0f%%", pl ? "POCHODNIA" : "TORCH", 100.0f * std::clamp(left, 0.0f, 1.0f));
-            add(line);
+            add(out.top, line, "\n");
         } else if (alive(flare)) {
             const float left = invoke_float(sapi.flare_left, flare, ok);
-            if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "RACA" : "FLARE", 100.0f * std::clamp(left, 0.0f, 1.0f)), add(line);
+            if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "RACA" : "FLARE", 100.0f * std::clamp(left, 0.0f, 1.0f)), add(out.top, line, "\n");
         }
     }
-    // what ails us, by TLD's own names
     uint8_t condition = 0;
     uint32_t bits = 0;
     game::read_health(condition, bits);
@@ -1968,8 +1978,25 @@ std::string stats_text() {
         if (name.empty()) name = net::affliction_name(static_cast<net::Affliction>(i));
         if (!name.empty()) ails += (ails.empty() ? "" : ", ") + upper(name);
     }
-    if (!ails.empty()) add(ails);
+    if (!ails.empty()) add(out.top, ails, "\n");
     return out;
+}
+
+Il2CppObject* stats_label(StatsLabel& l, Il2CppObject* parent, const char* name, int font, int pivot) {
+    if (Il2CppObject* x = live(l.label)) return x;
+    drop(l.label);
+    Il2CppObject* label = make_label(go_transform(parent), name, font, pivot);
+    if (label && api.label_set_alignment) set_int(api.label_set_alignment, label, pivot == 1 ? 2 : 1);  // centred / left
+    l.label = hold(label);
+    l.shown.clear();
+    return label;
+}
+
+void put_stats(StatsLabel& l, Il2CppObject* label, const std::string& text, Il2CppObject* ui_camera, float x, float y) {
+    if (!label) return;
+    set_active(go_of(label), !text.empty());
+    if (text != l.shown) set_text(label, text), l.shown = text;
+    place_on_screen(transform_of(label), ui_camera, x, y);
 }
 
 void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
@@ -1982,50 +2009,48 @@ void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
         Il2CppObject* panel = il2::invoke(api.add_component, go, type_args);
         set_int(api.panel_set_depth, panel, kPanelDepth);
         g_stats_root = hold(go);
-        drop(g_stats_back);
-        drop(g_stats_label);
-        g_stats_shown.clear();
+        for (StatsLabel* l : {&g_time_l, &g_top_l, &g_status_l, &g_air_l}) drop(l->label), l->shown.clear();
+        drop(g_weight_icon);
+        g_weight_icon_tried = false;
         r = go;
         logx::info("hud: made the stats panel under TLD's HUD");
     }
     const bool showing = hud_showing(hud);
     set_active(r, showing);
     if (!showing) return;
+    if (!g_weight_icon_tried) {  // a weight icon from TLD's atlases, if one of these names is in them
+        g_weight_icon_tried = true;
+        for (const char* n : {"ico_weight", "ico_Weight", "icon_weight", "ico_encumbered", "ico_Encumbered", "ico_StatusWeight",
+                              "ico_weight_small", "ico_Encumber", "ico_backpack", "ico_Backpack"}) {
+            if (Il2CppObject* icon = make_sprite(go_transform(r), "WeightIcon", n, 18)) {
+                g_weight_icon = hold(icon);
+                logx::info("hud: stats: the weight icon is TLD's '%s'", n);
+                break;
+            }
+        }
+    }
     static std::chrono::steady_clock::time_point next{};
     const auto now = std::chrono::steady_clock::now();
     if (now >= next) {
-        g_stats_text = stats_text();
+        g_parts = stats_parts();
         next = now + std::chrono::milliseconds(250);
     }
-    Il2CppObject* back = live(g_stats_back);
-    Il2CppObject* label = live(g_stats_label);
-    if (!back) {
-        back = clone_under(hud_label_back(), go_transform(r), "StatsBack");
-        strip_anchor(back);
-        set_int(api.widget_set_pivot, back, 0);  // TopLeft
-        g_stats_back = hold(back);
-    }
-    if (!label) {
-        label = make_label(go_transform(r), "Stats", kStatsFont, 0);
-        if (label && api.label_set_alignment) set_int(api.label_set_alignment, label, 1);
-        g_stats_label = hold(label);
-        g_stats_shown.clear();
-    }
-    if (!label) return;
-    if (g_stats_text != g_stats_shown) {
-        set_text(label, g_stats_text);
-        g_stats_shown = g_stats_text;
-    }
+    const float width = static_cast<float>(screen_size(api.screen_width));
     const float height = static_cast<float>(screen_size(api.screen_height));
-    const float x = kStatsLeft * px, y = height - kStatsTop * px;
-    place_on_screen(transform_of(label), ui_camera, x + kStatsPad * px, y - kStatsPad * px);
-    if (back) {
-        const Vector2 lp = printed(label);
-        set_active(go_of(back), !g_stats_text.empty());
-        set_int(api.widget_set_width, back, static_cast<int>(lp.x + 2 * kStatsPad));
-        set_int(api.widget_set_height, back, static_cast<int>(lp.y + 2 * kStatsPad));
-        place_on_screen(transform_of(back), ui_camera, x, y);
+    put_stats(g_time_l, stats_label(g_time_l, r, "StatsTime", kTimeFont, 1), g_parts.time, ui_camera, width * 0.5f,
+              height - kStatsTop * px);
+    Il2CppObject* icon = live(g_weight_icon);
+    const float top_x = (kStatsLeft + (icon ? 24 : 0)) * px, top_y = height - kStatsTop * px;
+    put_stats(g_top_l, stats_label(g_top_l, r, "StatsTop", kTopFont, 0), g_parts.top, ui_camera, top_x, top_y);
+    if (icon) {
+        set_active(go_of(icon), !g_parts.top.empty());
+        place_on_screen(transform_of(icon), ui_camera, (kStatsLeft + 9) * px, top_y - 10 * px);
     }
+    put_stats(g_status_l, stats_label(g_status_l, r, "StatsStatus", kStatusFont, 6), g_parts.status, ui_camera,
+              kStatusLeft * px, kStatusAbove * px);
+    Il2CppObject* air = stats_label(g_air_l, r, "StatsAir", kAirFont, 6);
+    if (air) set_color(air, g_parts.cold ? Color{0.9f, 0.3f, 0.27f, 1} : g_text_color);
+    put_stats(g_air_l, air, g_parts.air, ui_camera, kAirLeft * px, kAirAbove * px);
 }
 
 void late_update() {
