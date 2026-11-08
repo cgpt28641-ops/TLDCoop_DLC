@@ -168,6 +168,12 @@ constexpr const char* kDefaultIni =
     "indoor_light=0\n"
     "\n"
     "[death]\n"
+    "; cheat = the game's own Cheat Death (choose the penalty and a close or far respawn; your old pack stays in the\n"
+    "; world to recover) while you have lives; after the last one, co-op's way below. coop = always co-op's way.\n"
+    "mode=cheat\n"
+    "; Cheat Death's lives in co-op.\n"
+    "lives=3\n"
+    "; Co-op's way: a body where you fell, a new survivor.\n"
     "; When you die, this many percent of your ordinary items are lost at random (story, mission and undroppable\n"
     "; items never); the rest stay in your body for anyone to take back. 0 = keep everything.\n"
     "lose_percent=70\n"
@@ -348,6 +354,8 @@ Settings load() {
     s.seamless_indoor_light = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"interiors", L"indoor_light", 0, ini.c_str())), 0, 100);
     if (s.seamless_indoor_light > 0 && s.seamless_indoor_light < 5) s.seamless_indoor_light = 5;
     s.death_lose_percent = static_cast<int>(GetPrivateProfileIntW(L"death", L"lose_percent", 70, ini.c_str()));
+    s.death_cheat = read(ini, L"mode", "cheat", L"death") != "coop";  // TLDCoop_DLC
+    s.death_lives = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"death", L"lives", 3, ini.c_str())), 0, 20);
     auto level = [&](const wchar_t* key, float& v) {
         const std::string t = read(ini, key, "", L"ambient");
         if (!t.empty()) v = static_cast<float>(atof(t.c_str()));

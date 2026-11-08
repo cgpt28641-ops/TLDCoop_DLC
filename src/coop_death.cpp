@@ -101,6 +101,10 @@ struct Api {
     const MethodInfo* take_off = nullptr;           // PlayerManager.TakeOffClothingItem(GearItem)
     ptrdiff_t start_gear_applied = -1;              // PlayerManager.m_StartGearApplied
     ptrdiff_t control_mode = -1;                    // PlayerManager.m_ControlMode
+    ptrdiff_t lad_state = -1;                       // TLDCoop_DLC: LifeAfterDeathManager.m_LifeAfterDeathState
+    ptrdiff_t lads_enabled = -1, lads_used = -1;    // LifeAfterDeathState.m_SystemEnabled, m_LivesUsed
+    const MethodInfo* lad_respawn = nullptr;        // LifeAfterDeathManager.PerformRespawn(SpawnPointType, bool)
+    const MethodInfo* lad_environment = nullptr;    // LifeAfterDeathManager.HandlePlayerEnvironment(RespawnEnvironment)
     ptrdiff_t lad_tunables = -1;                    // LifeAfterDeathManager.m_Tunables (a struct, lives first)
     ptrdiff_t inv_items = -1;                       // Inventory.m_Items (List<GearItemObject>)
     const MethodInfo* inv_remove = nullptr;         // Inventory.RemoveGear(GameObject, bool toContainer)
@@ -306,6 +310,13 @@ std::string upper(const std::string& s) { return utf8_upper(s); }  // TLDCoop_DL
 // --- state ---------------------------------------------------------------------------------------------------------
 
 bool g_dead = false;
+bool g_cheat = false;  // TLDCoop_DLC: this death is TLD's own Cheat Death (config [death] mode=cheat, a life left)
+bool g_lives_set = false;
+bool g_cheat_ok = false;  // its hooks are in
+using RespawnFn = bool (*)(Il2CppObject* self, int32_t spawn, bool permanent, const MethodInfo* method);
+RespawnFn g_respawn = nullptr;
+using EnvFn = void (*)(Il2CppObject* self, void* environment, const MethodInfo* method);
+EnvFn g_environment = nullptr;
 std::string g_cause;
 uintptr_t g_panel = 0;                          // TLD's Panel_LifeAfterDeath, once seen
 uintptr_t g_preview = 0;                        // our UITexture on it: the next survivor
@@ -1101,7 +1112,49 @@ DeleteFn g_delete = nullptr;
 PanelFn g_left = nullptr, g_right = nullptr, g_back = nullptr;
 PanelBoolFn g_to_log = nullptr, g_enable = nullptr;
 
+// TLDCoop_DLC (Shatsca 08.11 "tryb śmierci jak w normalnej grze, cheat death, trzy szanse"): lives used and given.
+bool cheat_lives(int& used, int& total) {
+    Il2CppObject* lad = game_static("m_LifeAfterDeathManager");
+    if (!lad || api.lad_state < 0 || api.lad_tunables < 0) return false;
+    Il2CppObject* st = get<Il2CppObject*>(lad, api.lad_state);
+    if (!st) return false;
+    used = get<int32_t>(st, api.lads_used);
+    total = get<int32_t>(lad, api.lad_tunables);
+    return true;
+}
+
+// In co-op with mode=cheat: Cheat Death on in this save, with the lives coop.ini gives.
+void ensure_cheat_death() {
+    if (g_lives_set || !g_cheat_ok || !coop()) return;
+    const config::Settings cfg = config::load();
+    if (!cfg.death_cheat) return;
+    Il2CppObject* lad = game_static("m_LifeAfterDeathManager");
+    if (!lad || api.lad_state < 0 || api.lad_tunables < 0) return;
+    Il2CppObject* st = get<Il2CppObject*>(lad, api.lad_state);
+    if (!st) return;
+    g_lives_set = true;
+    const bool was_on = get<bool>(st, api.lads_enabled);
+    put<bool>(st, api.lads_enabled, true);
+    put<int32_t>(lad, api.lad_tunables, cfg.death_lives);
+    logx::info("death: Cheat Death in co-op: %d lives (%d used)%s", cfg.death_lives, get<int32_t>(st, api.lads_used),
+               was_on ? "" : "; turned on for this save");
+}
+
 void death_detour(Il2CppString* cause, const MethodInfo* method) {
+    if (g_ready && g_cheat_ok && coop() && !g_dead && config::load().death_cheat) {
+        ensure_cheat_death();
+        int used = 0, total = 0;
+        if (cheat_lives(used, total) && used < total) {
+            g_cause = text(cause);
+            g_cheat = true;
+            g_dead = true;
+            logx::info("death: we died%s%s; Cheat Death (life %d of %d): TLD's own screens", g_cause.empty() ? "" : ": ",
+                       g_cause.c_str(), used + 1, total);
+            g_death(cause, method);
+            return;
+        }
+        logx::info("death: no Cheat Death lives left (%d of %d used): co-op's new survivor", used, total);
+    }
     if (g_ready && coop() && !g_dead) {
         g_cause = text(cause);
         logx::info("death: we died%s%s; leaving a body, then TLD's screen after a death (co-op's)",
@@ -1123,7 +1176,7 @@ void delete_detour(uint32_t game_id, const MethodInfo* method) {
 
 // Co-op's revive stage: RESPAWN, NEXT SURVIVOR; nothing goes back (TLD's back button) or on to TLD's later stages.
 bool ours(Il2CppObject* self) {
-    if (!g_ready || !g_dead || !coop()) return false;
+    if (!g_ready || !g_dead || !coop() || g_cheat) return false;
     if (target(g_panel) != self) {
         drop(g_panel);
         g_panel = hold(self);
@@ -1147,11 +1200,36 @@ void back_detour(Il2CppObject* self, const MethodInfo* method) {
 
 // TLD goes on to its end-of-game log when the mode has no lives left (or after END GAME): never while co-op's.
 void to_log_detour(Il2CppObject* self, bool fast, const MethodInfo* method) {
-    if (g_ready && g_dead && coop()) {
+    if (g_ready && g_dead && coop()) {  // (Cheat Death too: the world never ends in co-op)
         logx::info("death: TLD would end the game (its log); co-op's screen stays");
         return;
     }
     g_to_log(self, fast, method);
+}
+
+// TLDCoop_DLC: Cheat Death's respawn done: alive again (TLD may load the respawn's scene next).
+bool respawn_detour(Il2CppObject* self, int32_t spawn, bool permanent, const MethodInfo* method) {
+    const bool ok = g_respawn(self, spawn, permanent, method);
+    if (g_cheat) {
+        int used = 0, total = 0;
+        cheat_lives(used, total);
+        logx::info("death: Cheat Death respawn (%s, %s penalty): %s; lives used %d of %d", spawn == 2 ? "close, risky"
+                   : spawn == 1 ? "far, safe" : "?", permanent ? "permanent" : "short-term", ok ? "done" : "FAILED",
+                   used, total);
+        g_cheat = false;
+        g_dead = false;
+    }
+    return ok;
+}
+
+// TLDCoop_DLC: Cheat Death sets the weather and passes hours for the respawn; in co-op the world's clock and weather
+// are the host's and go on for everyone: left as they are.
+void environment_detour(Il2CppObject* self, void* environment, const MethodInfo* method) {
+    if (g_ready && coop()) {
+        logx::info("death: Cheat Death's weather and hours passing skipped (co-op: the world goes on as it is)");
+        return;
+    }
+    g_environment(self, environment, method);
 }
 
 void enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
@@ -1257,13 +1335,16 @@ void describe() {
 void on_frame(const std::string& scene, bool in_game) {
     if (!g_ready) return;
     if (!in_game) {
+        if (scene == "MainMenu") g_lives_set = false;  // TLDCoop_DLC: another save may come next
         if (g_dead && scene == "MainMenu") {
             g_dead = false;  // left the game while dead
+            g_cheat = false;
             hide_widgets();
         }
         g_others_dead.clear();
         return;
     }
+    ensure_cheat_death();  // TLDCoop_DLC
     if (g_controls_again_at && now_ms() >= g_controls_again_at) {  // TLDCoop_DLC: once, 8 s after (only that one
         g_controls_again_at = 0;                                    // ever found something: the camera's animation)
         // Only what the death left: a new fight (a wolf on the new survivor at once) or anything else TLD is doing
@@ -1298,14 +1379,14 @@ void on_frame(const std::string& scene, bool in_game) {
             std::string who = "A player";
             for (const net::PlayerInfo& p : st.players)
                 if (p.id == s.player && !p.name.empty()) who = p.name;
-            coop_notices::tell(who + " died. Their body lies where they fell.");
+            coop_notices::tell(who + " died.");
             logx::info("death: %s (player %u) died", who.c_str(), s.player);
         } else if (!is_dead && was) {
             logx::info("death: player %u is back, a new survivor", s.player);
         }
         was = is_dead;
     }
-    if (!g_dead) return;
+    if (!g_dead || g_cheat) return;
     Il2CppObject* p = panel();
     if (!coop() || !p || !active(go_of(p)) || !on_revive_stage(p)) return;
     restyle(p);
@@ -1398,6 +1479,13 @@ bool init() {
     api.make_gear = il2::find_method_params(gear, "InstantiateGearItem", {"System.String"});
     if (Il2CppClass* lad = il2::find_class(kGame, "TLD.Gameplay", "LifeAfterDeathManager")) {
         api.lad_tunables = il2::field_offset(lad, "m_Tunables");
+        api.lad_state = il2::field_offset(lad, "m_LifeAfterDeathState");  // TLDCoop_DLC
+        api.lad_respawn = il2::find_method(lad, "PerformRespawn", 2);
+        api.lad_environment = il2::find_method(lad, "HandlePlayerEnvironment", 1);
+        if (Il2CppClass* st = il2::find_class(kGame, "TLD.Gameplay", "LifeAfterDeathState")) {
+            api.lads_enabled = il2::field_offset(st, "m_SystemEnabled");
+            api.lads_used = il2::field_offset(st, "m_LivesUsed");
+        }
         // Cheat Death's names for the water items (constants, read from the game's metadata).
         for (auto [field, out] : {std::pair{"POTABLE_WATER_SUPPLY_NAME", &api.potable_name},
                                   std::pair{"NONPOTABLE_WATER_SUPPLY_NAME", &api.not_potable_name}}) {
@@ -1568,6 +1656,15 @@ bool init() {
               hook("Panel_LifeAfterDeath.HandleOnRightButtonPressed", api.panel_right, &right_detour, &g_right) &&
               hook("Panel_LifeAfterDeath.HandleOnBackButtonPressed", api.panel_back, &back_detour, &g_back) &&
               hook("Panel_LifeAfterDeath.ContinueToLogPanel", api.panel_to_log, &to_log_detour, &g_to_log);
+    if (g_ready && api.lad_respawn && api.lad_environment && api.lad_state >= 0 && api.lads_used >= 0) {
+        // TLDCoop_DLC: Cheat Death in co-op
+        g_cheat_ok = hook("LifeAfterDeathManager.PerformRespawn", api.lad_respawn, &respawn_detour, &g_respawn) &&
+                     hook("LifeAfterDeathManager.HandlePlayerEnvironment", api.lad_environment, &environment_detour,
+                          &g_environment);
+        if (!g_cheat_ok) logx::warn("death: Cheat Death's hooks failed; co-op's way only");
+    } else if (g_ready) {
+        logx::warn("death: Cheat Death's parts not found; co-op's way only");
+    }
     logx::info("death: %s", g_ready ? "ready (a death in co-op leaves a body; the player comes back as a new survivor)"
                                     : "UNAVAILABLE (hooks failed)");
     return g_ready;

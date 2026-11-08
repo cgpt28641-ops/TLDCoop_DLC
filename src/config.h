@@ -102,6 +102,11 @@ struct Settings {
     // TLDCoop_DLC: [death] lose_percent: how many of the ordinary items (not story, mission or undroppable ones) a death
     // takes, at random; the rest stay in the body.
     int death_lose_percent = 70;
+    // TLDCoop_DLC (Shatsca 08.11): [death] mode: "cheat" = TLD's own Cheat Death (penalty, close/far respawn, the old
+    // pack left in the world) while lives last, then co-op's new survivor; "coop" = co-op's body + new survivor always.
+    // lives: Cheat Death's lives in co-op (whatever the experience mode gives).
+    bool death_cheat = true;
+    int death_lives = 3;
     // [test] section, for automated runs only (no menu clicks):
     std::string test_resume;           // load this save slot (e.g. sandbox5) as soon as the main menu is up
     bool test_nosave = false;          // never save: a second copy of the game playing the same save
