@@ -1500,3 +1500,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - 21:25 Wolf shot by Szymon showed "condition 0%, frozen" for all: the host's animal that took the dead wolf's place
   kept its own BodyHarvest. wildlife_carcass::fresh_kill(ai) after the body deserialize in owner.inc: dead < 600 s →
   unfrozen, condition 0 → 100. UNTESTED (if the reused animal was long dead, its m_TimeInDeadMode skips the fix).
+- 21:45 ClothingExpanded icons: the catalog keys them "ico_GearItem__<Name>" (m_KeyDataString); icon_texture first
+  asks Utils.GetInventoryGridIconTexture(string) (TLD's Addressables icon loader) with that, the bare name, GEAR_name;
+  the working spelling is remembered, none → not asked again (warn "TLD's icon loader has none of ours either").
+  UNTESTED; log "clothing: icons from TLD's loader as …".
