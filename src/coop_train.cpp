@@ -65,6 +65,10 @@ struct Api {
     const MethodInfo* to_world = nullptr;       // Transform.TransformPoint(Vector3)
     ptrdiff_t fuel_source = -1, water_source = -1;  // SteamTrain.m_FuelSource, m_WaterSource (GenericLiquidContainer)
     ptrdiff_t liquid_volume = -1;               // GenericLiquidContainer.m_CurrentVolume (ItemLiquidVolume: int64)
+    FieldInfo* load_scenes = nullptr;           // static LoadScene.m_LoadScenesList
+    ptrdiff_t ls_items = -1, ls_size = -1;      // its List<LoadScene>._items, _size
+    ptrdiff_t ls_scene = -1, ls_exit_spline = -1;  // LoadScene.m_SceneToLoad, m_ExitSplineGUID
+    const MethodInfo* impact = nullptr;         // LoadScene.HandleTrainCarImpact(TrainCar, ImpactArea)
     std::array<const MethodInfo*, 4> part_get{};  // SteamTrain.get_BrakeShoe, get_Boiler, get_CowCatcher, get_Wheels
     const MethodInfo* serialize_component = nullptr;    // SteamTrainComponent.SerializeComponent()
     const MethodInfo* deserialize_component = nullptr;  // SteamTrainComponent.DeserializeComponent(state)
@@ -371,6 +375,75 @@ void place(const Frame& f) {
                f.pos, other_spline ? ", another track" : "");
 }
 
+// --- regions (step 3) ----------------------------------------------------------------------------------------------
+// The train leaves a region through a LoadScene at the track's end (LoadScene.HandleTrainCarImpact →
+// PrepareTrainTransition: TLD carries the train and whoever is in it into the next scene). The driver's game does that
+// on its own; a passenger's train only follows theirs, so when the driver's frames come from the next scene, the
+// passenger's game takes the same LoadScene. Someone outside the train doesn't: their copy stops at the edge.
+bool g_drove_in = false, g_claim_pending = false;
+double g_claim_after = 0;
+std::string g_followed_to;
+using ImpactFn = void (*)(Il2CppObject* self, Il2CppObject* car, int32_t area, const MethodInfo* method);
+ImpactFn g_impact = nullptr;
+bool g_passing_on = false;  // inside our own call of it
+
+bool same_scene_name(std::string a, std::string b) {
+    for (char& c : a) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    for (char& c : b) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    return !a.empty() && !b.empty() && (a == b || a.rfind(b, 0) == 0 || b.rfind(a, 0) == 0);
+}
+
+bool inside_train();
+
+void follow_to(const std::string& scene) {
+    if (!g_train || g_followed_to == scene || !inside_train() || !api.load_scenes || !api.impact) return;
+    g_followed_to = scene;
+    Il2CppObject* list = nullptr;
+    il2::il2cpp_field_static_get_value(api.load_scenes, &list);
+    Il2CppObject* items = list ? get<Il2CppObject*>(list, api.ls_items) : nullptr;
+    const int32_t size = list ? get<int32_t>(list, api.ls_size) : 0;
+    Il2CppObject* tf = train_tf();
+    V3 at{};
+    if (tf) il2::invoke_value(api.position, tf, at);
+    Il2CppObject* best = nullptr;
+    float best_d = 1e30f;
+    for (int32_t i = 0; items && i < size && i < static_cast<int32_t>(il2::array_length(items)); ++i) {
+        Il2CppObject* ls = il2::array_object_at(items, i);
+        if (!alive(ls)) continue;
+        const std::string target = text(get<Il2CppString*>(ls, api.ls_scene));
+        const std::string exit_spline = text(get<Il2CppString*>(ls, api.ls_exit_spline));
+        if (exit_spline.empty() || !same_scene_name(target, scene)) continue;
+        V3 p{};
+        Il2CppObject* ltf = il2::invoke(api.transform, ls);
+        if (!ltf || !il2::invoke_value(api.position, ltf, p)) continue;
+        const float d = (p.x - at.x) * (p.x - at.x) + (p.z - at.z) * (p.z - at.z);
+        if (d < best_d) best_d = d, best = ls;
+    }
+    if (!best) {
+        logx::warn("train: the driver went on to %s, but no track exit to it is here; we stay", scene.c_str());
+        return;
+    }
+    logx::info("train: the driver went on to %s: we ride along (the exit %.0f m away)", scene.c_str(),
+               std::sqrt(best_d));
+    g_passing_on = true;
+    g_impact(best, g_train, 0, api.impact);
+    g_passing_on = false;
+}
+
+void impact_detour(Il2CppObject* self, Il2CppObject* car, int32_t area, const MethodInfo* method) {
+    if (g_ready && !g_passing_on && car && car == g_train && g_owner != kNobody && g_owner != g_self) {
+        if (!inside_train()) {
+            static int told = 0;
+            if (told++ < 10) logx::info("train: our copy reached a region's edge; the driver takes it on, not us");
+            return;
+        }
+        // A passenger: the driver's frames from the next scene take us (follow_to); our copy ran ahead of them.
+        return;
+    }
+    if (g_ready && car && car == g_train) logx::info("train: at a region's edge: TLD takes it on");
+    g_impact(self, car, area, method);
+}
+
 void receive(double now) {
     static std::vector<net::Packet> in;
     in.clear();
@@ -390,7 +463,10 @@ void receive(double now) {
         f.at = now;
         g_riders[f.from] = f;
         g_riding[f.from] = (f.flags & kInside) && !(f.flags & kRelease);
-        if (f.scene != g_scene) continue;
+        if (f.scene != g_scene) {
+            if ((f.flags & kOwner) && f.from == g_owner) follow_to(f.scene);
+            continue;
+        }
         if (f.flags & kOwner) {
             if (g_owner == g_self && f.from > g_self) continue;  // both took it: the lower id drives
             if (g_owner == g_self) logx::info("train: player %u drives as well; theirs wins (lower id)", f.from);
@@ -848,6 +924,28 @@ bool init() {
             logx::warn("train: the track's list not found; switches and turntables aren't shared");
         }
     }
+    {  // step 3: regions
+        Il2CppClass* ls = il2::find_class(kGame, "", "LoadScene");
+        if (ls) {
+            api.load_scenes = il2::il2cpp_class_get_field_from_name(ls, "m_LoadScenesList");
+            api.ls_scene = il2::field_offset(ls, "m_SceneToLoad");
+            api.ls_exit_spline = il2::field_offset(ls, "m_ExitSplineGUID");
+            api.impact = il2::find_method(ls, "HandleTrainCarImpact", 2);
+        }
+        if (api.load_scenes) {
+            Il2CppClass* list = il2::il2cpp_class_from_type(il2::il2cpp_field_get_type(api.load_scenes));
+            if (list) {
+                api.ls_items = il2::field_offset(list, "_items");
+                api.ls_size = il2::field_offset(list, "_size");
+            }
+        }
+        if (!api.impact || api.ls_items < 0 || api.ls_scene < 0 ||
+            !hooks::install_method("LoadScene.HandleTrainCarImpact", api.impact, reinterpret_cast<void*>(&impact_detour),
+                                   reinterpret_cast<void**>(&g_impact))) {
+            api.impact = nullptr;
+            logx::warn("train: the track's region exits not found; a passenger won't ride into the next region");
+        }
+    }
     g_ready = true;
     logx::info("train: ready (the first one into the cab drives; the others' trains follow theirs)");
     return true;
@@ -860,6 +958,11 @@ void on_frame(const std::string& scene, bool in_game) {
     const float dt = static_cast<float>(std::clamp((now - last) / 1000.0, 0.0, 0.25));
     last = now;
     if (scene != g_scene || !in_game) {
+        // TLDCoop_DLC (step 3, regions): we drove into this scene: we drive on at once; else the driver gets 4 s to
+        // say so before a passenger who loaded first takes the train.
+        g_drove_in = g_owner == g_self && g_was_inside;
+        g_claim_after = now + (g_drove_in ? 0.0 : 4000.0);
+        g_followed_to.clear();
         g_train = nullptr;
         g_guid.clear();
         g_owner = kNobody;
@@ -899,7 +1002,10 @@ void on_frame(const std::string& scene, bool in_game) {
     if (!g_train) return;
 
     const bool inside = inside_train();
-    if (inside && !g_was_inside) {
+    if (inside && g_owner == kNobody && !g_was_inside && now < g_claim_after) {
+        // (wait: the driver may still be loading this scene)
+    } else if (inside && (!g_was_inside || g_claim_pending)) {
+        g_claim_pending = false;
         if (g_owner == kNobody) {
             g_owner = g_self;
             logx::info("train: we're in the cab and nobody drives: we drive");
@@ -914,7 +1020,8 @@ void on_frame(const std::string& scene, bool in_game) {
             logx::info("train: we left the cab: nobody drives");
         }
     }
-    g_was_inside = inside;
+    g_claim_pending = inside && g_owner == kNobody && now < g_claim_after;
+    g_was_inside = inside && !g_claim_pending;
 
     if (driven_by_other()) follow(now, dt);
     parts_tick(now);
