@@ -41,6 +41,13 @@ struct Api {
     const MethodInfo* sleep_accelerate = nullptr;  // Rest.AccelerateTimeOfDay(int, float, bool)
     const MethodInfo* pass_begin = nullptr;     // PassTime.Begin(float, Bed)
     const MethodInfo* pass_accelerate = nullptr;  // PassTime.AccelerateTimeOfDay(float)
+    // TLDCoop_DLC (Shatsca 08.11, F1 `pass_time 13`): TLD's console passes time on its own path; near the end it set
+    // the scale outside Begin/AccelerateTimeOfDay, we took that for an action, the clock stayed and PassTime never
+    // reached its hour: the screen hung on CANCEL. While TLD says time is passing (or we sleep), it passes through.
+    const MethodInfo* get_pass_time = nullptr;  // static GameManager.GetPassTime()
+    const MethodInfo* is_passing = nullptr;     // PassTime.IsPassingTime()
+    const MethodInfo* get_rest = nullptr;       // static GameManager.GetRestComponent()
+    const MethodInfo* is_sleeping = nullptr;    // Rest.IsSleeping()
     // The body: what runs at the action's scale.
     const MethodInfo* hunger_update = nullptr;
     const MethodInfo* thirst_update = nullptr;
@@ -222,11 +229,28 @@ BarEndedFn g_bar_ended = nullptr;
 bool g_bar_ended_hooked = false;
 BarEndListener g_bar_listener = nullptr;  // TLDCoop_DLC: fuel_transfer's drain
 
+bool asks(const MethodInfo* getter, const MethodInfo* check) {
+    if (!getter || !check) return false;
+    Il2CppObject* obj = il2::invoke(getter, nullptr);
+    bool yes = false;
+    return obj && il2::invoke_value(check, obj, yes) && yes;
+}
+
 void set_scale_detour(Il2CppObject* tod, float scale, const MethodInfo* method) {
-    const lapse::Kind kind = g_reapplying ? lapse::Kind::Reapply
-                             : g_sleeping ? lapse::Kind::Sleep
-                             : g_passing  ? lapse::Kind::PassTime
-                                          : lapse::Kind::Action;
+    lapse::Kind kind = g_reapplying ? lapse::Kind::Reapply
+                       : g_sleeping ? lapse::Kind::Sleep
+                       : g_passing  ? lapse::Kind::PassTime
+                                    : lapse::Kind::Action;
+    if (kind == lapse::Kind::Action && lapse::accelerated(scale)) {
+        if (asks(api.get_pass_time, api.is_passing)) kind = lapse::Kind::PassTime;
+        else if (asks(api.get_rest, api.is_sleeping)) kind = lapse::Kind::Sleep;
+        if (kind != lapse::Kind::Action) {
+            static int told = 0;
+            if (told++ < 5)
+                logx::info("lapse: a %.0fx speed-up while TLD %s: passed through as TLD does it", 1.0 / scale,
+                           kind == lapse::Kind::PassTime ? "passes time" : "sleeps");
+        }
+    }
     const bool was = g_body.active;
     const lapse::Applied a = lapse::on_set(g_body, scale, kind, coop());
     g_body = a.body;
@@ -444,6 +468,13 @@ bool init() {
     api.sleep_accelerate = il2::find_method(rest, "AccelerateTimeOfDay", 3);
     api.pass_begin = il2::find_method(pass, "Begin", 2);
     api.pass_accelerate = il2::find_method(pass, "AccelerateTimeOfDay", 1);
+    api.get_pass_time = il2::find_method(game_manager, "GetPassTime", 0);
+    api.is_passing = il2::find_method(pass, "IsPassingTime", 0);
+    api.get_rest = il2::find_method(game_manager, "GetRestComponent", 0);
+    api.is_sleeping = il2::find_method(rest, "IsSleeping", 0);
+    if (!api.is_passing || !api.is_sleeping)
+        logx::warn("lapse: PassTime.IsPassingTime %s, Rest.IsSleeping %s", api.is_passing ? "ok" : "MISSING",
+                   api.is_sleeping ? "ok" : "MISSING");
     api.hunger_update = il2::find_method(hunger, "Update", 0);
     api.thirst_update = il2::find_method(thirst, "Update", 0);
     api.fatigue_update = il2::find_method(fatigue, "Update", 0);
