@@ -194,6 +194,17 @@ void init() {
 }
 
 void on_frame(bool in_game) {
+    // TLDCoop_DLC (Kerel 08.11: "jak host wychodzi, żeby od razu zapisywało innym graczom"): a friend whose link to the
+    // host drops (the host left) saves at once, as ZAPISZ GRĘ does.
+    static bool was_linked = false;
+    const auto role = netrt::role();
+    const bool friend_here = in_game && role && *role == net::Role::Client;
+    const bool linked = friend_here && netrt::status().connected;
+    if (friend_here && was_linked && !linked && api.save) {
+        il2::invoke(api.save, nullptr);
+        logx::info("save: the host is gone: the game saved");
+    }
+    was_linked = linked;
     if (g_save_at <= 0 || now_ms() < g_save_at) return;
     g_save_at = 0;
     if (!in_game || !api.save) return;
