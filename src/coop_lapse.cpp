@@ -169,7 +169,9 @@ void began(Il2CppObject* tod) {
                1.0 / g_body.arg, clock_text(tod).c_str());
 }
 
+double g_ended_ms = -1e18;  // TLDCoop_DLC: when the last body lapse ended
 void ended(Il2CppObject* tod, const char* why) {
+    g_ended_ms = now_ms();
     const Needs n = read_needs();
     const Needs& s = g_started.needs;
     const double real_s = (now_ms() - g_started.real_ms) / 1000.0;
@@ -227,6 +229,20 @@ LaunchFn g_launch = nullptr;
 using BarEndedFn = void (*)(Il2CppObject* self, bool success, bool cancel, const MethodInfo* method);
 BarEndedFn g_bar_ended = nullptr;
 bool g_bar_ended_hooked = false;
+// TLDCoop_DLC (Shatsca 08.11 18:27: "ognisko wypala się na czas, jeśli jeden z graczy robi jakąś interakcję"): TLD
+// takes an action's game time off every fire (Fire.ReduceDurationByTODSeconds), as its clock jumped. In co-op the
+// clock stays and only our body lives those hours: the fires burn on with the world's time.
+using ReduceFn = void (*)(Il2CppObject* self, float seconds, const MethodInfo* method);
+ReduceFn g_reduce = nullptr;
+void reduce_detour(Il2CppObject* self, float seconds, const MethodInfo* method) {
+    if (coop() && !g_sleeping && !g_passing && (g_body.active || now_ms() - g_ended_ms < 1500)) {
+        static int told = 0;
+        if (told++ < 10)
+            logx::info("lapse: a fire would lose %.0f game min for our action; it burns with the world's time", seconds / 60);
+        return;
+    }
+    g_reduce(self, seconds, method);
+}
 BarEndListener g_bar_listener = nullptr;  // TLDCoop_DLC: fuel_transfer's drain
 
 bool asks(const MethodInfo* getter, const MethodInfo* check) {
@@ -544,6 +560,9 @@ bool init() {
                                             {"System.Boolean"});
     if (!api.hud_accel || !hook("Panel_HUD.EnableTimeOfDayScaleDisplay", api.hud_accel, &hud_accel_detour, &g_hud_accel))
         logx::warn("lapse: a sped-up action's ring (breaking down...) won't show in co-op");
+    if (const MethodInfo* reduce = il2::find_method_quiet(il2::find_class(kGame, "", "Fire"), "ReduceDurationByTODSeconds", 1);
+        !reduce || !hook("Fire.ReduceDurationByTODSeconds", reduce, &reduce_detour, &g_reduce))
+        logx::warn("lapse: Fire.ReduceDurationByTODSeconds not hooked; fires lose an action's time");
     g_bar_ended_hooked =
         api.bar_ended && hook("Panel_GenericProgressBar.ProgressBarEnded", api.bar_ended, &bar_ended_detour, &g_bar_ended);
     if (!g_bar_ended_hooked)
