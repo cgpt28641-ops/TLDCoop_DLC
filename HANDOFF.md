@@ -1497,3 +1497,6 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   > kMarginMetres 12: a turn of the head was enough). kMarginMetres 25, kMinSwitchMs 12 s; test added.
 - Also seen, not changed: wolves ~400 m out pop in/out on clients ("gone (no word of it)") as they cross kRangeMetres;
   host load: ~30 saved wolves made, switched off by TLD at once, forgotten.
+- 21:25 Wolf shot by Szymon showed "condition 0%, frozen" for all: the host's animal that took the dead wolf's place
+  kept its own BodyHarvest. wildlife_carcass::fresh_kill(ai) after the body deserialize in owner.inc: dead < 600 s →
+  unfrozen, condition 0 → 100. UNTESTED (if the reused animal was long dead, its m_TimeInDeadMode skips the fix).
