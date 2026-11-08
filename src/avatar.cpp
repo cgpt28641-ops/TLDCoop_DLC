@@ -2558,6 +2558,13 @@ void late_one(Avatar& a) {
     }
     PVec grip = shaped ? palm_centre(a, main_right) : palm(a, main);
     if (shaped && wrap == Wrap::Pistol) grip = grip + hand_dirs(a, main_right).across * 0.05f;  // above the fist
+    if (shaped && wrap == Wrap::Palm) {
+        // TLDCoop_DLC (Karol 08.11: "rzut kamieniem zjada nadgarstek"): a stone rests in the cupped palm, on it, not
+        // through the wrist: its middle out from the palm by its own half size, at the palm's middle
+        const HandDirs d = hand_dirs(a, main_right);
+        const float half = std::clamp(a.held.half * a.held.shown_scale, 0.02f, 0.06f);
+        grip = position_of(bone(a, main_right ? kRightHand : kLeftHand)) + d.fingers * 0.085f + d.palm * (0.02f + half);
+    }
     place_held(a, h, grip, right);
     if (a.held_flags & net::kHeldIgniting) {
         // TLDCoop_DLC: being lit (a flare's cap, a match on the box): the other hand strikes along it, back and forth.
