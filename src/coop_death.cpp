@@ -101,6 +101,8 @@ struct Api {
     const MethodInfo* take_off = nullptr;           // PlayerManager.TakeOffClothingItem(GearItem)
     ptrdiff_t start_gear_applied = -1;              // PlayerManager.m_StartGearApplied
     ptrdiff_t control_mode = -1;                    // PlayerManager.m_ControlMode
+    const MethodInfo* adjusted_max = nullptr;       // TLDCoop_DLC: Condition.GetAdjustedMaxHP()
+    const MethodInfo* color_scalar = nullptr;       // TLDCoop_DLC: CameraEffects.SetColorScalar(GameColorScalar, float)
     ptrdiff_t lad_state = -1;                       // TLDCoop_DLC: LifeAfterDeathManager.m_LifeAfterDeathState
     ptrdiff_t lads_enabled = -1, lads_used = -1;    // LifeAfterDeathState.m_SystemEnabled, m_LivesUsed
     const MethodInfo* lad_respawn = nullptr;        // LifeAfterDeathManager.PerformRespawn(SpawnPointType, bool)
@@ -1218,6 +1220,33 @@ void to_log_detour(Il2CppObject* self, bool fast, const MethodInfo* method) {
     g_to_log(self, fast, method);
 }
 
+// TLDCoop_DLC (Kerel 08.11 19:57: "u Szymona jest czarno-biały ekran po tym, jak skorzystał z umierania"): TLD greys
+// the screen with low health (CameraEffects.SetColorScalar(LowHealthEffect, s)), measured against the full 100%; after
+// Cheat Death the max condition is cut (to 65% or 40%), so a survivor at their (lower) full health stayed grey. Here,
+// with the max cut, health is judged against the cut max: at half of it or more the colours are the normal ones.
+using ColorScalarFn = void (*)(Il2CppObject* self, int32_t source, float scalar, const MethodInfo* method);
+ColorScalarFn g_color_scalar = nullptr;
+float g_normal_scalar = -1;  // what TLD sets when healthy (seen at 90%+ condition)
+void color_scalar_detour(Il2CppObject* self, int32_t source, float scalar, const MethodInfo* method) {
+    if (source == 0 && g_ready) {
+        Il2CppObject* condition = game_static("m_Condition");
+        float adjusted = 0;
+        if (condition && api.adjusted_max && il2::invoke_value(api.adjusted_max, condition, adjusted) && adjusted > 1) {
+            const float hp = get<float>(condition, api.hp), full = get<float>(condition, api.max_hp);
+            if (full > 0 && hp / full >= 0.9f) g_normal_scalar = scalar;
+            if (adjusted < full - 1 && hp / adjusted >= 0.5f) {
+                const float normal = g_normal_scalar >= 0 ? g_normal_scalar : 1.0f;
+                static int told = 0;
+                if (told++ < 5)
+                    logx::info("death: low-health grey off (%.0f of the cut max %.0f, TLD's scalar %.2f -> %.2f)", hp,
+                               adjusted, scalar, normal);
+                scalar = normal;
+            }
+        }
+    }
+    g_color_scalar(self, source, scalar, method);
+}
+
 // TLDCoop_DLC: Cheat Death's respawn done: alive again (TLD may load the respawn's scene next).
 bool respawn_detour(Il2CppObject* self, int32_t spawn, bool permanent, const MethodInfo* method) {
     const bool ok = g_respawn(self, spawn, permanent, method);
@@ -1589,6 +1618,8 @@ bool init() {
     api.freeze_movement = il2::field_offset_quiet(player_manager, "m_FreezeMovement");
     api.hp = il2::field_offset(il2::find_class(kGame, "", "Condition"), "m_CurrentHP");
     api.max_hp = il2::field_offset(il2::find_class(kGame, "", "Condition"), "m_MaxHP");
+    api.adjusted_max = il2::find_method_quiet(il2::find_class(kGame, "", "Condition"), "GetAdjustedMaxHP", 0);
+    if (Il2CppClass* ce = il2::find_class(kGame, "", "CameraEffects")) api.color_scalar = il2::find_method_quiet(ce, "SetColorScalar", 2);
     api.calories = il2::field_offset(il2::find_class(kGame, "", "Hunger"), "m_CurrentReserveCalories");
     api.start_calories = il2::field_offset(il2::find_class(kGame, "", "Hunger"), "m_StartingReserveCalories");
     api.thirst = il2::field_offset(il2::find_class(kGame, "", "Thirst"), "m_CurrentThirst");
@@ -1674,6 +1705,9 @@ bool init() {
                      hook("LifeAfterDeathManager.HandlePlayerEnvironment", api.lad_environment, &environment_detour,
                           &g_environment);
         if (!g_cheat_ok) logx::warn("death: Cheat Death's hooks failed; co-op's way only");
+        if (!api.color_scalar || !api.adjusted_max ||
+            !hook("CameraEffects.SetColorScalar", api.color_scalar, &color_scalar_detour, &g_color_scalar))
+            logx::warn("death: the low-health grey after Cheat Death can't be fixed (CameraEffects.SetColorScalar)");
     } else if (g_ready) {
         logx::warn("death: Cheat Death's parts not found; co-op's way only");
     }
