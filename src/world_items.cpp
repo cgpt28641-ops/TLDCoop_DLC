@@ -471,6 +471,12 @@ std::unordered_map<std::string, std::unordered_map<std::string, Change>> g_pendi
 // our list (ItemList): items we took there earlier go from their game too (they were copies), and what they lack
 // they ask for (answered from the changes kept for that scene). Kept with our save (world_keep).
 std::unordered_map<std::string, std::unordered_set<uint64_t>> g_scene_items;
+// TLDCoop_DLC (Kerel 08.11: "wszedłem do domku pierwszy i nic nie było"): host: the loose items' whole records of each
+// scene we've been in (refreshed while there, a few at a time), so a friend in a scene we've left gets the items
+// themselves, not only their ids. Kept with our save (world_keep ItemRecord).
+std::unordered_map<std::string, std::unordered_map<uint64_t, net::ItemPutMsg>> g_scene_records;
+double g_next_records = 0;
+size_t g_records_cursor = 0;
 bool g_scan_left_at_once = false;  // the last scan saw items leave with the scene (a door): not a list to keep
 struct AwaySent {
     uint32_t link = 0;
@@ -1781,8 +1787,26 @@ void answer_want(const net::ItemHashesMsg& m, double now, uint8_t from) {
                 ++sent;
             }
         }
+        int from_records = 0;
+        if (const auto recs = g_scene_records.find(m.scene); recs != g_scene_records.end()) {
+            std::unordered_set<uint64_t> done;
+            if (const auto pend = g_pending.find(m.scene); pend != g_pending.end())
+                for (const auto& [pdid, c] : pend->second) done.insert(net::pdid_hash(c.put ? c.put_msg.pdid : c.gone_msg.pdid));
+            for (uint64_t h : m.hashes) {
+                const auto it = recs->second.find(h);
+                if (it == recs->second.end() || done.count(h)) continue;
+                net::ItemPutMsg put = it->second;
+                put.seq = ++g_seq;
+                put.flags |= net::kItemAnswer;
+                net::Writer w(net::Msg::ItemPut, net::kMaxMessage);
+                net::write_item_put(w, put);
+                netrt::send_packet_to(from, w, true);
+                ++from_records;
+            }
+        }
         logx::info("items: the other player asked for %zu item(s) in %s; we're in %s now: sent %d kept from the friends' "
-                   "changes there", m.hashes.size(), m.scene.c_str(), g_scene.c_str(), sent);
+                   "changes there, %d from what we saw there", m.hashes.size(), m.scene.c_str(), g_scene.c_str(), sent,
+                   from_records);
         return;
     }
     std::unordered_map<uint64_t, std::string> by_hash;
@@ -2661,6 +2685,25 @@ void on_frame(bool in_game) {
             kept.clear();
             for (const auto& [pdid, k] : g_known)
                 if (!k.unique) kept.insert(net::pdid_hash(wire_id(pdid)));
+            // TLDCoop_DLC: the records, 20 items a pass; those no longer lying here dropped
+            auto& recs = g_scene_records[g_scene];
+            for (auto it = recs.begin(); it != recs.end();) it = kept.count(it->first) ? std::next(it) : recs.erase(it);
+            if (now >= g_next_records) {
+                g_next_records = now + 1000;
+                std::vector<const std::string*> ids;
+                for (const auto& [pdid, k] : g_known)
+                    if (!k.unique) ids.push_back(&pdid);
+                for (size_t n = 0; n < 20 && !ids.empty(); ++n, ++g_records_cursor) {
+                    const std::string& pdid = *ids[g_records_cursor % ids.size()];
+                    Il2CppObject* gi = gear_on(object_by_pdid(pdid));
+                    if (!gi || get<bool>(gi, api.in_inventory)) continue;
+                    Quaternion rot{};
+                    Vector3 pos{};
+                    pose_of(gi, pos, rot);
+                    net::ItemPutMsg m;
+                    if (make_put(gi, pdid, g_known[pdid].prefab, 0, pos, rot, m)) recs[net::pdid_hash(m.pdid)] = std::move(m);
+                }
+            }
         }
     }
     if (hosting() && now - g_last_away >= 500) {
@@ -2698,6 +2741,13 @@ void save_kept(std::vector<world_keep::Record>& out) {
             if (w.ok()) out.push_back(world_keep::record(world_keep::Tag::ItemChange, w));
         }
     }
+    // TLDCoop_DLC: the items' records per scene
+    for (const auto& [scene, recs] : g_scene_records)
+        for (const auto& [h, m] : recs) {
+            net::Writer w(net::Msg::ItemPut, net::kMaxMessage);
+            net::write_item_put(w, m);
+            if (w.ok()) out.push_back(world_keep::record(world_keep::Tag::ItemRecord, w));
+        }
     // TLDCoop_DLC: the loose items kept per scene (as our ItemList)
     for (const auto& [scene, hashes] : g_scene_items) {
         net::ItemHashesMsg m;
@@ -2712,6 +2762,12 @@ void save_kept(std::vector<world_keep::Record>& out) {
 bool load_kept(const world_keep::Record& r) {
     const net::Packet p = world_keep::packet(r);
     net::Reader body = net::packet_body(p);
+    if (r.tag == world_keep::Tag::ItemRecord) {
+        net::ItemPutMsg m;
+        if (p.type != net::Msg::ItemPut || !net::read_item_put(body, m)) return false;
+        g_scene_records[m.scene][net::pdid_hash(m.pdid)] = std::move(m);
+        return true;
+    }
     if (r.tag == world_keep::Tag::ItemList) {
         net::ItemHashesMsg m;
         if (p.type != net::Msg::ItemList || !net::read_item_hashes(body, m)) return false;

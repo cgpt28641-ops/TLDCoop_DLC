@@ -128,7 +128,8 @@ void load() {
         bool ok = false;
         switch (r.tag) {
             case Tag::ItemChange:
-            case Tag::ItemList: ok = world_items::load_kept(r); break;
+            case Tag::ItemList:
+            case Tag::ItemRecord: ok = world_items::load_kept(r); break;
             case Tag::ObjectChange:
             case Tag::ObjectGone: ok = world_objects::load_kept(r); break;
             case Tag::FireChange: ok = world_fires::load_kept(r); break;

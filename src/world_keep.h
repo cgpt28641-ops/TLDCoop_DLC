@@ -29,6 +29,7 @@ enum class Tag : uint8_t {
     ItemList = 8,         // ItemList: the loose items of a scene as we last saw them there (world_items) (TLDCoop_DLC)
     Wildlife = 9,         // WildCtl Keep: an animal of the wildlife registry (wildlife_sync) (TLDCoop_DLC v45)
     WildRegions = 10,     // WildCtl Regions: a scene's spawn regions' respawn state (wildlife_sync) (TLDCoop_DLC v45)
+    ItemRecord = 11,      // ItemPut: a loose item's record as we last saw it in a scene (world_items) (TLDCoop_DLC)
 };
 
 struct Record {
