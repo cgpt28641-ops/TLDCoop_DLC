@@ -73,6 +73,8 @@ constexpr const char* kDefaultIni =
     "names=1\n"
     "radar=1\n"
     "chart=1\n"
+    "; stats = top left: the time, air and feels-like temperature, wind, warmth, condition, weight, the light's fuel\n"
+    "stats=1\n"
     "\n"
     "[colors]\n"
     "; Each player has a colour on the radar, on TLD's map and over their head (by their number: the same in every\n"

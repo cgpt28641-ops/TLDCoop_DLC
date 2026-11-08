@@ -12,7 +12,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include <windows.h>
+
 #include "avatar.h"
+#include "custom_text.h"
+#include "paths.h"
 #include "game_state.h"
 #include "il2cpp_api.h"
 #include "log.h"
@@ -1580,6 +1584,11 @@ bool coop_on() { return netrt::role().has_value(); }
 }  // namespace
 
 bool init() {
+    {  // TLDCoop_DLC: coop.ini [hud] stats (the stats panel; on unless 0)
+        const auto ini = paths::instance_dir() / L"coop.ini";
+        g_stats = GetPrivateProfileIntW(L"hud", L"stats", 1, ini.c_str()) != 0;
+        custom_text::add("TLDCOOP_HUD_TIME", "TIME", "GODZINA");
+    }
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
     Il2CppClass* game_object = il2::find_class(kCore, "UnityEngine", "GameObject");
     Il2CppClass* transform = il2::find_class(kCore, "UnityEngine", "Transform");
@@ -1782,8 +1791,261 @@ bool indoors_now() {
     return indoors;
 }
 
+// --- TLDCoop_DLC: the survival stats panel (Shatsca 08.11: "a fuller HUD: the real temperature (body, wind, air), the
+// weight and its limit, the lamp's or torch's fuel, the time, and what ails you") ---------------------------------------
+// Top left, in TLD's hover-text look over its text box: the clock, air and feels-like temperature, wind, warmth and
+// condition, the load against what can be carried, the light in hand, the afflictions. Read four times a second;
+// shown with TLD's HUD (solo too). coop.ini [hud] stats=0 turns it off.
+
+constexpr int kStatsFont = 16;
+constexpr float kStatsLeft = 24, kStatsTop = 24, kStatsPad = 9;
+bool g_stats = true;
+uintptr_t g_stats_root = 0, g_stats_back = 0, g_stats_label = 0;
+std::string g_stats_text, g_stats_shown;
+
+struct StatsApi {
+    bool looked = false;
+    const MethodInfo *weather = nullptr, *feels = nullptr, *air = nullptr;      // GameManager.GetWeatherComponent; Weather
+    const MethodInfo *freezing = nullptr, *body_temp = nullptr;                 // GameManager.GetFreezingComponent; Freezing
+    ptrdiff_t freeze_now = -1, freeze_max = -1;
+    const MethodInfo *condition = nullptr;                                      // GameManager.GetConditionComponent
+    ptrdiff_t hp = -1, hp_max = -1;
+    const MethodInfo *inventory = nullptr, *inv_weight = nullptr;               // GameManager.GetInventoryComponent
+    const MethodInfo *encumber = nullptr, *carry = nullptr;                     // GameManager.GetEncumberComponent
+    const MethodInfo *from_kg = nullptr;                                        // ItemWeight.FromKilograms
+    double units_per_kg = 0;
+    const MethodInfo *player_manager = nullptr;
+    ptrdiff_t in_hands = -1, lamp = -1, torch = -1, flare = -1;
+    const MethodInfo *lamp_pct = nullptr, *flare_left = nullptr;
+    ptrdiff_t torch_life = -1, torch_burnt = -1;
+    const MethodInfo *gear_name = nullptr;
+} sapi;
+
+void look_up_stats() {
+    if (sapi.looked) return;
+    sapi.looked = true;
+    Il2CppClass* gm = il2::find_class(kGame, "", "GameManager");
+    Il2CppClass* weather = il2::find_class(kGame, "", "Weather");
+    Il2CppClass* freezing = il2::find_class(kGame, "", "Freezing");
+    Il2CppClass* condition = il2::find_class(kGame, "", "Condition");
+    Il2CppClass* inventory = il2::find_class(kGame, "", "Inventory");
+    Il2CppClass* encumber = il2::find_class(kGame, "", "Encumber");
+    Il2CppClass* gear = il2::find_class(kGame, "", "GearItem");
+    sapi.weather = il2::find_method(gm, "GetWeatherComponent", 0);
+    sapi.feels = il2::find_method_quiet(weather, "GetCurrentTemperatureWithWindchill", 0);
+    sapi.air = il2::find_method_quiet(weather, "GetCurrentTemperature", 0);
+    sapi.freezing = il2::find_method(gm, "GetFreezingComponent", 0);
+    sapi.body_temp = il2::find_method_quiet(freezing, "CalculateBodyTemperature", 0);
+    sapi.freeze_now = il2::field_offset_quiet(freezing, "m_CurrentFreezing");
+    sapi.freeze_max = il2::field_offset_quiet(freezing, "m_MaxFreezing");
+    sapi.condition = il2::find_method(gm, "GetConditionComponent", 0);
+    sapi.hp = il2::field_offset_quiet(condition, "m_CurrentHP");
+    sapi.hp_max = il2::field_offset_quiet(condition, "m_MaxHP");
+    sapi.inventory = il2::find_method(gm, "GetInventoryComponent", 0);
+    sapi.inv_weight = il2::find_method_quiet(inventory, "GetTotalWeightKG", 0);
+    sapi.encumber = il2::find_method(gm, "GetEncumberComponent", 0);
+    sapi.carry = il2::find_method_quiet(encumber, "GetEffectiveCarryCapacityKG", 0);
+    if (Il2CppClass* w = il2::find_class("TLD.IntBackedUnit.dll", "TLD.IntBackedUnit", "ItemWeight"))
+        sapi.from_kg = il2::find_method_quiet(w, "FromKilograms", 1);
+    sapi.player_manager = il2::find_method(gm, "GetPlayerManagerComponent", 0);
+    sapi.in_hands = il2::field_offset_quiet(il2::find_class(kGame, "", "PlayerManager"), "m_ItemInHandsInternal");
+    sapi.lamp = il2::field_offset_quiet(gear, "m_KeroseneLampItem");
+    sapi.torch = il2::field_offset_quiet(gear, "m_TorchItem");
+    sapi.flare = il2::field_offset_quiet(gear, "m_FlareItem");
+    if (Il2CppClass* lamp = il2::find_class(kGame, "TLD.Gear", "KeroseneLampItem"))
+        sapi.lamp_pct = il2::find_method_quiet(lamp, "GetPercentFuelRemaining", 0);
+    if (Il2CppClass* torch = il2::find_class(kGame, "", "TorchItem")) {
+        sapi.torch_life = il2::field_offset_quiet(torch, "m_BurnLifetimeMinutes");
+        sapi.torch_burnt = il2::field_offset_quiet(torch, "m_ElapsedBurnMinutes");
+    }
+    if (Il2CppClass* flare = il2::find_class(kGame, "", "FlareItem"))
+        sapi.flare_left = il2::find_method_quiet(flare, "GetNormalizedBurnTimeLeft", 0);
+    if (sapi.from_kg) {
+        int64_t u = 0;
+        float one = 1.0f;
+        void* a[] = {&one};
+        if (il2::invoke_value(sapi.from_kg, nullptr, u, a) && u > 0) sapi.units_per_kg = static_cast<double>(u);
+    }
+    logx::info("hud: stats: feels-like %s, body temp %s, warmth %s, weight %s/%s (%.0f units a kg), lamp %s, torch %s",
+               sapi.feels ? "yes" : "no", sapi.body_temp ? "yes" : "no", sapi.freeze_max >= 0 ? "yes" : "no",
+               sapi.inv_weight ? "yes" : "no", sapi.carry ? "yes" : "no", sapi.units_per_kg, sapi.lamp_pct ? "yes" : "no",
+               sapi.torch_burnt >= 0 ? "yes" : "no");
+}
+
+float invoke_float(const MethodInfo* m, Il2CppObject* o, bool& ok) {
+    float v = 0;
+    ok = m && o && il2::invoke_value(m, o, v);
+    return v;
+}
+
+double weight_kg(const MethodInfo* m, Il2CppObject* o, bool& ok) {
+    int64_t u = 0;
+    ok = m && o && sapi.units_per_kg > 0 && il2::invoke_value(m, o, u);
+    return ok ? static_cast<double>(u) / sapi.units_per_kg : 0;
+}
+
+std::string stats_text() {
+    look_up_stats();
+    char line[160];
+    std::string out;
+    auto add = [&](const std::string& l) { out += (out.empty() ? "" : "\n") + l; };
+    const bool pl = !custom_text::text("TLDCOOP_HUD_TIME").empty() && custom_text::text("TLDCOOP_HUD_TIME") == "GODZINA";
+    const game::WorldState w = game::read_world();
+    if (w.valid) {
+        snprintf(line, sizeof(line), "%s %02d:%02d", pl ? "GODZINA" : "TIME", w.hour, w.minute);
+        add(line);
+    }
+    Il2CppObject* weather = il2::invoke(sapi.weather, nullptr);
+    bool ok_air = false, ok_feels = false;
+    const float air = invoke_float(sapi.air, weather, ok_air), feels = invoke_float(sapi.feels, weather, ok_feels);
+    if (ok_air || ok_feels) {
+        std::string t;
+        if (ok_air) snprintf(line, sizeof(line), "%s %.0f°C", pl ? "POWIETRZE" : "AIR", air), t = line;
+        if (ok_feels) snprintf(line, sizeof(line), "%s%s %.0f°C", t.empty() ? "" : "  ·  ", pl ? "ODCZUWALNA" : "FEELS LIKE", feels), t += line;
+        add(t);
+    }
+    if (w.valid) {
+        snprintf(line, sizeof(line), "%s %.0f km/h%s", pl ? "WIATR" : "WIND", w.wind_mph * 1.609f,
+                 w.indoors ? (pl ? "  (W ŚRODKU)" : "  (INDOORS)") : "");
+        add(line);
+    }
+    Il2CppObject* fr = il2::invoke(sapi.freezing, nullptr);
+    Il2CppObject* cond = il2::invoke(sapi.condition, nullptr);
+    std::string t;
+    bool ok_body = false;
+    const float body = invoke_float(sapi.body_temp, fr, ok_body);
+    if (ok_body && body > 20 && body < 45) snprintf(line, sizeof(line), "%s %.1f°C", pl ? "CIAŁO" : "BODY", body), t = line;
+    if (fr && sapi.freeze_now >= 0 && sapi.freeze_max >= 0) {
+        const float mx = get<float>(fr, sapi.freeze_max);
+        if (mx > 0) {
+            snprintf(line, sizeof(line), "%s%s %.0f%%", t.empty() ? "" : "  ·  ", pl ? "CIEPŁO" : "WARMTH",
+                     100.0f * (1.0f - std::clamp(get<float>(fr, sapi.freeze_now) / mx, 0.0f, 1.0f)));
+            t += line;
+        }
+    }
+    if (cond && sapi.hp >= 0 && sapi.hp_max >= 0 && get<float>(cond, sapi.hp_max) > 0) {
+        snprintf(line, sizeof(line), "%s%s %.0f%%", t.empty() ? "" : "  ·  ", pl ? "KONDYCJA" : "CONDITION",
+                 100.0f * get<float>(cond, sapi.hp) / get<float>(cond, sapi.hp_max));
+        t += line;
+    }
+    if (!t.empty()) add(t);
+    bool ok_w = false, ok_c = false;
+    const double kg = weight_kg(sapi.inv_weight, il2::invoke(sapi.inventory, nullptr), ok_w);
+    const double cap = weight_kg(sapi.carry, il2::invoke(sapi.encumber, nullptr), ok_c);
+    if (ok_w) {
+        if (ok_c && cap > 0) snprintf(line, sizeof(line), "%s %.1f / %.1f kg", pl ? "WAGA" : "WEIGHT", kg, cap);
+        else snprintf(line, sizeof(line), "%s %.1f kg", pl ? "WAGA" : "WEIGHT", kg);
+        add(line);
+    }
+    // the light in hand
+    Il2CppObject* pm = il2::invoke(sapi.player_manager, nullptr);
+    Il2CppObject* held = pm && sapi.in_hands >= 0 ? get<Il2CppObject*>(pm, sapi.in_hands) : nullptr;
+    if (alive(held)) {
+        Il2CppObject* lamp = sapi.lamp >= 0 ? get<Il2CppObject*>(held, sapi.lamp) : nullptr;
+        Il2CppObject* torch = sapi.torch >= 0 ? get<Il2CppObject*>(held, sapi.torch) : nullptr;
+        Il2CppObject* flare = sapi.flare >= 0 ? get<Il2CppObject*>(held, sapi.flare) : nullptr;
+        bool ok = false;
+        if (alive(lamp)) {
+            const float pct = invoke_float(sapi.lamp_pct, lamp, ok);
+            if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "LAMPA - PALIWO" : "LAMP FUEL", pct), add(line);
+        } else if (alive(torch) && sapi.torch_life >= 0 && sapi.torch_burnt >= 0 && get<float>(torch, sapi.torch_life) > 0) {
+            const float left = 1.0f - get<float>(torch, sapi.torch_burnt) / get<float>(torch, sapi.torch_life);
+            snprintf(line, sizeof(line), "%s %.0f%%", pl ? "POCHODNIA" : "TORCH", 100.0f * std::clamp(left, 0.0f, 1.0f));
+            add(line);
+        } else if (alive(flare)) {
+            const float left = invoke_float(sapi.flare_left, flare, ok);
+            if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "RACA" : "FLARE", 100.0f * std::clamp(left, 0.0f, 1.0f)), add(line);
+        }
+    }
+    // what ails us, by TLD's own names
+    uint8_t condition = 0;
+    uint32_t bits = 0;
+    game::read_health(condition, bits);
+    std::string ails;
+    for (int i = 0; i < 32; ++i) {
+        if (!(bits & (1u << i))) continue;
+        std::string name = game::affliction_display_name(i);
+        if (name.empty()) name = net::affliction_name(static_cast<net::Affliction>(i));
+        if (!name.empty()) ails += (ails.empty() ? "" : ", ") + upper(name);
+    }
+    if (!ails.empty()) add(ails);
+    return out;
+}
+
+void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
+    Il2CppObject* r = live(g_stats_root);
+    if (!r) {
+        drop(g_stats_root);
+        Il2CppObject* go = hud ? new_child("TLDCoop_Stats", go_transform(go_of(hud))) : nullptr;
+        if (!go) return;
+        void* type_args[] = {api.panel_type};
+        Il2CppObject* panel = il2::invoke(api.add_component, go, type_args);
+        set_int(api.panel_set_depth, panel, kPanelDepth);
+        g_stats_root = hold(go);
+        drop(g_stats_back);
+        drop(g_stats_label);
+        g_stats_shown.clear();
+        r = go;
+        logx::info("hud: made the stats panel under TLD's HUD");
+    }
+    const bool showing = hud_showing(hud);
+    set_active(r, showing);
+    if (!showing) return;
+    static std::chrono::steady_clock::time_point next{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= next) {
+        g_stats_text = stats_text();
+        next = now + std::chrono::milliseconds(250);
+    }
+    Il2CppObject* back = live(g_stats_back);
+    Il2CppObject* label = live(g_stats_label);
+    if (!back) {
+        back = clone_under(hud_label_back(), go_transform(r), "StatsBack");
+        strip_anchor(back);
+        set_int(api.widget_set_pivot, back, 0);  // TopLeft
+        g_stats_back = hold(back);
+    }
+    if (!label) {
+        label = make_label(go_transform(r), "Stats", kStatsFont, 0);
+        if (label && api.label_set_alignment) set_int(api.label_set_alignment, label, 1);
+        g_stats_label = hold(label);
+        g_stats_shown.clear();
+    }
+    if (!label) return;
+    if (g_stats_text != g_stats_shown) {
+        set_text(label, g_stats_text);
+        g_stats_shown = g_stats_text;
+    }
+    const float height = static_cast<float>(screen_size(api.screen_height));
+    const float x = kStatsLeft * px, y = height - kStatsTop * px;
+    place_on_screen(transform_of(label), ui_camera, x + kStatsPad * px, y - kStatsPad * px);
+    if (back) {
+        const Vector2 lp = printed(label);
+        set_active(go_of(back), !g_stats_text.empty());
+        set_int(api.widget_set_width, back, static_cast<int>(lp.x + 2 * kStatsPad));
+        set_int(api.widget_set_height, back, static_cast<int>(lp.y + 2 * kStatsPad));
+        place_on_screen(transform_of(back), ui_camera, x, y);
+    }
+}
+
 void late_update() {
     if (!g_ready) return;
+    if (g_stats && g_in_game) {  // TLDCoop_DLC: the stats panel, solo too
+        Il2CppObject* hud = hud_panel();
+        Il2CppObject* ui_camera = il2::invoke(api.ui_camera, nullptr);
+        const float height = static_cast<float>(screen_size(api.screen_height));
+        if (hud && alive(ui_camera) && height > 0) {
+            float units_a_pixel = 0;
+            Il2CppObject* sr = live(g_stats_root);
+            void* sr_args[] = {sr};
+            if (!sr || !api.pixel_adjustment || !il2::invoke_value(api.pixel_adjustment, nullptr, units_a_pixel, sr_args) ||
+                units_a_pixel <= 0)
+                units_a_pixel = 720.0f / height;
+            show_stats(hud, ui_camera, 1.0f / units_a_pixel);
+        }
+    } else {
+        set_active(live(g_stats_root), false);
+    }
     const bool coop = g_in_game && coop_on();
     const game::PlayerState me = coop ? game::read_player() : game::PlayerState{};
     const std::vector<avatar::Seen> all = coop ? avatar::seen() : std::vector<avatar::Seen>{};
