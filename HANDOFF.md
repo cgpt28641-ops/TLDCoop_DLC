@@ -1490,3 +1490,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   block changed since the 20:39 build that worked. ask_first now logs each NEW/RESUME/LOAD click, a stale ch/g.open
   (cleared), and open_chooser's failures; Panel_Sandbox.Enable logged. Waiting for a log of the failure.
 - Open from 20:34: get_gameObject NRE ×100 on Szymon after a CookingPotDummy went (stopped by itself).
+
+### 08.11 ~21:20 (logs 21:10, Karol: "alone with the host fine, the 3 of us together: wolf bugs")
+- Menu OK again in 21:00 logs (RESUME → SOLO / CO-OP logged for all three); the 20:46 log was just cut early.
+- Host log: wolves handed "looking at it" host → 2 → 1 → host every few s while all stood together (kLookingBonus 20
+  > kMarginMetres 12: a turn of the head was enough). kMarginMetres 25, kMinSwitchMs 12 s; test added.
+- Also seen, not changed: wolves ~400 m out pop in/out on clients ("gone (no word of it)") as they cross kRangeMetres;
+  host load: ~30 saved wolves made, switched off by TLD at once, forgotten.
