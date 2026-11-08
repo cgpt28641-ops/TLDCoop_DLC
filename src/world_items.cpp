@@ -1607,6 +1607,16 @@ void remove_ours(const std::string& ours, const char* why) {
         }
     }
     if (!gi || !is_loose(gi)) {
+        // TLDCoop_DLC (Shatsca 08.11: "łom wyrzucony przez grzyba się zbugował, nagle były cztery na ziemi"): the id
+        // can name two of ours, one in the pack and the one just dropped; TLD's lookup gave the pack's, the dropped
+        // one stayed and our next scan sent it again (the others got it once more each time). The loose one goes.
+        for (const Loose& l : scan_loose(false))
+            if (l.pdid == ours) {
+                gi = l.gi;
+                break;
+            }
+    }
+    if (!gi || !is_loose(gi)) {
         logx::info("items: %s (%s) %s, but it isn't lying here (already gone or in a pack)", prefab.c_str(),
                    short_id(ours).c_str(), why);
         return;

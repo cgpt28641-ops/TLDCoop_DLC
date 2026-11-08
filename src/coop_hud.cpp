@@ -2114,7 +2114,9 @@ void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
         Il2CppObject* bar = get<Il2CppObject*>(hud, sapi.sprint_bar);
         float one = 1.0f;
         void* aa[] = {&one};
-        if (alive(bar)) il2::invoke(sapi.rect_set_alpha, bar, aa);
+        // TLDCoop_DLC (logs 08.11: "UIRect.set_alpha threw EntryPointNotFoundException" x100000): UIRect's is
+        // abstract; the bar's own class's override is the one to call
+        if (alive(bar)) il2::invoke(il2::virtual_method(bar, sapi.rect_set_alpha), bar, aa);
     }
     static std::chrono::steady_clock::time_point next{};
     const auto now = std::chrono::steady_clock::now();

@@ -261,7 +261,8 @@ size_t schema_bytes(const std::vector<Param>& schema) {
 // the first one plays.
 std::vector<uint64_t> wwise_emitters(Il2CppObject* go) {
     std::vector<uint64_t> ids;
-    if (!go || !api.ak_object_type || !api.wwise_id) return ids;
+    if (!go || !*reinterpret_cast<void**>(reinterpret_cast<char*>(go) + 0x10) || !api.ak_object_type || !api.wwise_id)
+        return ids;  // TLDCoop_DLC: (destroyed: GetComponentsInChildren threw NullReferenceException in the logs)
     uint64_t root = kNoWwiseObject;
     void* root_args[] = {go};
     il2::invoke_value(api.wwise_id, nullptr, root, root_args);

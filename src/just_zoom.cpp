@@ -113,6 +113,9 @@ void sync(const Vec2& a) {
 }
 
 void update_zoom(Il2CppObject* cam, Il2CppObject* camera, bool hold, float dt) {
+    // TLDCoop_DLC (logs 08.11: "Camera.get_fieldOfView threw NullReferenceException" while a game loaded): a camera
+    // already destroyed (its native part gone) isn't touched
+    if (!camera || !*reinterpret_cast<void**>(reinterpret_cast<char*>(camera) + 0x10)) return;
     if (!hold && zoom <= 1.005f) {
         if (zoom != 1) {
             zoom = 1;
