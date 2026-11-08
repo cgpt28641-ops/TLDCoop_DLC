@@ -835,11 +835,17 @@ void layout_chooser(Il2CppObject* clone) {
 
 bool open_chooser(Il2CppObject* sandbox, Purpose purpose) {
     Il2CppObject* panel_go = go_of(sandbox);
-    if (!panel_go) return false;
+    if (!panel_go) {
+        logx::warn("menu: the Survival menu has no GameObject");
+        return false;
+    }
     ch.purpose = purpose;
     Il2CppObject* loader = nullptr;
     Il2CppObject* clone = clone_screen(panel_go, "Panel_TLDCoopChoice", loader);
-    if (!clone) return false;
+    if (!clone) {
+        logx::warn("menu: the Survival menu couldn't be copied for the SOLO / CO-OP screen");
+        return false;
+    }
     ch.sandbox_panel = hold(sandbox);
     ch.sandbox_go = hold(panel_go);
     ch.loader = hold(loader);
@@ -2459,7 +2465,22 @@ void keep_sandbox(Il2CppObject* self) {
 
 void ask_first(Il2CppObject* self, const MethodInfo* method, Purpose purpose, ClickFn original) {
     keep_sandbox(self);
-    if (ch.open || g.open || !open_chooser(self, purpose)) original(self, method);
+    // TLDCoop_DLC (Kerel 08.11 20:46: "no SOLO / CO-OP after Survival", nothing in the log): every way past our screen
+    // is logged
+    logx::info("menu: %s clicked in the Survival menu (chooser %s, setup %s)",
+               purpose == Purpose::NewGame ? "NEW" : purpose == Purpose::Resume ? "RESUME" : "LOAD",
+               ch.open ? "open" : "closed", g.open ? "open" : "closed");
+    if (ch.open || g.open) {
+        logx::warn("menu: a co-op screen is still marked open; TLD's own %s runs (no SOLO / CO-OP asked)",
+                   purpose == Purpose::NewGame ? "NEW" : purpose == Purpose::Resume ? "RESUME" : "LOAD");
+        ch.open = g.open = false;  // (stale: the next click asks again)
+        original(self, method);
+        return;
+    }
+    if (!open_chooser(self, purpose)) {
+        logx::warn("menu: the SOLO / CO-OP screen couldn't be made; TLD's own runs");
+        original(self, method);
+    }
 }
 void sandbox_new_detour(Il2CppObject* self, const MethodInfo* method) {
     ask_first(self, method, Purpose::NewGame, g_sandbox_new);
@@ -2476,6 +2497,7 @@ void sandbox_load_detour(Il2CppObject* self, const MethodInfo* method) {
 // setup screen instead, with the lobby kept.
 void sandbox_enable_detour(Il2CppObject* self, bool enable, const MethodInfo* method) {
     g_sandbox_enable(self, enable, method);
+    logx::info("menu: TLD's Survival menu %s", enable ? "shown" : "hidden");
     if (!enable) {
         if (ch.open) {
             // TLD is moving on without us (e.g. a menu reset): drop our screen quietly.
