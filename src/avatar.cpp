@@ -421,7 +421,9 @@ struct Avatar {
     MocapPlay mocap, mocap_out;
     uint8_t mocap_activity = 0;
     double mocap_last = 0;
-    float gait_w = 0, gait_creep = 0;  // TLDCoop_DLC: the mocap gait's share of the body; how crouched it is
+    float gait_w = 0, gait_creep = 0;
+    float ground_w = 0;  // TLDCoop_DLC: how far into working on the ground (crouched, hands down) they are
+    double ground_last = 0;  // TLDCoop_DLC: the mocap gait's share of the body; how crouched it is
     double gait_phase = 0, gait_idle_t = 0;  // TLDCoop_DLC: where in the stride (0-1), in the standing clip (s)
     float vel_x = 0, vel_z = 0;  // TLDCoop_DLC: their velocity over the ground (smoothed), to tell backing off
     // TLDCoop_DLC: the body's own facing (standing, it lags their view and steps round to it), how fast it turns
@@ -2154,6 +2156,10 @@ const char* mocap_name(uint8_t activity) {
 }
 
 const MocapClip* mocap_clip(uint8_t activity, bool female) {
+    // TLDCoop_DLC (Shatsca 08.11, screenshots: "rozpalanie ogniska totalnie zepsute kończyny"): the CMU crouches
+    // (kneel 77_06, fire 77_08) come out with crossed, twisted legs on these rigs; work on the ground is TLD's crouch
+    // pose with the hands at the ground instead (ground_pose)
+    if (activity == net::ActKneel || activity == net::ActFire) return nullptr;
     const char* name = mocap_name(activity);
     if (!name) return nullptr;
     for (const MocapClip& c : kMocapClips)
@@ -2382,6 +2388,25 @@ bool ground_under(PVec at, float& y, PVec& normal) {
     return normal.y > 0.5f;  // (a wall or a steep rock face isn't ground to stand on)
 }
 
+// TLDCoop_DLC: working on the ground: both hands go to a spot on the ground in front, the right one a little busier
+// (a small slow circle), elbows out and down. `w` blends it in over the clip's arms.
+void ground_pose(const Avatar& a, float w) {
+    const float t = static_cast<float>(net::now_ms() / 1000.0);
+    for (int side = 0; side < 2; ++side) {
+        const bool right = side == 0;
+        const Arm arm = right ? kRightArm : kLeftArm;
+        const PVec shoulder = position_of(bone(a, arm.up));
+        const PVec hand = position_of(bone(a, arm.hand));
+        const net::pose::Frame f = net::pose::frame(shoulder, a.shown_yaw, 0, right);
+        const PVec root = position_of(target(a.root_transform));
+        const float busy = right ? 0.06f : 0.025f;
+        PVec to = f.at({-0.12f + busy * std::sin(t * 1.7f + side), 0, 0.42f + busy * std::cos(t * 1.7f + side)});
+        to.y = root.y + 0.12f;
+        to = hand + (to - hand) * w;
+        reach(a, arm, to, f.origin + f.out * 0.45f - f.up * 0.3f + f.forward * 0.2f);
+    }
+}
+
 // Each foot put on the ground under it, as high above it as the clip has it above the flat (its swing kept): on
 // stairs and slopes one foot higher, the hips moved with the lower one; the foot tilted with the ground under it.
 // Eased, so a step onto a stair doesn't snap. Not while they climb, sit, kneel, fall or lie.
@@ -2468,7 +2493,17 @@ void late_one(Avatar& a) {
         a.clip_hand[2] = d.x * std::sin(yaw) + d.z * std::cos(yaw);
     }
     const float crouch_left = has_bones(a) ? mocap_step(a) : 1.0f;  // TLDCoop_DLC: gait and what their body is busy with
-    if (crouch_left > 0.01f && a.crouch > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, a.crouch * crouch_left);
+    // TLDCoop_DLC: working on the ground (harvesting, cooking, a fire): crouched, hands at the ground in front
+    const bool ground = a.mocap_activity == net::ActKneel || a.mocap_activity == net::ActFire;
+    {
+        const double t = net::now_ms();
+        const float gdt = a.ground_last > 0 ? static_cast<float>(std::fmin(0.1, (t - a.ground_last) / 1000.0)) : 0.0f;
+        a.ground_last = t;
+        a.ground_w = std::clamp(a.ground_w + (ground ? gdt * 3 : -gdt * 3), 0.0f, 1.0f);
+    }
+    const float crouch_now = std::fmax(a.crouch, smooth01(a.ground_w));
+    if (crouch_left > 0.01f && crouch_now > 0.01f && has_legs(a) && !a.shown_down && !a.lying) crouch_pose(a, crouch_now * crouch_left);
+    if (a.ground_w > 0.01f && has_bones(a) && !a.shown_down && !a.lying) ground_pose(a, smooth01(a.ground_w));
     if (has_bones(a)) {  // TLDCoop_DLC: feet on the ground, head and chest after the view
         const double now = net::now_ms();
         const float dt = a.feet_last > 0 ? static_cast<float>(std::fmin(0.1, (now - a.feet_last) / 1000.0)) : 0.0f;
