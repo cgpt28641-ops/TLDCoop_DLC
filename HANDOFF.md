@@ -1479,3 +1479,14 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   likely missing): list_icons_once now logs the loaded bundles and whether ours is found ("clothing: icons: …").
   The catalog does list Assets/InventoryGridIcons/ico_GearItem__<Name>.png for every item.
 - Also seen: ClothingExpanded remakes all 25 items after each scene change (~450 ms during the load); left as is.
+
+### 08.11 ~20:55 (logs 20:34 + Kerel "no SOLO / CO-OP after Survival")
+- world_items send_gone: an item whose EvolveItem hours reached m_TimeToEvolveGameDays*24 isn't Taken (11 birch
+  saplings finishing curing after a sleep: coin-toss notices ×5-6 for everyone).
+- coop_report: logs sent paced 1 part (192 KB) / 1.5 s (was 300 ms: rtt 3.7 s, containers "no answer from the host").
+- ClothingExpanded icons: "clothing: icons: 136 bundle(s) loaded …; ours NOT found; asset names can't be listed"
+  → pack_bundle() never finds the pack (bundle names are hashes); icons must come another way (Addressables by key).
+- Menu: Kerel's 20:44 log (build 780f524) ends at the main menu with no menu line; only clothing diag + wildlife body
+  block changed since the 20:39 build that worked. ask_first now logs each NEW/RESUME/LOAD click, a stale ch/g.open
+  (cleared), and open_chooser's failures; Panel_Sandbox.Enable logged. Waiting for a log of the failure.
+- Open from 20:34: get_gameObject NRE ×100 on Szymon after a CookingPotDummy went (stopped by itself).
