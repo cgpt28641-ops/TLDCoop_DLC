@@ -57,6 +57,7 @@ struct Api {
     const MethodInfo* game_object = nullptr;    // Component.get_gameObject()
     const MethodInfo* transform = nullptr;      // Component.get_transform()
     const MethodInfo* get_component = nullptr;  // GameObject.GetComponent(Type)
+    const MethodInfo* set_active = nullptr;     // GameObject.SetActive(bool)
     const MethodInfo* find_objects = nullptr;   // static Object.FindObjectsOfType(Type)
     const MethodInfo* player_tf = nullptr;      // static GameManager.GetPlayerTransform()
     const MethodInfo* position = nullptr;       // Transform.get_position
@@ -177,6 +178,7 @@ uint8_t g_self = 0;
 Il2CppObject* g_train = nullptr;   // ours in this scene (gchandle-less: checked with alive() each frame)
 std::string g_guid;
 double g_next_find = 0;
+Il2CppObject* g_hidden = nullptr;  // our copy hidden after the driver took the train to another region
 int g_owner = kNobody;             // who drives the train in our scene
 double g_owner_seen = 0;
 Frame g_last;                      // the driver's newest frame
@@ -199,7 +201,8 @@ bool hosting() {
 
 Il2CppObject* find_train() {
     Il2CppObject* t = api.active_train ? il2::invoke(api.active_train, nullptr) : nullptr;
-    if (alive(t)) return t;
+    if (alive(t) && t != g_hidden) return t;
+    if (g_hidden) return nullptr;
     const double now = now_ms();
     if (now < g_next_find || !api.find_objects || !api.train_type) return nullptr;
     g_next_find = now + 2000;
@@ -431,6 +434,22 @@ void follow_to(const std::string& scene) {
     g_passing_on = false;
 }
 
+// Someone outside the train: the driver took it on into another region; our copy, left at the edge, goes out of
+// sight until we load this scene again.
+void gone_to(const std::string& scene) {
+    if (!g_train || g_followed_to == scene || !api.set_active) return;
+    g_followed_to = scene;
+    Il2CppObject* go = il2::invoke(api.game_object, g_train);
+    if (!go) return;
+    bool off = false;
+    void* a[] = {&off};
+    il2::invoke(api.set_active, go, a);
+    logx::info("train: the driver took it on to %s: our copy here is hidden", scene.c_str());
+    g_hidden = g_train;
+    g_train = nullptr;
+    g_owner = kNobody;
+}
+
 void impact_detour(Il2CppObject* self, Il2CppObject* car, int32_t area, const MethodInfo* method) {
     if (g_ready && !g_passing_on && car && car == g_train && g_owner != kNobody && g_owner != g_self) {
         if (!inside_train()) {
@@ -465,7 +484,10 @@ void receive(double now) {
         g_riders[f.from] = f;
         g_riding[f.from] = (f.flags & kInside) && !(f.flags & kRelease);
         if (f.scene != g_scene) {
-            if ((f.flags & kOwner) && f.from == g_owner) follow_to(f.scene);
+            if ((f.flags & kOwner) && f.from == g_owner) {
+                if (inside_train()) follow_to(f.scene);
+                else gone_to(f.scene);
+            }
             continue;
         }
         if (f.flags & kOwner) {
@@ -858,6 +880,7 @@ bool init() {
     api.game_object = il2::find_method(component, "get_gameObject", 0);
     api.transform = il2::find_method(component, "get_transform", 0);
     api.get_component = il2::find_method_params(go, "GetComponent", {"System.Type"});
+    api.set_active = il2::find_method(go, "SetActive", 1);
     api.find_objects = il2::find_method_params(object, "FindObjectsOfType", {"System.Type"});
     api.player_tf = il2::find_method(gm, "GetPlayerTransform", 0);
     api.position = il2::find_method(tf, "get_position", 0);
@@ -973,6 +996,7 @@ void on_frame(const std::string& scene, bool in_game) {
         g_spline_seen = nullptr;
         g_was_inside = false;
         g_next_find = 0;
+        g_hidden = nullptr;
     }
     g_scene = scene;
     g_in_game = in_game;
