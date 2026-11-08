@@ -1391,3 +1391,22 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   Leaving the cab sends a reliable release frame; with nobody driving the host sends an idle frame every 3 s (others
   placed if > 1 m off). Both drive at once → lower id wins. Not done: region transitions with the train (only same
   scene), firebox/boiler/repairs, track switches/turntable state, train container contents.
+
+### 2026-11-08 ~14:00–14:20 local — Iron Road step 2/3, Cheat Death in co-op (CI green; NOT tested in game)
+- **Train step 2** (`coop_train.cpp`, Msg TrainParts = 60, TrackElements = 61): engine parts (BrakeShoe, Boiler,
+  CowCatcher, Wheels via SerializeComponent/DeserializeComponent: condition + data text, boiler lit) and tanks. The
+  one in charge (driver; nobody: host) sends on change + every 5 s; others send only their own doings (repair >0.5,
+  boiler on/off, +0.05 l oil/water). Track: TrackElementManager.s_TrackElements (switches, turntables, towers),
+  each element's get_GUID/Serialize/Deserialize; changes sent within 1 s, host full list every 15 s.
+  Idle frames no longer carry the tanks. protocol.h: Writer::put_raw, kHeaderSize (host relays bodies as they came).
+- **Train step 3, regions:** LoadScene.HandleTrainCarImpact hooked. The driver's game crosses on its own; a passenger
+  whose driver's frames come from the next scene takes the nearest LoadScene with that m_SceneToLoad and an
+  m_ExitSplineGUID (calls the original). An observer's copy (not in the cab) doesn't cross. After a scene change
+  the one who drove in drives on at once; others wait 4 s before claiming. Still open: what an observer sees after
+  the train left (their copy stays at the edge; the host's save keeps it where the host saw it), train container.
+- **Cheat Death (Shatsca 13:46, Karol 14:01):** `[death] mode=cheat` (default) / `coop`, `lives=3`. In co-op the
+  save's LifeAfterDeathState.m_SystemEnabled is set and tunables m_AvailableLives = lives. A death with lives left:
+  no co-op body, TLD's own screens (penalty, close/far respawn, the pack left in the world); our panel hooks pass
+  through; LifeAfterDeathManager.PerformRespawn hooked → alive again; HandlePlayerEnvironment skipped in co-op
+  (no weather change or hours passing for the shared world). Lives used up → co-op's body + new survivor as before;
+  the save is never deleted. Others' notice now just "X died."
