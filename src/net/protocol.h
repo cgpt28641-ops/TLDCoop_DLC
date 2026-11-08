@@ -228,7 +228,9 @@ enum class Msg : uint8_t {
     HouseLights = 56,  // TLDCoop_DLC (v49): House Lights' switch in a scene: u8 on, scene[64] (either way; the host passes it on)
     Automat = 57,      // TLDCoop_DLC: the slot machine (test builds): u8 op, scene blob, then the op's fields (src/slot_machine.cpp)
     Summon = 58,       // TLDCoop_DLC: host -> a friend: come to me (F1 teleportplayer): scene[64], x, y, z, yaw (src/coop_summon.cpp)
-    Train = 59         // TLDCoop_DLC: Iron Road's steam train: the driver's (or a rider's, or the host's idle) frame (src/coop_train.cpp)
+    Train = 59,        // TLDCoop_DLC: Iron Road's steam train: the driver's (or a rider's, or the host's idle) frame (src/coop_train.cpp)
+    TrainParts = 60,   // TLDCoop_DLC: the train's parts (condition, boiler) and tanks (src/coop_train.cpp)
+    TrackElements = 61 // TLDCoop_DLC: Iron Road's track switches, turntables, towers: guid + TLD's own state text
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -500,6 +502,8 @@ public:
         append(s.data(), s.size());
     }
 
+    void put_raw(const void* p, size_t n) { append(p, n); }  // TLDCoop_DLC: a received body passed on as it came
+
     const uint8_t* data() const { return buf_.data(); }
     size_t size() const { return buf_.size(); }
     bool ok() const { return !overflow_; }
@@ -770,6 +774,8 @@ inline bool read_attack_result(Reader& r, AttackResultMsg& a) {
     a.bleed_minutes = r.get<float>();
     return r.ok();
 }
+
+constexpr size_t kHeaderSize = 4 + 2 + 1;  // TLDCoop_DLC: magic, version, type
 
 // A Reader past a received packet's header (magic, version, type), for the read_* functions.
 inline Reader packet_body(const Packet& p) {

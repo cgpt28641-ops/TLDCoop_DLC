@@ -65,6 +65,13 @@ struct Api {
     const MethodInfo* to_world = nullptr;       // Transform.TransformPoint(Vector3)
     ptrdiff_t fuel_source = -1, water_source = -1;  // SteamTrain.m_FuelSource, m_WaterSource (GenericLiquidContainer)
     ptrdiff_t liquid_volume = -1;               // GenericLiquidContainer.m_CurrentVolume (ItemLiquidVolume: int64)
+    std::array<const MethodInfo*, 4> part_get{};  // SteamTrain.get_BrakeShoe, get_Boiler, get_CowCatcher, get_Wheels
+    const MethodInfo* serialize_component = nullptr;    // SteamTrainComponent.SerializeComponent()
+    const MethodInfo* deserialize_component = nullptr;  // SteamTrainComponent.DeserializeComponent(state)
+    const MethodInfo* boiler_on = nullptr;      // SteamTrainBoiler.get_BoilerIsOn()
+    ptrdiff_t cs_condition = -1, cs_data = -1;  // SteamTrainComponentState.m_Condition, m_ComponentDataSerialized
+    FieldInfo* track_elements = nullptr;        // static TrackElementManager.s_TrackElements (List<ITrackElement>)
+    ptrdiff_t list_items = -1, list_size = -1;  // List<T>._items, _size
     ptrdiff_t st_velocity = -1, st_sign = -1, st_pressure = -1, st_throttle = -1, st_brakes = -1;  // EngineState
 } api;
 
@@ -342,10 +349,7 @@ void place(const Frame& f) {
     float have = 0;
     il2::invoke_value(api.get_abs, ctl, have);
     const bool other_spline = !f.spline.empty() && spline_guid(ctl) != f.spline;
-    if (!other_spline && std::fabs(have - f.pos) < 1.0f) {
-        apply_liquids(f);
-        return;
-    }
+    if (!other_spline && std::fabs(have - f.pos) < 1.0f) return;
     if (other_spline) {
         Il2CppObject* s = spline_by_guid(f.spline);
         if (!alive(s)) return;
@@ -363,7 +367,6 @@ void place(const Frame& f) {
         put<float>(st, api.st_velocity, 0.0f);
         put<int32_t>(st, api.st_throttle, 0);
     }
-    apply_liquids(f);
     logx::info("train: put where %s left it (%.1f m along%s)", f.flags & kIdle ? "the host has it" : "its driver",
                f.pos, other_spline ? ", another track" : "");
 }
@@ -410,6 +413,302 @@ void receive(double now) {
             if (g_train) place(f);
             else g_pending_idle = f, g_has_pending = true;
         }
+    }
+}
+
+
+// --- the train's parts and the track (item 10, step 2) --------------------------------------------------------------
+// The engine's parts (brake shoe, boiler, cow catcher, wheels: their condition, the boiler lit or not and its heat) and
+// the tanks. The one in charge (the driver; nobody driving: the host) sends them when they change and every 5 s; the
+// others put theirs so. Someone else's own doing (a repair, lighting the firebox, filling a tank) goes to the one in
+// charge at once. The track (switches, turntables, water and oil towers: TrackElementManager's list) is everyone's:
+// a change goes out within a second, and the host sends the whole list every 15 s.
+
+constexpr int kParts = 4;
+const char* const kPartNames[kParts] = {"brake shoe", "boiler", "cow catcher", "wheels"};
+constexpr int64_t kLiquidStep = 50000000;  // 0.05 l (ItemLiquidVolume: 1e-9 l): a refill, not a tank's drain
+
+struct Part {
+    bool valid = false;
+    float condition = 0;
+    bool on = false;
+    std::string data;
+};
+std::array<Part, kParts> g_known{};
+int64_t g_fuel_known = -1, g_water_known = -1;
+double g_next_parts = 0, g_parts_full_at = 0;
+std::string g_parts_guid;
+int g_parts_logged = 0;
+
+bool in_charge() { return g_owner == g_self || (g_owner == kNobody && hosting()); }
+
+Il2CppObject* part_of(int i) {
+    if (!g_train || !api.part_get[i]) return nullptr;
+    Il2CppObject* c = il2::invoke(api.part_get[i], g_train);
+    return alive(c) ? c : nullptr;
+}
+
+Part read_part(int i) {
+    Part p;
+    Il2CppObject* c = part_of(i);
+    Il2CppObject* st = c ? il2::invoke(api.serialize_component, c) : nullptr;
+    if (!st) return p;
+    p.valid = true;
+    p.condition = get<float>(st, api.cs_condition);
+    p.data = text(get<Il2CppString*>(st, api.cs_data));
+    if (i == 1 && api.boiler_on) il2::invoke_value(api.boiler_on, c, p.on);
+    return p;
+}
+
+void write_part(int i, const Part& p) {
+    Il2CppObject* c = part_of(i);
+    Il2CppObject* st = c ? il2::invoke(api.serialize_component, c) : nullptr;  // a state to fill in
+    if (!st) return;
+    put<float>(st, api.cs_condition, p.condition);
+    il2::store_ref(st, api.cs_data, p.data.empty() ? nullptr : il2::il2cpp_string_new(p.data.c_str()));
+    void* a[] = {st};
+    il2::invoke(api.deserialize_component, c, a);
+}
+
+int64_t tank(ptrdiff_t field) {
+    Il2CppObject* c = liquid(field);
+    return c ? get<int64_t>(c, api.liquid_volume) : -1;
+}
+
+void send_parts(const std::array<Part, kParts>& parts, int64_t fuel, int64_t water, bool full) {
+    net::Writer w(net::Msg::TrainParts, 32768);
+    w.put<uint8_t>(g_self);
+    w.put<uint8_t>(full ? 1 : 0);
+    w.put_blob(g_scene, 64);
+    w.put_blob(g_guid, 64);
+    w.put<int64_t>(fuel);
+    w.put<int64_t>(water);
+    w.put<uint8_t>(kParts);
+    for (const Part& p : parts) {
+        w.put<uint8_t>(p.valid ? 1 : 0);
+        w.put<float>(p.condition);
+        w.put<uint8_t>(p.on ? 1 : 0);
+        w.put_blob(p.data, 6000);
+    }
+    netrt::send_packet(w, true);
+}
+
+void parts_tick(double now) {
+    if (!g_train || !api.serialize_component || now < g_next_parts) return;
+    g_next_parts = now + 1000;
+    if (g_parts_guid != g_guid) {  // a new train (or scene): what it has now is what we know
+        g_parts_guid = g_guid;
+        for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
+        g_fuel_known = tank(api.fuel_source);
+        g_water_known = tank(api.water_source);
+        g_parts_full_at = 0;
+    }
+    std::array<Part, kParts> now_parts;
+    for (int i = 0; i < kParts; ++i) now_parts[i] = read_part(i);
+    const int64_t fuel = tank(api.fuel_source), water = tank(api.water_source);
+    if (in_charge()) {
+        bool changed = fuel != g_fuel_known || water != g_water_known;
+        for (int i = 0; i < kParts; ++i)
+            changed = changed || std::fabs(now_parts[i].condition - g_known[i].condition) > 0.05f ||
+                      now_parts[i].on != g_known[i].on || now_parts[i].data != g_known[i].data;
+        const bool full = now >= g_parts_full_at;
+        if (!changed && !full) return;
+        if (!netrt::status().players.empty()) send_parts(now_parts, fuel, water, true);
+        g_known = now_parts;
+        g_fuel_known = fuel, g_water_known = water;
+        g_parts_full_at = now + 5000;
+        return;
+    }
+    // Not in charge: only what we did ourselves goes out.
+    std::string why;
+    for (int i = 0; i < kParts; ++i) {
+        if (!now_parts[i].valid || !g_known[i].valid) continue;
+        if (now_parts[i].condition > g_known[i].condition + 0.5f) why += std::string(" ") + kPartNames[i] + " repaired";
+        if (now_parts[i].on != g_known[i].on) why += now_parts[i].on ? " boiler lit" : " boiler out";
+    }
+    if (fuel > g_fuel_known + kLiquidStep) why += " oil added";
+    if (water > g_water_known + kLiquidStep) why += " water added";
+    if (why.empty()) return;
+    if (g_parts_logged++ < 40) logx::info("train: our own doing to the train:%s: sent", why.c_str());
+    send_parts(now_parts, fuel, water, false);
+    g_known = now_parts;
+    g_fuel_known = fuel, g_water_known = water;
+}
+
+void parts_receive() {
+    static std::vector<net::Packet> in;
+    in.clear();
+    netrt::drain_packets(net::Msg::TrainParts, in);
+    const bool host = hosting();
+    for (const net::Packet& p : in) {
+        if (host) {
+            net::Writer w(net::Msg::TrainParts, 32768);
+            w.put_raw(p.data.data() + net::kHeaderSize, p.data.size() - net::kHeaderSize);
+            netrt::send_packet_except(p.from, w, true);
+        }
+        net::Reader r = net::packet_body(p);
+        const uint8_t from = r.get<uint8_t>();
+        const bool full = r.get<uint8_t>() != 0;
+        const std::string scene = r.get_blob(64), guid = r.get_blob(64);
+        const int64_t fuel = r.get<int64_t>(), water = r.get<int64_t>();
+        const uint8_t n = r.get<uint8_t>();
+        std::array<Part, kParts> parts;
+        for (int i = 0; i < n && i < 16; ++i) {
+            Part x;
+            x.valid = r.get<uint8_t>() != 0;
+            x.condition = r.get<float>();
+            x.on = r.get<uint8_t>() != 0;
+            x.data = r.get_blob(6000);
+            if (i < kParts) parts[i] = x;
+        }
+        if (!r.ok() || (host ? p.from : from) == g_self || scene != g_scene || guid != g_guid || !g_train) continue;
+        // A full state from someone not in charge here (an old driver) or our own doing over the one in charge's:
+        // the one in charge only takes others' own doings.
+        if (full && in_charge()) continue;
+        for (int i = 0; i < kParts; ++i)
+            if (parts[i].valid) write_part(i, parts[i]);
+        if (Il2CppObject* c = liquid(api.fuel_source); c && fuel >= 0) put<int64_t>(c, api.liquid_volume, fuel);
+        if (Il2CppObject* c = liquid(api.water_source); c && water >= 0) put<int64_t>(c, api.liquid_volume, water);
+        for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
+        g_fuel_known = tank(api.fuel_source), g_water_known = tank(api.water_source);
+        if (!full && g_parts_logged++ < 40) logx::info("train: a friend's doing to the train taken in");
+    }
+}
+
+// The track's switches, turntables and towers.
+struct Element {
+    Il2CppObject* obj = nullptr;
+    const MethodInfo* guid = nullptr;
+    const MethodInfo* serialize = nullptr;
+    const MethodInfo* deserialize = nullptr;
+};
+std::vector<Element> g_elements;
+std::vector<std::pair<std::string, std::string>> g_element_known;  // guid, data
+double g_next_elements = 0, g_elements_full_at = 0;
+std::string g_elements_scene;
+int g_elements_logged = 0;
+
+const MethodInfo* method_of(Il2CppObject* obj, const char* name, int args) {
+    for (Il2CppClass* k = obj ? il2::il2cpp_object_get_class(obj) : nullptr; k; k = il2::il2cpp_class_get_parent(k))
+        if (const MethodInfo* m = il2::find_method_quiet(k, name, args)) return m;
+    return nullptr;
+}
+
+void collect_elements() {
+    g_elements.clear();
+    if (!api.track_elements) return;
+    Il2CppObject* list = nullptr;
+    il2::il2cpp_field_static_get_value(api.track_elements, &list);
+    if (!list || api.list_items < 0 || api.list_size < 0) return;
+    Il2CppObject* items = get<Il2CppObject*>(list, api.list_items);
+    const int32_t size = get<int32_t>(list, api.list_size);
+    for (int32_t i = 0; items && i < size && i < static_cast<int32_t>(il2::array_length(items)); ++i) {
+        Element e;
+        e.obj = il2::array_object_at(items, i);
+        if (!alive(e.obj)) continue;
+        e.guid = method_of(e.obj, "get_GUID", 0);
+        e.serialize = method_of(e.obj, "Serialize", 0);
+        e.deserialize = method_of(e.obj, "Deserialize", 1);
+        if (e.guid && e.serialize && e.deserialize) g_elements.push_back(e);
+    }
+}
+
+std::vector<std::pair<std::string, std::string>> read_elements() {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const Element& e : g_elements) {
+        if (!alive(e.obj)) continue;
+        out.emplace_back(text(reinterpret_cast<Il2CppString*>(il2::invoke(e.guid, e.obj))),
+                         text(reinterpret_cast<Il2CppString*>(il2::invoke(e.serialize, e.obj))));
+    }
+    return out;
+}
+
+void send_elements(const std::vector<std::pair<std::string, std::string>>& list) {
+    if (list.empty() || netrt::status().players.empty()) return;
+    net::Writer w(net::Msg::TrackElements, 65536);
+    w.put<uint8_t>(g_self);
+    w.put_blob(g_scene, 64);
+    w.put<uint16_t>(static_cast<uint16_t>(list.size()));
+    for (const auto& [guid, data] : list) {
+        w.put_blob(guid, 128);
+        w.put_blob(data, 4000);
+    }
+    netrt::send_packet(w, true);
+}
+
+void elements_tick(double now) {
+    if (!api.track_elements || now < g_next_elements) return;
+    g_next_elements = now + 1000;
+    if (g_elements_scene != g_scene) {
+        g_elements_scene = g_scene;
+        g_element_known.clear();
+        g_elements_full_at = now + 3000;
+    }
+    collect_elements();
+    if (g_elements.empty()) return;
+    const auto current = read_elements();
+    std::vector<std::pair<std::string, std::string>> changed;
+    for (const auto& c : current) {
+        auto it = std::find_if(g_element_known.begin(), g_element_known.end(),
+                               [&](const auto& k) { return k.first == c.first; });
+        if (it == g_element_known.end()) {
+            g_element_known.push_back(c);  // first seen: what the scene loaded with
+        } else if (it->second != c.second) {
+            it->second = c.second;
+            changed.push_back(c);
+        }
+    }
+    if (!changed.empty()) {
+        if (g_elements_logged++ < 60)
+            logx::info("train: %zu track part(s) changed here (%s ...): sent", changed.size(), changed[0].first.c_str());
+        send_elements(changed);
+    }
+    if (hosting() && now >= g_elements_full_at) {
+        send_elements(current);
+        g_elements_full_at = now + 15000;
+    }
+}
+
+void elements_receive() {
+    static std::vector<net::Packet> in;
+    in.clear();
+    netrt::drain_packets(net::Msg::TrackElements, in);
+    const bool host = hosting();
+    for (const net::Packet& p : in) {
+        if (host) {
+            net::Writer w(net::Msg::TrackElements, 65536);
+            w.put_raw(p.data.data() + net::kHeaderSize, p.data.size() - net::kHeaderSize);
+            netrt::send_packet_except(p.from, w, true);
+        }
+        net::Reader r = net::packet_body(p);
+        const uint8_t from = r.get<uint8_t>();
+        const std::string scene = r.get_blob(64);
+        const uint16_t n = r.get<uint16_t>();
+        if (!r.ok() || (host ? p.from : from) == g_self || scene != g_scene) continue;
+        if (g_elements.empty()) collect_elements();
+        int applied = 0;
+        for (uint16_t i = 0; i < n && r.ok(); ++i) {
+            const std::string guid = r.get_blob(128), data = r.get_blob(4000);
+            if (!r.ok()) break;
+            auto it = std::find_if(g_element_known.begin(), g_element_known.end(),
+                                   [&](const auto& k) { return k.first == guid; });
+            if (it != g_element_known.end() && it->second == data) continue;
+            for (const Element& e : g_elements) {
+                if (!alive(e.obj) || text(reinterpret_cast<Il2CppString*>(il2::invoke(e.guid, e.obj))) != guid) continue;
+                const std::string mine = text(reinterpret_cast<Il2CppString*>(il2::invoke(e.serialize, e.obj)));
+                if (mine != data) {
+                    void* a[] = {il2::il2cpp_string_new(data.c_str())};
+                    il2::invoke(e.deserialize, e.obj, a);
+                    ++applied;
+                }
+                const std::string now_data = text(reinterpret_cast<Il2CppString*>(il2::invoke(e.serialize, e.obj)));
+                if (it != g_element_known.end()) it->second = now_data;
+                else g_element_known.emplace_back(guid, now_data);
+                break;
+            }
+        }
+        if (applied && g_elements_logged++ < 60) logx::info("train: %d track part(s) set as player %u has them", applied,
+                                                            host ? p.from : from);
     }
 }
 
@@ -516,6 +815,39 @@ bool init() {
                                reinterpret_cast<void*>(&update_engine_detour),
                                reinterpret_cast<void**>(&g_update_engine)))
         return false;
+    {  // step 2: the parts and the track (optional: without them the train still runs together)
+        Il2CppClass* comp = il2::find_class(kGame, "TLD.SteamTrain", "SteamTrainComponent");
+        Il2CppClass* cstate = il2::find_class(kGame, "TLD.SteamTrain", "SteamTrainComponentState");
+        Il2CppClass* boiler = il2::find_class(kGame, "TLD.SteamTrain", "SteamTrainBoiler");
+        Il2CppClass* manager = il2::find_class(kGame, "TLD.SteamTrain", "TrackElementManager");
+        const char* getters[4] = {"get_BrakeShoe", "get_Boiler", "get_CowCatcher", "get_Wheels"};
+        for (int i = 0; i < 4; ++i) api.part_get[i] = il2::find_method(train, getters[i], 0);
+        if (comp) {
+            api.serialize_component = il2::find_method(comp, "SerializeComponent", 0);
+            api.deserialize_component = il2::find_method(comp, "DeserializeComponent", 1);
+        }
+        if (cstate) {
+            api.cs_condition = il2::field_offset(cstate, "m_Condition");
+            api.cs_data = il2::field_offset(cstate, "m_ComponentDataSerialized");
+        }
+        if (boiler) api.boiler_on = il2::find_method(boiler, "get_BoilerIsOn", 0);
+        if (!api.serialize_component || !api.deserialize_component || api.cs_condition < 0 || api.cs_data < 0) {
+            api.serialize_component = nullptr;
+            logx::warn("train: the engine's parts can't be read; their state isn't shared");
+        }
+        if (manager) api.track_elements = il2::il2cpp_class_get_field_from_name(manager, "s_TrackElements");
+        if (api.track_elements) {
+            Il2CppClass* list = il2::il2cpp_class_from_type(il2::il2cpp_field_get_type(api.track_elements));
+            if (list) {
+                api.list_items = il2::field_offset(list, "_items");
+                api.list_size = il2::field_offset(list, "_size");
+            }
+        }
+        if (!api.track_elements || api.list_items < 0) {
+            api.track_elements = nullptr;
+            logx::warn("train: the track's list not found; switches and turntables aren't shared");
+        }
+    }
     g_ready = true;
     logx::info("train: ready (the first one into the cab drives; the others' trains follow theirs)");
     return true;
@@ -554,6 +886,9 @@ void on_frame(const std::string& scene, bool in_game) {
         }
     }
     receive(now);
+    parts_receive();
+    elements_receive();
+    elements_tick(now);
     if (g_owner != kNobody && g_owner != g_self && now - g_owner_seen > kOwnerLostMs) {
         logx::info("train: no word from player %d for %.1f s: nobody drives", g_owner, (now - g_owner_seen) / 1000.0);
         g_owner = kNobody;
@@ -582,6 +917,7 @@ void on_frame(const std::string& scene, bool in_game) {
     g_was_inside = inside;
 
     if (driven_by_other()) follow(now, dt);
+    parts_tick(now);
 
     if (now >= g_next_send) {
         if (g_owner == g_self) {
