@@ -1800,10 +1800,10 @@ bool indoors_now() {
 
 // (08.11, Shatsca's layout: the time alone at the top centre, bigger; the weight top left by a weight icon; warmth and
 // condition over TLD's status icons; the air and feels-like temperature and the wind under the health bar, red below 0)
-constexpr int kTimeFont = 24, kTopFont = 16, kStatusFont = 15, kAirFont = 13;
+constexpr int kTimeFont = 24, kTopFont = 16, kStatusFont = 15, kAirFont = 11;
 constexpr float kStatsLeft = 24, kStatsTop = 20;
-constexpr float kStatusLeft = 56, kStatusAbove = 122;  // UI units from the bottom: over TLD's status icons
-constexpr float kAirLeft = 56, kAirAbove = 8;          // under its health bar
+constexpr float kStatusLeft = 50, kStatusAbove = 92;   // UI units from the bottom: just over TLD's status icons
+constexpr float kAirLeft = 52, kAirAbove = 2;          // under its health bar, clear of it
 uintptr_t g_stats_root = 0;
 struct StatsLabel {
     uintptr_t label = 0;
@@ -1834,6 +1834,9 @@ struct StatsApi {
     const MethodInfo *lamp_pct = nullptr, *flare_left = nullptr;
     ptrdiff_t torch_life = -1, torch_burnt = -1;
     const MethodInfo *gear_name = nullptr;
+    ptrdiff_t sprint_fade = -1;                 // Panel_HUD.m_SprintBar_SecondsBeforeFadeOut
+    ptrdiff_t sprint_bar = -1;                  // Panel_HUD.m_SprintBar (UIWidget)
+    const MethodInfo *rect_set_alpha = nullptr; // UIRect.set_alpha(float)
 } sapi;
 
 void look_up_stats() {
@@ -1863,6 +1866,11 @@ void look_up_stats() {
     if (Il2CppClass* w = il2::find_class("TLD.IntBackedUnit.dll", "TLD.IntBackedUnit", "ItemWeight"))
         sapi.from_kg = il2::find_method_quiet(w, "FromKilograms", 1);
     sapi.player_manager = il2::find_method(gm, "GetPlayerManagerComponent", 0);
+    if (Il2CppClass* hud = il2::find_class(kGame, "", "Panel_HUD")) {
+        sapi.sprint_fade = il2::field_offset_quiet(hud, "m_SprintBar_SecondsBeforeFadeOut");
+        sapi.sprint_bar = il2::field_offset_quiet(hud, "m_SprintBar");
+    }
+    if (Il2CppClass* rect = il2::find_class("Assembly-CSharp.dll", "", "UIRect")) sapi.rect_set_alpha = il2::find_method_quiet(rect, "set_alpha", 1);
     sapi.in_hands = il2::field_offset_quiet(il2::find_class(kGame, "", "PlayerManager"), "m_ItemInHandsInternal");
     sapi.lamp = il2::field_offset_quiet(gear, "m_KeroseneLampItem");
     sapi.torch = il2::field_offset_quiet(gear, "m_TorchItem");
@@ -1931,11 +1939,7 @@ StatsParts stats_parts() {
                  100.0f * (1.0f - std::clamp(get<float>(fr, sapi.freeze_now) / get<float>(fr, sapi.freeze_max), 0.0f, 1.0f)));
         add(out.status, line, "   ");
     }
-    if (cond && sapi.hp >= 0 && sapi.hp_max >= 0 && get<float>(cond, sapi.hp_max) > 0) {
-        snprintf(line, sizeof(line), "%s %.0f%%", pl ? "KONDYCJA" : "CONDITION",
-                 100.0f * get<float>(cond, sapi.hp) / get<float>(cond, sapi.hp_max));
-        add(out.status, line, "   ");
-    }
+    (void)cond;  // (condition: TLD's own health bar shows it; Shatsca 08.11 "kondycję zupełnie usuń")
     bool ok_body = false;
     const float body = invoke_float(sapi.body_temp, fr, ok_body);
     if (ok_body && body > 20 && body < 45) snprintf(line, sizeof(line), "%s %.1f°C", pl ? "CIAŁO" : "BODY", body), add(out.status, line, "   ");
@@ -2028,6 +2032,18 @@ void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
                 break;
             }
         }
+    }
+    // TLD's sprint bar always on screen (Shatsca 08.11: "pasek sprintu cały czas widoczny"): it never starts to fade
+    look_up_stats();
+    if (sapi.sprint_fade >= 0 && hud) {
+        const float forever = 1.0e6f;
+        memcpy(reinterpret_cast<char*>(hud) + sapi.sprint_fade, &forever, sizeof(float));
+    }
+    if (sapi.sprint_bar >= 0 && sapi.rect_set_alpha) {
+        Il2CppObject* bar = get<Il2CppObject*>(hud, sapi.sprint_bar);
+        float one = 1.0f;
+        void* aa[] = {&one};
+        if (alive(bar)) il2::invoke(sapi.rect_set_alpha, bar, aa);
     }
     static std::chrono::steady_clock::time_point next{};
     const auto now = std::chrono::steady_clock::now();

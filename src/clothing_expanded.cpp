@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1254,6 +1255,34 @@ void on_frame(const std::string& scene, bool in_game) {
         case State::Failed:
             return;
     }
+}
+
+// TLDCoop_DLC (Shatsca 08.11: "add GEAR_CargoToolbelt" in the F1 console added nothing): TLD's `add` looks the name
+// up in ConsoleManager's list of the game's own gear, which ours aren't in. `add` / `gear_add` with one of ours is
+// answered here (PlayerManager.AddItemCONSOLE, as the attach does).
+bool console(const std::string& line) {
+    std::istringstream in(line);
+    std::string cmd, name;
+    int count = 1;
+    in >> cmd >> name;
+    if (!(in >> count)) count = 1;
+    for (char& c : cmd) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if ((cmd != "add" && cmd != "gear_add") || name.empty() || g_state != State::Ready || !ui.add_item || !ui.get_pm) return false;
+    const Item* found = nullptr;
+    for (const Item& it : kItems)
+        if (lower(it.key) == lower(name) || lower(short_name(it.key)) == lower(name)) found = &it;
+    if (!found) return false;
+    Il2CppObject* pm = il2::invoke(ui.get_pm, nullptr);
+    if (!pm) return false;
+    int added = 0;
+    for (int i = 0; i < std::clamp(count, 1, 20); ++i) {
+        int32_t n = 1;
+        float cond = 1.0f;
+        void* a[] = {str(found->key), &n, &cond};
+        if (alive(il2::invoke(ui.add_item, pm, a))) ++added;
+    }
+    logx::info("clothing: console: add %s x%d: %d added", found->key, count, added);
+    return true;
 }
 
 void describe() {

@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 
+#include "clothing_expanded.h"
 #include "coop_notices.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
@@ -122,6 +123,7 @@ Il2CppObject* run_detour(Il2CppString* line, const MethodInfo* method) {
         std::istringstream in(il2::to_utf8(line));
         std::vector<std::string> args;
         for (std::string a; in >> a;) args.push_back(a);
+        if (clothing_expanded::console(il2::to_utf8(line))) return nullptr;  // TLDCoop_DLC: `add` of a ClothingExpanded item
         if (!args.empty()) {
             const std::string cmd = lower(args[0]);
             if (cmd == "teleportplayer" || cmd == "tpplayer") {

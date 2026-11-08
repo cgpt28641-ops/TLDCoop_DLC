@@ -97,8 +97,8 @@ constexpr const char* kDefaultIni =
     "\n"
     "[clothing]\n"
     "; enabled: ClothingExpanded (built in): pants with a tool belt, boots with crampons, the satchel with a rifle\n"
-    "; scabbard. 1 = on (needs the Tales from the Far Territory DLC); off for now while it is tested\n"
-    "enabled=0\n"
+    "; scabbard. 1 = on (some items need the Tales from the Far Territory DLC's clothes)\n"
+    "enabled=1\n"
     "\n"
     "[sky]\n"
     "; Better Night Sky (built in): finer stars and a moon with its phases. Your own look (0 = TLD's sky)\n"
@@ -304,7 +304,13 @@ Settings load() {
     s.food_tweaker = GetPrivateProfileIntW(L"food", L"enabled", 0, ini.c_str()) != 0;  // TLDCoop_DLC
     s.night_sky = GetPrivateProfileIntW(L"sky", L"enabled", 1, ini.c_str()) != 0;      // TLDCoop_DLC
     s.fuel_drain = GetPrivateProfileIntW(L"fuel", L"drain", 1, ini.c_str()) != 0;      // TLDCoop_DLC
-    s.clothing = GetPrivateProfileIntW(L"clothing", L"enabled", 0, ini.c_str()) != 0;  // TLDCoop_DLC
+    // TLDCoop_DLC: ClothingExpanded on for everyone from 08.11 (kerel: "jeżeli już nie crashuje"): an older coop.ini's
+    // enabled=0 (the default then) turns into 1 once; a 0 set after that stays.
+    if (!GetPrivateProfileIntW(L"clothing", L"on_from_0811", 0, ini.c_str())) {
+        WritePrivateProfileStringW(L"clothing", L"enabled", L"1", ini.c_str());
+        WritePrivateProfileStringW(L"clothing", L"on_from_0811", L"1", ini.c_str());
+    }
+    s.clothing = GetPrivateProfileIntW(L"clothing", L"enabled", 1, ini.c_str()) != 0;  // TLDCoop_DLC
     {  // TLDCoop_DLC: [houselights]
         auto num = [&](const wchar_t* key, float& v, float lo, float hi) {
             const std::string t = read(ini, key, "", L"houselights");

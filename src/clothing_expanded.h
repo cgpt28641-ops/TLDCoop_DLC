@@ -14,5 +14,7 @@ bool init();
 void on_frame(const std::string& scene, bool in_game);
 // dev `clothing`: what's loaded and mapped.
 void describe();
+// TLDCoop_DLC: a console line (F1): `add GEAR_X [N]` with one of ours adds it. True: it was ours (answered).
+bool console(const std::string& line);
 
 }  // namespace clothing_expanded
