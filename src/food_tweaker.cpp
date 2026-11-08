@@ -61,7 +61,7 @@ const std::unordered_map<std::string, float>& realistic() {
         {"GEAR_RoseHipTea", 5}, {"GEAR_SodaGrape", 170}, {"GEAR_Soda", 120},
         // other food
         {"GEAR_AcornCooked", 150}, {"GEAR_AcornCookedBig", 600}, {"GEAR_AirlineFoodChick", 620}, {"GEAR_AirlineFoodVeg", 560},
-        {"GEAR_BeefJerky", 410}, {"GEAR_BurdockPrepared", 108}, {"GEAR_CandyBar", 585}, {"GEAR_CattailStalk", 15},
+        {"GEAR_BeefJerky", 410}, {"GEAR_BurdockPrepared", 108}, {"GEAR_CandyBar", 585}, {"GEAR_CattailStalk", 150},
         {"GEAR_CondensedMilk", 815}, {"GEAR_DogFood", 425}, {"GEAR_EnergyBar", 500}, {"GEAR_GranolaBar", 300},
         {"GEAR_KetchupChips", 540}, {"GEAR_MapleSyrup", 920}, {"GEAR_MRE", 1200}, {"GEAR_PeanutButter", 3060},
         {"GEAR_PinnacleCanPeaches", 245}, {"GEAR_CannedBeans", 265}, {"GEAR_Crackers", 515}, {"GEAR_CannedSardines", 230},
