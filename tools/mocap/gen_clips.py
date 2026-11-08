@@ -17,7 +17,7 @@ CLIPS = [
     ('climb',  '13_33', 3.3, 8.3, True,  False, 'clip',   False),  # climb ladder: hand over hand (rope)
     ('kneel',  '77_06', 4.5, 7.5, True,  False, 'clip',   True),   # searching the ground: harvest, cook, rope
     ('fire',   '77_08', 1.5, 3.2, True,  False, 'clip',   True),   # investigating on the ground: lighting a fire
-    ('chop',   '79_01', 1.3, 4.2, True,  False, 'clip',   True),   # chopping wood: breaking down
+    ('chop',   '79_01', 1.3, 4.2, True,  True,  'clip',   True),   # chopping wood: breaking down (upper body only: the legs keep the stance, Shatsca 08.11 knees too bent)
     ('search', '62_19', 3.3, 4.8, True,  True,  'clip',   True),   # opening a box: in a container
     ('work',   '79_34', 2.9, 5.3, True,  True,  'clip',   True),   # hands in front: workbench, reading
     ('sit',    '82_05', 3.0, 8.0, True,  False, 'clip',   True),   # sitting on the ground: ice fishing, a seat
