@@ -1934,11 +1934,7 @@ StatsParts stats_parts() {
     }
     Il2CppObject* fr = il2::invoke(sapi.freezing, nullptr);
     Il2CppObject* cond = il2::invoke(sapi.condition, nullptr);
-    if (fr && sapi.freeze_now >= 0 && sapi.freeze_max >= 0 && get<float>(fr, sapi.freeze_max) > 0) {
-        snprintf(line, sizeof(line), "%s %.0f%%", pl ? "CIEPŁO" : "WARMTH",
-                 100.0f * (1.0f - std::clamp(get<float>(fr, sapi.freeze_now) / get<float>(fr, sapi.freeze_max), 0.0f, 1.0f)));
-        add(out.status, line, "   ");
-    }
+    // (warmth: off, Shatsca 08.11 "ciepło nie chcę jednak zupełnie na HUD-zie")
     (void)cond;  // (condition: TLD's own health bar shows it; Shatsca 08.11 "kondycję zupełnie usuń")
     bool ok_body = false;
     const float body = invoke_float(sapi.body_temp, fr, ok_body);
