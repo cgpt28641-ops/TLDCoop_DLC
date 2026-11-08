@@ -654,6 +654,7 @@ void receive(double now) {
 // a change goes out within a second, and the host sends the whole list every 15 s.
 
 constexpr int kParts = 4;
+constexpr uint8_t kFullConditions = 0x80;  // TrainParts: the host's conditions of every part
 const char* const kPartNames[kParts] = {"brake shoe", "boiler", "cow catcher", "wheels"};
 constexpr int64_t kLiquidStep = 50000000;  // 0.05 l (ItemLiquidVolume: 1e-9 l): a refill, not a tank's drain
 
@@ -794,6 +795,14 @@ void parts_tick(double now) {
     for (int i = 0; i < kParts; ++i)
         if (cur[i].valid) g_known[i] = cur[i];
     g_fuel_known = fuel, g_water_known = water, g_lock_known = lock;
+    // TLDCoop_DLC (Karol 16:42: "status pociągu różni się u graczy"): each save had its own parts' condition. The host
+    // sends its parts' condition every 20 s (and when the train shows up here); the others take it (the condition
+    // only: the firebox and tanks go by what people do).
+    static double next_full = 0;
+    if (hosting() && now >= next_full && !netrt::status().players.empty()) {
+        next_full = now + 20000;
+        send_parts(cur, kFullConditions, -1, -1, -1);
+    }
     if (why.empty()) return;
     if (g_parts_logged++ < 60) logx::info("train: our own doing to the train:%s: sent", why.c_str());
     send_parts(cur, changed, fuel_in || water_in ? fuel : -1, fuel_in || water_in ? water : -1,
@@ -828,14 +837,20 @@ void parts_receive() {
         const int32_t lock = r.get<int32_t>();
         if (!r.ok() || (host ? p.from : from) == g_self || scene != g_scene || guid != g_guid || !g_train) continue;
         for (int i = 0; i < kParts; ++i)
-            if (changed & (1u << i)) write_part(i, parts[i], read_part(i));
+            if (changed == kFullConditions) {  // the host's conditions: those only
+                Part mine = read_part(i), theirs = mine;
+                theirs.condition = parts[i].condition;
+                if (std::fabs(theirs.condition - mine.condition) > 0.5f) write_part(i, theirs, mine);
+            } else if (changed & (1u << i)) {
+                write_part(i, parts[i], read_part(i));
+            }
         if (Il2CppObject* c = liquid(api.fuel_source); c && fuel >= 0) put<int64_t>(c, api.liquid_volume, fuel);
         if (Il2CppObject* c = liquid(api.water_source); c && water >= 0) put<int64_t>(c, api.liquid_volume, water);
         if (lock >= 0) set_lock_state(lock);
         for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
         g_fuel_known = tank(api.fuel_source), g_water_known = tank(api.water_source);
         g_lock_known = lock_state();
-        if (g_parts_logged++ < 60) logx::info("train: a friend's doing to the train taken in");
+        if (changed != kFullConditions && g_parts_logged++ < 60) logx::info("train: a friend's doing to the train taken in");
     }
 }
 
