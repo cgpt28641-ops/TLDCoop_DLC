@@ -1353,3 +1353,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - avatar.cpp: przedmiot przy jedzeniu maks. 17 cm (set_held_scale, potem z powrotem 1), napoje (Tea/Coffee/Cup/Water…)
   obrócone 180° (góra do góry); klipy w miejscu (kneel/fire/search/work) grane ×0,7.
 - Ubrania: `add` z konsoli działa (worek się dodał), więc przedmioty CE się nie zrobiły — czekam na coop.log.
+
+## 08.11 ~02:05 PL — panel statystyk HUD (prośba Shatsca, wzór: Interloper HUD Pro)
+- coop_hud: `show_stats` — własny panel pod Panel_HUD (TLDCoop_Stats), lewy górny róg, wygląd hover-textu TLD z tłem;
+  także solo; ukrywa się z HUD-em TLD. Co 250 ms: godzina (read_world), powietrze i odczuwalna (Weather
+  GetCurrentTemperature / GetCurrentTemperatureWithWindchill), wiatr km/h (+ „w środku”), ciało (Freezing.
+  CalculateBodyTemperature, tylko 20–45°C), ciepło % (1 − m_CurrentFreezing/m_MaxFreezing), kondycja %, waga /
+  udźwig (Inventory.GetTotalWeightKG, Encumber.GetEffectiveCarryCapacityKG; ItemWeight → kg przez FromKilograms(1)),
+  paliwo lampy / pochodnia / raca w ręce, dolegliwości (nazwy TLD). Polskie etykiety, gdy gra po polsku.
+- coop.ini `[hud] stats=1` (0 wyłącza). Log „hud: stats: …” mówi, które wartości się znalazły.
