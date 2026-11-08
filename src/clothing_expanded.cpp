@@ -362,9 +362,17 @@ std::string short_name(const char* key) { return std::string(key).substr(5); }  
 // TLDCoop_DLC (08.11: every item "no icon in the pack"): what the pack holds, once, to see how it names its icons
 void list_icons_once() {
     static bool done = false;
-    if (done || !api.bundle_names) return;
+    if (done) return;
     done = true;
+    // (20:10 logs: no line at all; which bundles are loaded, and is ours among them?)
+    Il2CppObject* all = il2::invoke(api.bundles, nullptr);
+    std::string loaded;
+    for (size_t i = 0; all && i < il2::array_length(all) && i < 40; ++i)
+        loaded += (loaded.empty() ? "" : ", ") + name_of(il2::array_object_at(all, i));
     Il2CppObject* b = pack_bundle();
+    logx::info("clothing: icons: %zu bundle(s) loaded [%s]; ours %s; asset names %s", all ? il2::array_length(all) : 0,
+               loaded.c_str(), b ? "found" : "NOT found", api.bundle_names ? "can be listed" : "can't be listed");
+    if (!api.bundle_names) return;
     Il2CppObject* arr = b ? il2::invoke(api.bundle_names, b) : nullptr;
     size_t n = arr ? il2::array_length(arr) : 0, shown = 0;
     std::string some;

@@ -619,7 +619,9 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
         const bool dead = (e.last.flags & net::kAnimalDead) != 0;
         if (dead && !owner_here) {
             // A body: the host keeps it (its carcass is shared from there); with the host away it waits, frozen.
-            if (host_here && g_handovers.take(now)) transfer(e, 0, "its owner left; the host keeps the body", players, now);
+            // (Shatsca 08.11 17:05: the host couldn't make a bear for a body and was handed it again every 250 ms, 1317
+            // times in 6 min: a refusal blocks the host too, as it does anyone else)
+            if (host_here && now >= e.blocked_until[0] && g_handovers.take(now)) transfer(e, 0, "its owner left; the host keeps the body", players, now);
             ++it;
             continue;
         }
