@@ -329,6 +329,7 @@ bool g_ready = false;
 bool g_map_ready = false, g_radar_ready = false, g_chart_ready = false;  // TLD's map parts found
 std::string g_showing = "not in a co-op game";  // for the log: ours shown, or why not
 bool g_names = true, g_radar = true, g_chart = true;
+bool g_stats = true;  // TLDCoop_DLC: the stats panel (coop.ini [hud] stats)
 std::string g_scene;
 bool g_in_game = false;
 
@@ -1799,7 +1800,6 @@ bool indoors_now() {
 
 constexpr int kStatsFont = 16;
 constexpr float kStatsLeft = 24, kStatsTop = 24, kStatsPad = 9;
-bool g_stats = true;
 uintptr_t g_stats_root = 0, g_stats_back = 0, g_stats_label = 0;
 std::string g_stats_text, g_stats_shown;
 
