@@ -74,6 +74,7 @@ struct Api {
     const MethodInfo *mat_shader = nullptr, *mat_set_shader = nullptr, *mat_keywords = nullptr, *mat_set_keywords = nullptr;
     const MethodInfo *bundles = nullptr, *bundle_load = nullptr;
     const MethodInfo* bundle_names = nullptr;  // TLDCoop_DLC: AssetBundle.GetAllAssetNames()
+    const MethodInfo* grid_icon = nullptr;     // TLDCoop_DLC: Utils.GetInventoryGridIconTexture(string), TLD's Addressables load
     Il2CppObject *t_gear = nullptr, *t_clothing = nullptr, *t_repair = nullptr, *t_harvest = nullptr, *t_inspect = nullptr,
                  *t_tools = nullptr, *t_hover = nullptr, *t_weight_buff = nullptr, *t_climb_buff = nullptr,
                  *t_carry_buff = nullptr, *t_mesh_renderer = nullptr, *t_texture = nullptr, *t_icon_data = nullptr;
@@ -388,6 +389,26 @@ void list_icons_once() {
 Il2CppObject* icon_texture(const Item& it) {
     list_icons_once();
     const std::string n = short_name(it.key);
+    // TLDCoop_DLC (20:44 log: "ours NOT found" among the loaded bundles): the pack's catalog keys its icons
+    // "ico_GearItem__<Name>"; TLD's own icon loader goes through Addressables by such a name
+    static int way = -1;  // which spelling TLD's loader takes (-1 not known yet, -2 none: not asked again)
+    if (api.grid_icon && way != -2) {
+        const std::string keys[] = {"ico_GearItem__" + n, n, std::string("GEAR_") + n};
+        for (int i = way >= 0 ? way : 0; i < 3; ++i) {
+            void* a[] = {str(keys[i].c_str())};
+            Il2CppObject* t = il2::invoke(api.grid_icon, nullptr, a);
+            if (alive(t)) {
+                if (way < 0) logx::info("clothing: icons from TLD's loader as '%s'", keys[i].c_str());
+                way = i;
+                return t;
+            }
+            if (way >= 0) break;
+        }
+        if (way < 0) {
+            way = -2;
+            logx::warn("clothing: TLD's icon loader has none of ours either");
+        }
+    }
     for (const std::string& path : {"Assets/InventoryGridIcons/ico_GearItem__" + n + ".png",
                                      lower("Assets/InventoryGridIcons/ico_GearItem__" + n + ".png"),
                                      "ico_GearItem__" + n, lower("ico_GearItem__" + n)})
@@ -1125,6 +1146,8 @@ bool init() {
     api.bundles = il2::find_method(bundle, "GetAllLoadedAssetBundles_Native", 0);
     api.bundle_load = il2::find_method_params(bundle, "LoadAsset", {"System.String", "System.Type"});
     api.bundle_names = il2::find_method_quiet(bundle, "GetAllAssetNames", 0);
+    if (Il2CppClass* utils = il2::find_class(kGame, "", "Utils"))
+        api.grid_icon = il2::find_method_params_quiet(utils, "GetInventoryGridIconTexture", {"System.String"});
     api.load_catalog = il2::find_method_params(addressables, "LoadContentCatalogAsync",
                                                {"System.String", "System.Boolean", "System.String"});
     api.prefab_by_name = il2::find_method_params(radial, "GetPrefabFromName", {"System.String"});
