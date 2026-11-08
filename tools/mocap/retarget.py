@@ -131,3 +131,92 @@ def retarget(rig, bvh, start, end, fps=30, heading='clip', travel='remove', keep
             local[tgt] = qnorm(qmul(qconj(pw), new_world))
         out.append((local, hips_pos))
     return out
+
+# --- TLDCoop_DLC (Shatsca 08.11: knees bending backwards when breaking things down, a leg twisting out at the fire,
+# arms tight to the body and short, "like a T-rex", when standing and walking) --------------------------------------
+# After the retarget, each arm and leg is set again as a hinge: the upper bone turned so the joint bends the way a
+# body's does (knees forward, elbows to the front of the arm), the lower bone turned with it (no twist between them);
+# a knee bent backwards is put forwards (hip and foot where they were); the arms held a little out from the body and
+# their elbows bent `elbow_scale` as much (the TLD bodies' thick clothes against the actor's slim arms). Hands and feet
+# keep their turn in the world.
+def _mat_from_frame(d, b):
+    d = d / np.linalg.norm(d); b = b - d * np.dot(b, d); b /= np.linalg.norm(b)
+    return np.stack([d, b, np.cross(d, b)], 1)
+
+def _ortho(v, d):
+    v = v - d * np.dot(v, d); n = np.linalg.norm(v)
+    return v / n if n > 1e-6 else None
+
+def _rotate(v, axis, deg):
+    axis = axis / np.linalg.norm(axis); a = np.radians(deg)
+    return v * np.cos(a) + np.cross(axis, v) * np.sin(a) + axis * np.dot(axis, v) * (1 - np.cos(a))
+
+LIMBS = [  # upper, lower, end, leg?
+    ('LeftHip_jnt', 'LeftKnee_jnt', 'LeftFoot_jnt', 'LeftToe_jnt', True),
+    ('RightHip_jnt', 'RightKnee_jnt', 'RightFoot_jnt', 'RightToe_jnt', True),
+    ('LeftUpArm_jnt', 'LeftElbow_jnt', 'LeftHand_jnt', 'LeftMiddle1_jnt', False),
+    ('RightUpArm_jnt', 'RightElbow_jnt', 'RightHand_jnt', 'RightMiddle1_jnt', False),
+]
+
+def humanize(rig, frames, abduct_deg=10.0, elbow_scale=1.0):
+    I = rig.index
+    W0, P0 = rig.fk()
+    fwd0 = P0[I['LeftToe_jnt']] - P0[I['LeftFoot_jnt']]; fwd0[1] = 0; fwd0 /= np.linalg.norm(fwd0)
+    out = []
+    for local, hp in frames:
+        local = dict(local)
+        W, P = rig.fk(local, root_pos=hp)
+        hips_rot = qmul(W[I['Hips_jnt']], qconj(W0[I['Hips_jnt']]))
+        fwd = qrot(hips_rot, fwd0)
+        chest = P[I['Spine3_jnt']]
+        for up, lo, end, tip, leg in LIMBS:
+            W, P = rig.fk(local, root_pos=hp)
+            end_world = W[I[end]]
+            a, k, e = P[I[up]], P[I[lo]], P[I[end]]
+            L1, L2 = np.linalg.norm(P0[I[lo]] - P0[I[up]]), np.linalg.norm(P0[I[end]] - P0[I[lo]])
+            du, dl = (k - a) / np.linalg.norm(k - a), (e - k) / np.linalg.norm(e - k)
+            if leg:
+                # the knee to the front of the hip-foot line (a straight or backward knee: bent forward a little)
+                he = e - a; dist = np.linalg.norm(he); h = he / dist
+                fw = _ortho(fwd, h)
+                off = k - (a + h * np.dot(k - a, h))
+                if fw is not None and np.dot(off, fw) < 0.01:
+                    dist = min(dist, (L1 + L2) * 0.995)
+                    x = (L1 * L1 - L2 * L2 + dist * dist) / (2 * dist); y = np.sqrt(max(L1 * L1 - x * x, 0))
+                    knee = a + h * x + fw * max(y, 0.02)
+                    du = (knee - a) / np.linalg.norm(knee - a); dl = (a + h * dist - knee) / np.linalg.norm(a + h * dist - knee)
+                bend_rest = -_ortho(fwd0, (P0[I[lo]] - P0[I[up]]) / L1)
+                fallback = -_ortho(fwd, du) if _ortho(fwd, du) is not None else None
+            else:
+                # out from the body a little (round the body's forward axis, away from the chest)
+                outward = _ortho(a - chest, du)
+                if outward is not None and abduct_deg:
+                    axis = np.cross(du, outward)
+                    du = _rotate(du, axis, abduct_deg); dl = _rotate(dl, axis, abduct_deg)
+                bend_rest = _ortho(fwd0, (P0[I[lo]] - P0[I[up]]) / L1)
+                fallback = _ortho(fwd, du)
+            # the bend: where the lower bone leaves the upper one's line
+            c = np.clip(np.dot(du, dl), -1, 1); th = np.arccos(c)
+            bb = _ortho(dl, du)
+            if not leg and elbow_scale != 1.0 and bb is not None:
+                th *= elbow_scale; dl = du * np.cos(th) + bb * np.sin(th)
+            w = min(1.0, np.sin(th) / 0.3)
+            b = fallback if bb is None else (bb if fallback is None else bb * w + fallback * (1 - w))
+            if b is None or np.linalg.norm(b) < 1e-3: b = bb if bb is not None else fallback
+            if b is None: continue
+            b = _ortho(b, du)
+            if b is None: continue
+            bl = b * np.cos(th) - du * np.sin(th) if bb is not None else _ortho(b, dl)
+            for bone, d_new, b_new, child in ((up, du, b, lo), (lo, dl, bl, end)):
+                W, P = rig.fk(local, root_pos=hp)
+                ti = I[bone]
+                d_rest = P0[I[child]] - P0[ti]; d_rest /= np.linalg.norm(d_rest)
+                b_rest = _ortho(bend_rest, d_rest)
+                R = _mat_from_frame(d_new, b_new) @ _mat_from_frame(d_rest, b_rest).T
+                new_world = qnorm(qmul(mat_to_quat(R), W0[ti]))
+                local[bone] = qnorm(qmul(qconj(W[rig.parent[ti]]), new_world))
+            # the hand or foot keeps its turn in the world
+            W, P = rig.fk(local, root_pos=hp)
+            local[end] = qnorm(qmul(qconj(W[rig.parent[I[end]]]), end_world))
+        out.append((local, hp))
+    return out

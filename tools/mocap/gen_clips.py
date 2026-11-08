@@ -7,7 +7,7 @@
 import sys, os, numpy as np
 from rig import load, qnorm
 from bvh import BVH
-from retarget import retarget, POSED
+from retarget import retarget, POSED, humanize
 from preview import strip
 from gait import cycle
 
@@ -33,6 +33,13 @@ GAIT = [
     ('g_run',   '35_17', 0.1, 1.2),   # run/jog
     ('g_creep', '77_14', 1.2, 3.4),   # careful creeping: walking crouched
 ]
+
+# TLDCoop_DLC (08.11): retarget.humanize per clip: the arms out from the body (degrees) and how much the elbows bend
+# (the hands on a rope or a load stay where they are)
+HUMAN = {
+    'climb': dict(abduct_deg=0), 'carry': dict(abduct_deg=0), 'search': dict(abduct_deg=5), 'work': dict(abduct_deg=5),
+    'g_walk': dict(elbow_scale=0.55), 'g_run': dict(elbow_scale=0.75), 'g_creep': dict(elbow_scale=0.8),
+}
 
 def crossfade(frames, n):
     if n <= 0 or len(frames) <= 2 * n: return frames
@@ -89,6 +96,7 @@ def main(cmu, preview=None):
         b = BVH(os.path.join(cmu, 'data', '%03d' % int(take.split('_')[0]), take + '.bvh'))
         for rig_name, rig in rigs.items():
             frames = retarget(rig, b, t0, t1, fps=FPS, heading=heading, keep_y=keep_y)
+            frames = humanize(rig, frames, **HUMAN.get(name, {}))
             if loop and len(frames) > 30: frames = crossfade(frames, int(0.4 * FPS))
             q, h = pack(rig, frames)
             var = 'kMocap_%s_%s' % (name, rig_name)
@@ -103,6 +111,7 @@ def main(cmu, preview=None):
         b = BVH(os.path.join(cmu, 'data', '%03d' % int(take.split('_')[0]), take + '.bvh'))
         for rig_name, rig in rigs.items():
             frames, speed, start, length, gap = cycle(rig, b, t0, t1, fps=FPS)
+            frames = humanize(rig, frames, **HUMAN.get(name, {}))
             q, h = pack(rig, frames)
             var = 'kMocap_%s_%s' % (name, rig_name)
             lines.append('const int16_t %s_rot[%d] = {%s};' % (var, len(q), ','.join(map(str, q))))

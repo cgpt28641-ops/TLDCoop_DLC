@@ -318,6 +318,7 @@ struct HeldCopy {
     bool measured = false;
     net::pose::Vec3 centre, axis{0, 0, 1}, second{0, 1, 0};
     float half = 0.1f;
+    mutable float shown_scale = 1;  // TLDCoop_DLC (08.11): smaller while eaten (a cattail's stalk went into the face)
     int lit_shown = -1;  // what is on: -1 not set yet, 0 nothing, 1 lit, 2 high beam
     bool indoors_shown = false;
     double lit_at = 0;   // TLDCoop_DLC: when it was lit (its lights are looked at in the log a moment later)
@@ -1934,7 +1935,7 @@ void place_on_bone(const Avatar& a, int b, const net::HandPose& pose, float alon
     if (net::pose::length(second) < 1e-3f) second = std::fabs(axis.y) < 0.9f ? PVec{0, 1, 0} : PVec{0, 0, 1};
     const Quat q = net::pose::look_rotation(net::pose::rotate(prop, {1, 0, 0}), net::pose::rotate(prop, {0, 1, 0})) *
                    net::pose::inverse(net::pose::look_rotation(axis, second));
-    const PVec grip_local = c.centre + axis * (along * c.half);
+    const PVec grip_local = (c.centre + axis * (along * c.half)) * c.shown_scale;
     set_vec(api.set_position, tf, uv3(origin - net::pose::rotate(q, grip_local)));
     set_rotation(tf, q);
 }
@@ -1987,6 +1988,21 @@ void crouch_pose(const Avatar& a, float amount) {
 
 // The item an action has in hand: being eaten, or handed over (in the giver's right hand until the transfer, then
 // the receiver's left). False: no action has it (m11's holds pose the arms).
+// TLDCoop_DLC: the held copy's size (1: as the game has it).
+void set_held_scale(const Avatar& a, float k) {
+    const HeldCopy& c = a.held;
+    Il2CppObject* tf = target(c.transform);
+    if (!tf || !api.set_local_scale || std::fabs(c.shown_scale - k) < 1e-3f) return;
+    set_vec(api.set_local_scale, tf, {k, k, k});
+    c.shown_scale = k;
+}
+
+bool is_drink(const std::string& gear) {
+    for (const char* k : {"Tea", "Coffee", "Cup", "Mug", "Soda", "Water", "Drink", "Juice", "Cocoa"})
+        if (gear.find(k) != std::string::npos) return true;
+    return false;
+}
+
 bool place_action_item(const Avatar& a) {
     if (a.action.empty() || a.lying) return a.lying;  // in bed: nothing in hand
     if (a.handover_on) {
@@ -1999,7 +2015,18 @@ bool place_action_item(const Avatar& a) {
         return true;
     }
     if (a.action == "eat") {
-        place_on_bone(a, kRightHand, kEatGrip, 0);
+        // TLDCoop_DLC (Shatsca 08.11: "a cattail's stalk goes into the face, the cup of herbal tea is upside down"):
+        // what they eat is shown at most 17 cm long, and a drink with its top up (the grip turned round its length).
+        const HeldCopy& c = a.held;
+        if (c.measured && c.half > 0.001f) set_held_scale(a, std::fmin(1.0f, 0.085f / c.half));
+        if (is_drink(c.gear)) {
+            const Quat g{kEatGrip.rot[0], kEatGrip.rot[1], kEatGrip.rot[2], kEatGrip.rot[3]};
+            const Quat r = g * Quat{0, 0, 1, 0};
+            const net::HandPose drink = {{kEatGrip.pos[0], kEatGrip.pos[1], kEatGrip.pos[2]}, {r.x, r.y, r.z, r.w}};
+            place_on_bone(a, kRightHand, drink, 0);
+        } else {
+            place_on_bone(a, kRightHand, kEatGrip, 0);
+        }
         return true;
     }
     return false;
@@ -2310,7 +2337,11 @@ float mocap_step(Avatar& a) {
     // in quickly for a jump, a little slower for the rest; out over 0.3 s
     const float in = a.mocap_activity == net::ActAir ? 8.0f : 4.0f;
     if (a.mocap.clip) {
-        a.mocap.t += dt;
+        // TLDCoop_DLC (Shatsca 08.11: feeding a fire or opening a can showed the same motion over and over): the
+        // tasks done in place play slower, so a long one repeats less
+        const uint8_t act = a.mocap_activity;
+        const bool slow = act == net::ActKneel || act == net::ActFire || act == net::ActSearch || act == net::ActWork;
+        a.mocap.t += dt * (slow ? 0.7f : 1.0f);
         a.mocap.w = std::fmin(1.0f, a.mocap.w + dt * in);
     }
     if (a.mocap_out.clip) {
@@ -2448,6 +2479,7 @@ void late_one(Avatar& a) {
     if (gesture(a)) return;  // TLDCoop_DLC: (it placed what they hold too)
     if (!a.held.go) return;
     if (has_bones(a) && !a.shown_down && place_action_item(a)) return;
+    set_held_scale(a, 1);  // TLDCoop_DLC: (back to its size after eating)
     const net::pose::Hold h = hold_of(a.held.kind, a.held_flags);
     const float pitch = h.look ? g_pitch_sign * a.pitch : 0;
     if (!has_bones(a) || a.shown_down) {
