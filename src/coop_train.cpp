@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #include "hooks.h"
@@ -82,6 +83,9 @@ struct Api {
     const MethodInfo* serialize_component = nullptr;    // SteamTrainComponent.SerializeComponent()
     const MethodInfo* deserialize_component = nullptr;  // SteamTrainComponent.DeserializeComponent(state)
     const MethodInfo* boiler_on = nullptr;      // SteamTrainBoiler.get_BoilerIsOn()
+    const MethodInfo* boiler_turn_on = nullptr;   // SteamTrainBoiler.BoilerTryTurnOn()
+    const MethodInfo* boiler_turn_off = nullptr;  // SteamTrainBoiler.BoilerTurnOff()
+    const MethodInfo* set_condition = nullptr;    // SteamTrainComponent.SetCondition(float)
     ptrdiff_t cs_condition = -1, cs_data = -1;  // SteamTrainComponentState.m_Condition, m_ComponentDataSerialized
     FieldInfo* track_elements = nullptr;        // static TrackElementManager.s_TrackElements (List<ITrackElement>)
     ptrdiff_t list_items = -1, list_size = -1;  // List<T>._items, _size
@@ -651,11 +655,10 @@ void set_lock_state(int32_t v) {
     }
     logx::info("train: the cab door is %s as the others have it", v == 1 ? "unlocked" : v == 2 ? "broken open" : "locked");
 }
-double g_next_parts = 0, g_parts_full_at = 0;
+double g_next_parts = 0;
 std::string g_parts_guid;
 int g_parts_logged = 0;
 
-bool in_charge() { return g_owner == g_self || (g_owner == kNobody && hosting()); }
 
 Il2CppObject* part_of(int i) {
     if (!g_train || !api.part_get[i]) return nullptr;
@@ -675,14 +678,28 @@ Part read_part(int i) {
     return p;
 }
 
-void write_part(int i, const Part& p) {
+// TLDCoop_DLC (Kerel 08.11 15:38 "coś się zepsuło, nie możemy wlać paliwa"): the parts' whole state (the boiler's
+// heat with it) went over every few seconds and TLD's DeserializeComponent on a lit boiler put it back each time: oil
+// and water poured in did nothing. Now only what someone did goes over, as that change alone: a repair (the
+// condition), the firebox lit or out (TLD's own turn on/off), oil or water poured in; the driver's wear too.
+void write_part(int i, const Part& p, const Part& mine) {
     Il2CppObject* c = part_of(i);
-    Il2CppObject* st = c ? il2::invoke(api.serialize_component, c) : nullptr;  // a state to fill in
-    if (!st) return;
-    put<float>(st, api.cs_condition, p.condition);
-    il2::store_ref(st, api.cs_data, p.data.empty() ? nullptr : il2::il2cpp_string_new(p.data.c_str()));
-    void* a[] = {st};
-    il2::invoke(api.deserialize_component, c, a);
+    if (!c) return;
+    if (std::fabs(p.condition - mine.condition) > 0.05f && api.set_condition) {
+        float v = p.condition;
+        void* a[] = {&v};
+        il2::invoke(api.set_condition, c, a);
+    }
+    if (i == 1 && p.on != mine.on) {
+        if (p.on && api.boiler_turn_on) {
+            bool ok = false;
+            il2::invoke_value(api.boiler_turn_on, c, ok);
+            logx::info("train: the firebox lit as a friend lit it%s", ok ? "" : " (TLD said it can't light here)");
+        } else if (!p.on && api.boiler_turn_off) {
+            il2::invoke(api.boiler_turn_off, c);
+            logx::info("train: the firebox out as a friend's went out");
+        }
+    }
 }
 
 int64_t tank(ptrdiff_t field) {
@@ -690,20 +707,18 @@ int64_t tank(ptrdiff_t field) {
     return c ? get<int64_t>(c, api.liquid_volume) : -1;
 }
 
-void send_parts(const std::array<Part, kParts>& parts, int64_t fuel, int64_t water, bool full, int32_t lock) {
-    net::Writer w(net::Msg::TrainParts, 32768);
+void send_parts(const std::array<Part, kParts>& parts, uint8_t changed, int64_t fuel, int64_t water, int32_t lock) {
+    net::Writer w(net::Msg::TrainParts, 512);
     w.put<uint8_t>(g_self);
-    w.put<uint8_t>(full ? 1 : 0);
+    w.put<uint8_t>(changed);
     w.put_blob(g_scene, 64);
     w.put_blob(g_guid, 64);
     w.put<int64_t>(fuel);
     w.put<int64_t>(water);
     w.put<uint8_t>(kParts);
     for (const Part& p : parts) {
-        w.put<uint8_t>(p.valid ? 1 : 0);
         w.put<float>(p.condition);
         w.put<uint8_t>(p.on ? 1 : 0);
-        w.put_blob(p.data, 6000);
     }
     w.put<int32_t>(lock);
     netrt::send_packet(w, true);
@@ -711,49 +726,47 @@ void send_parts(const std::array<Part, kParts>& parts, int64_t fuel, int64_t wat
 
 void parts_tick(double now) {
     if (!g_train || !api.serialize_component || now < g_next_parts) return;
-    g_next_parts = now + 1000;
+    g_next_parts = now + 500;
     if (g_parts_guid != g_guid) {  // a new train (or scene): what it has now is what we know
         g_parts_guid = g_guid;
         for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
         g_fuel_known = tank(api.fuel_source);
         g_water_known = tank(api.water_source);
         g_lock_known = lock_state();
-        g_parts_full_at = 0;
-    }
-    std::array<Part, kParts> now_parts;
-    for (int i = 0; i < kParts; ++i) now_parts[i] = read_part(i);
-    const int64_t fuel = tank(api.fuel_source), water = tank(api.water_source);
-    const int32_t lock = lock_state();
-    if (in_charge()) {
-        bool changed = fuel != g_fuel_known || water != g_water_known || lock != g_lock_known;
-        for (int i = 0; i < kParts; ++i)
-            changed = changed || std::fabs(now_parts[i].condition - g_known[i].condition) > 0.05f ||
-                      now_parts[i].on != g_known[i].on || now_parts[i].data != g_known[i].data;
-        const bool full = now >= g_parts_full_at;
-        if (!changed && !full) return;
-        if (!netrt::status().players.empty()) send_parts(now_parts, fuel, water, true, lock);
-        g_known = now_parts;
-        g_fuel_known = fuel, g_water_known = water;
-        g_lock_known = lock;
-        g_parts_full_at = now + 5000;
         return;
     }
-    // Not in charge: only what we did ourselves goes out.
+    std::array<Part, kParts> cur;
+    for (int i = 0; i < kParts; ++i) cur[i] = read_part(i);
+    const int64_t fuel = tank(api.fuel_source), water = tank(api.water_source);
+    const int32_t lock = lock_state();
+    const bool driving = g_owner == g_self;
+    uint8_t changed = 0;
     std::string why;
     for (int i = 0; i < kParts; ++i) {
-        if (!now_parts[i].valid || !g_known[i].valid) continue;
-        if (now_parts[i].condition > g_known[i].condition + 0.5f) why += std::string(" ") + kPartNames[i] + " repaired";
-        if (now_parts[i].on != g_known[i].on) why += now_parts[i].on ? " boiler lit" : " boiler out";
+        if (!cur[i].valid || !g_known[i].valid) continue;
+        const float d = cur[i].condition - g_known[i].condition;
+        if (d > 0.5f || (driving && d < -0.5f)) {
+            changed |= static_cast<uint8_t>(1u << i);
+            why += std::string(" ") + kPartNames[i] + (d > 0 ? " repaired" : " worn");
+        }
+        if (cur[i].on != g_known[i].on) {
+            changed |= static_cast<uint8_t>(1u << i);
+            why += cur[i].on ? " firebox lit" : " firebox out";
+        }
     }
-    if (fuel > g_fuel_known + kLiquidStep) why += " oil added";
-    if (water > g_water_known + kLiquidStep) why += " water added";
-    if (lock != g_lock_known && lock > 0) why += " cab door opened";
+    const bool fuel_in = fuel > g_fuel_known + kLiquidStep, water_in = water > g_water_known + kLiquidStep;
+    if (fuel_in) why += " oil added";
+    if (water_in) why += " water added";
+    const bool lock_changed = lock != g_lock_known && lock > 0;
+    if (lock_changed) why += " cab door opened";
+    // what we know follows what we have (the tanks drain, the parts wear: everyone's game does that itself)
+    for (int i = 0; i < kParts; ++i)
+        if (cur[i].valid) g_known[i] = cur[i];
+    g_fuel_known = fuel, g_water_known = water, g_lock_known = lock;
     if (why.empty()) return;
-    if (g_parts_logged++ < 40) logx::info("train: our own doing to the train:%s: sent", why.c_str());
-    send_parts(now_parts, fuel, water, false, lock);
-    g_known = now_parts;
-    g_fuel_known = fuel, g_water_known = water;
-    g_lock_known = lock;
+    if (g_parts_logged++ < 60) logx::info("train: our own doing to the train:%s: sent", why.c_str());
+    send_parts(cur, changed, fuel_in || water_in ? fuel : -1, fuel_in || water_in ? water : -1,
+               lock_changed ? lock : -1);
 }
 
 void parts_receive() {
@@ -763,39 +776,35 @@ void parts_receive() {
     const bool host = hosting();
     for (const net::Packet& p : in) {
         if (host) {
-            net::Writer w(net::Msg::TrainParts, 32768);
+            net::Writer w(net::Msg::TrainParts, 512);
             w.put_raw(p.data.data() + net::kHeaderSize, p.data.size() - net::kHeaderSize);
             netrt::send_packet_except(p.from, w, true);
         }
         net::Reader r = net::packet_body(p);
         const uint8_t from = r.get<uint8_t>();
-        const bool full = r.get<uint8_t>() != 0;
+        const uint8_t changed = r.get<uint8_t>();
         const std::string scene = r.get_blob(64), guid = r.get_blob(64);
         const int64_t fuel = r.get<int64_t>(), water = r.get<int64_t>();
         const uint8_t n = r.get<uint8_t>();
         std::array<Part, kParts> parts;
         for (int i = 0; i < n && i < 16; ++i) {
             Part x;
-            x.valid = r.get<uint8_t>() != 0;
+            x.valid = true;
             x.condition = r.get<float>();
             x.on = r.get<uint8_t>() != 0;
-            x.data = r.get_blob(6000);
             if (i < kParts) parts[i] = x;
         }
         const int32_t lock = r.get<int32_t>();
         if (!r.ok() || (host ? p.from : from) == g_self || scene != g_scene || guid != g_guid || !g_train) continue;
-        // A full state from someone not in charge here (an old driver) or our own doing over the one in charge's:
-        // the one in charge only takes others' own doings.
-        if (full && in_charge()) continue;
         for (int i = 0; i < kParts; ++i)
-            if (parts[i].valid) write_part(i, parts[i]);
+            if (changed & (1u << i)) write_part(i, parts[i], read_part(i));
         if (Il2CppObject* c = liquid(api.fuel_source); c && fuel >= 0) put<int64_t>(c, api.liquid_volume, fuel);
         if (Il2CppObject* c = liquid(api.water_source); c && water >= 0) put<int64_t>(c, api.liquid_volume, water);
-        set_lock_state(lock);
+        if (lock >= 0) set_lock_state(lock);
         for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
         g_fuel_known = tank(api.fuel_source), g_water_known = tank(api.water_source);
         g_lock_known = lock_state();
-        if (!full && g_parts_logged++ < 40) logx::info("train: a friend's doing to the train taken in");
+        if (g_parts_logged++ < 60) logx::info("train: a friend's doing to the train taken in");
     }
 }
 
@@ -810,6 +819,7 @@ std::vector<Element> g_elements;
 std::vector<std::pair<std::string, std::string>> g_element_known;  // guid, data
 double g_next_elements = 0, g_elements_full_at = 0;
 std::string g_elements_scene;
+std::unordered_map<std::string, double> g_element_changed;
 int g_elements_logged = 0;
 
 const MethodInfo* method_of(Il2CppObject* obj, const char* name, int args) {
@@ -879,7 +889,11 @@ void elements_tick(double now) {
             g_element_known.push_back(c);  // first seen: what the scene loaded with
         } else if (it->second != c.second) {
             it->second = c.second;
-            changed.push_back(c);
+            // TLDCoop_DLC: a part whose text changes on its own all the time (a tower's level as hours pass) goes
+            // with the host's full list only; a switch thrown (quiet before) goes at once
+            double& last = g_element_changed[c.first];
+            if (now - last > 10000) changed.push_back(c);
+            last = now;
         }
     }
     if (!changed.empty()) {
@@ -1070,7 +1084,12 @@ bool init() {
             api.cs_condition = il2::field_offset(cstate, "m_Condition");
             api.cs_data = il2::field_offset(cstate, "m_ComponentDataSerialized");
         }
-        if (boiler) api.boiler_on = il2::find_method(boiler, "get_BoilerIsOn", 0);
+        if (boiler) {
+            api.boiler_on = il2::find_method(boiler, "get_BoilerIsOn", 0);
+            api.boiler_turn_on = il2::find_method(boiler, "BoilerTryTurnOn", 0);
+            api.boiler_turn_off = il2::find_method(boiler, "BoilerTurnOff", 0);
+        }
+        if (comp) api.set_condition = il2::find_method(comp, "SetCondition", 1);
         if (!api.serialize_component || !api.deserialize_component || api.cs_condition < 0 || api.cs_data < 0) {
             api.serialize_component = nullptr;
             logx::warn("train: the engine's parts can't be read; their state isn't shared");
