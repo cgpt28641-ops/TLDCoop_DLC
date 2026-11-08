@@ -28,7 +28,7 @@ constexpr double kOwnerLostMs = 2500;   // no frame from the driver this long: n
 constexpr double kRiderLostMs = 1200;
 constexpr float kSnapMetres = 4.0f;     // further off than this: put there at once
 
-enum Flags : uint8_t { kOwner = 1, kInside = 2, kRelease = 4, kIdle = 8 };
+enum Flags : uint8_t { kOwner = 1, kInside = 2, kRelease = 4, kIdle = 8, kHorn = 16 };
 
 struct V3 {
     float x, y, z;
@@ -64,6 +64,10 @@ struct Api {
     const MethodInfo* euler = nullptr;          // Transform.get_eulerAngles
     const MethodInfo* to_local = nullptr;       // Transform.InverseTransformPoint(Vector3)
     const MethodInfo* to_world = nullptr;       // Transform.TransformPoint(Vector3)
+    const MethodInfo* toot = nullptr;           // SteamTrain.TootSteamWhistle()
+    ptrdiff_t window_lean = -1;                 // SteamTrain.m_WindowLean (set while leaning out of a window)
+    ptrdiff_t optional_lock = -1, lock_state = -1;  // SteamTrain.m_OptionalLock, Lock.m_LockState
+    const MethodInfo* set_lock = nullptr;       // Lock.SetLockState(LockState)
     ptrdiff_t train_container = -1;             // SteamTrain.m_Container
     ptrdiff_t fuel_source = -1, water_source = -1;  // SteamTrain.m_FuelSource, m_WaterSource (GenericLiquidContainer)
     ptrdiff_t liquid_volume = -1;               // GenericLiquidContainer.m_CurrentVolume (ItemLiquidVolume: int64)
@@ -294,6 +298,13 @@ Frame snapshot(uint8_t flags) {
             void* a[] = {&p};
             il2::invoke_value(api.to_local, tf, f.local, a);
             f.local_yaw = yaw_of(me) - yaw_of(tf);
+            // TLDCoop_DLC (Shatsca's screenshots 08.11): leaning out of a window puts the camera outside the cab; the
+            // body stays at the window, where we last stood inside
+            static V3 cab{};
+            static bool have_cab = false;
+            const bool leaning = api.window_lean >= 0 && get<Il2CppObject*>(g_train, api.window_lean) != nullptr;
+            if (!leaning) cab = f.local, have_cab = true;
+            else if (have_cab) f.local = cab;
         }
     }
     return f;
@@ -320,9 +331,8 @@ void follow(double now, float dt) {
             if (g_switches++ < 40) logx::info("train: onto the driver's track %s", g_last.spline.c_str());
         }
     }
-    int32_t dir = g_last.dir;
-    void* da[] = {&dir};
-    il2::invoke(api.set_dir, ctl, da);
+    // (no MovementDirection: our engine runs on the driver's speed and sign; setting it turned the train round,
+    // Karol's film 08.11)
     const float ahead = g_rate * static_cast<float>(std::min(now - g_last.at, 500.0) / 1000.0);
     float want = g_last.pos + ahead, have = 0;
     il2::invoke_value(api.get_abs, ctl, have);
@@ -365,9 +375,6 @@ void place(const Frame& f) {
         il2::invoke(api.set_spline, ctl, a);
         g_spline_seen = nullptr;
     }
-    int32_t dir = f.dir;
-    void* da[] = {&dir};
-    il2::invoke(api.set_dir, ctl, da);
     float pos = f.pos;
     void* pa[] = {&pos};
     il2::invoke(api.set_abs, ctl, pa);
@@ -464,6 +471,24 @@ void impact_detour(Il2CppObject* self, Il2CppObject* car, int32_t area, const Me
     g_impact(self, car, area, method);
 }
 
+// The horn: ours goes to the others (a frame of its own, reliable); theirs sounds here.
+using TootFn = void (*)(Il2CppObject* self, const MethodInfo* method);
+TootFn g_toot = nullptr;
+bool g_tooting = false;
+Frame snapshot(uint8_t flags);
+void send(const Frame& f, bool reliable);
+void toot_detour(Il2CppObject* self, const MethodInfo* method) {
+    g_toot(self, method);
+    if (g_ready && !g_tooting && self == g_train && netrt::role()) {
+        Frame f;
+        f.from = g_self;
+        f.flags = kHorn;
+        f.scene = g_scene;
+        f.guid = g_guid;
+        send(f, true);
+    }
+}
+
 void receive(double now) {
     static std::vector<net::Packet> in;
     in.clear();
@@ -480,6 +505,12 @@ void receive(double now) {
             f.from = p.from;  // (a friend can only speak for themselves)
         }
         if (f.from == g_self) continue;
+        if ((f.flags & kHorn) && f.scene == g_scene && g_train && api.toot) {  // Karol 08.11: "klaksonu nie słychać"
+            g_tooting = true;
+            g_toot(g_train, api.toot);
+            g_tooting = false;
+            if (f.flags == kHorn) continue;  // (only the horn)
+        }
         f.at = now;
         g_riders[f.from] = f;
         g_riding[f.from] = (f.flags & kInside) && !(f.flags & kRelease);
@@ -535,6 +566,27 @@ struct Part {
 };
 std::array<Part, kParts> g_known{};
 int64_t g_fuel_known = -1, g_water_known = -1;
+int32_t g_lock_known = -1;  // the cab door's lock (Kerel 08.11: "Shatsca otworzył pociąg kluczem, mi się nie otworzył")
+
+Il2CppObject* train_lock() {
+    Il2CppObject* l = g_train && api.optional_lock >= 0 ? get<Il2CppObject*>(g_train, api.optional_lock) : nullptr;
+    return alive(l) && api.lock_state >= 0 ? l : nullptr;
+}
+int32_t lock_state() {
+    Il2CppObject* l = train_lock();
+    return l ? get<int32_t>(l, api.lock_state) : -1;
+}
+void set_lock_state(int32_t v) {
+    Il2CppObject* l = train_lock();
+    if (!l || v < 0 || v == get<int32_t>(l, api.lock_state)) return;
+    if (api.set_lock) {
+        void* a[] = {&v};
+        il2::invoke(api.set_lock, l, a);
+    } else {
+        put<int32_t>(l, api.lock_state, v);
+    }
+    logx::info("train: the cab door is %s as the others have it", v == 1 ? "unlocked" : v == 2 ? "broken open" : "locked");
+}
 double g_next_parts = 0, g_parts_full_at = 0;
 std::string g_parts_guid;
 int g_parts_logged = 0;
@@ -574,7 +626,7 @@ int64_t tank(ptrdiff_t field) {
     return c ? get<int64_t>(c, api.liquid_volume) : -1;
 }
 
-void send_parts(const std::array<Part, kParts>& parts, int64_t fuel, int64_t water, bool full) {
+void send_parts(const std::array<Part, kParts>& parts, int64_t fuel, int64_t water, bool full, int32_t lock) {
     net::Writer w(net::Msg::TrainParts, 32768);
     w.put<uint8_t>(g_self);
     w.put<uint8_t>(full ? 1 : 0);
@@ -589,6 +641,7 @@ void send_parts(const std::array<Part, kParts>& parts, int64_t fuel, int64_t wat
         w.put<uint8_t>(p.on ? 1 : 0);
         w.put_blob(p.data, 6000);
     }
+    w.put<int32_t>(lock);
     netrt::send_packet(w, true);
 }
 
@@ -600,21 +653,24 @@ void parts_tick(double now) {
         for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
         g_fuel_known = tank(api.fuel_source);
         g_water_known = tank(api.water_source);
+        g_lock_known = lock_state();
         g_parts_full_at = 0;
     }
     std::array<Part, kParts> now_parts;
     for (int i = 0; i < kParts; ++i) now_parts[i] = read_part(i);
     const int64_t fuel = tank(api.fuel_source), water = tank(api.water_source);
+    const int32_t lock = lock_state();
     if (in_charge()) {
-        bool changed = fuel != g_fuel_known || water != g_water_known;
+        bool changed = fuel != g_fuel_known || water != g_water_known || lock != g_lock_known;
         for (int i = 0; i < kParts; ++i)
             changed = changed || std::fabs(now_parts[i].condition - g_known[i].condition) > 0.05f ||
                       now_parts[i].on != g_known[i].on || now_parts[i].data != g_known[i].data;
         const bool full = now >= g_parts_full_at;
         if (!changed && !full) return;
-        if (!netrt::status().players.empty()) send_parts(now_parts, fuel, water, true);
+        if (!netrt::status().players.empty()) send_parts(now_parts, fuel, water, true, lock);
         g_known = now_parts;
         g_fuel_known = fuel, g_water_known = water;
+        g_lock_known = lock;
         g_parts_full_at = now + 5000;
         return;
     }
@@ -627,11 +683,13 @@ void parts_tick(double now) {
     }
     if (fuel > g_fuel_known + kLiquidStep) why += " oil added";
     if (water > g_water_known + kLiquidStep) why += " water added";
+    if (lock != g_lock_known && lock > 0) why += " cab door opened";
     if (why.empty()) return;
     if (g_parts_logged++ < 40) logx::info("train: our own doing to the train:%s: sent", why.c_str());
-    send_parts(now_parts, fuel, water, false);
+    send_parts(now_parts, fuel, water, false, lock);
     g_known = now_parts;
     g_fuel_known = fuel, g_water_known = water;
+    g_lock_known = lock;
 }
 
 void parts_receive() {
@@ -660,6 +718,7 @@ void parts_receive() {
             x.data = r.get_blob(6000);
             if (i < kParts) parts[i] = x;
         }
+        const int32_t lock = r.get<int32_t>();
         if (!r.ok() || (host ? p.from : from) == g_self || scene != g_scene || guid != g_guid || !g_train) continue;
         // A full state from someone not in charge here (an old driver) or our own doing over the one in charge's:
         // the one in charge only takes others' own doings.
@@ -668,8 +727,10 @@ void parts_receive() {
             if (parts[i].valid) write_part(i, parts[i]);
         if (Il2CppObject* c = liquid(api.fuel_source); c && fuel >= 0) put<int64_t>(c, api.liquid_volume, fuel);
         if (Il2CppObject* c = liquid(api.water_source); c && water >= 0) put<int64_t>(c, api.liquid_volume, water);
+        set_lock_state(lock);
         for (int i = 0; i < kParts; ++i) g_known[i] = read_part(i);
         g_fuel_known = tank(api.fuel_source), g_water_known = tank(api.water_source);
+        g_lock_known = lock_state();
         if (!full && g_parts_logged++ < 40) logx::info("train: a friend's doing to the train taken in");
     }
 }
@@ -816,15 +877,29 @@ void elements_receive() {
 using VoidFn = void (*)(Il2CppObject* self, const MethodInfo* method);
 VoidFn g_update_controls = nullptr, g_update_engine = nullptr;
 
-void update_controls_detour(Il2CppObject* self, const MethodInfo* method) {
-    if (g_ready && self == g_train && driven_by_other()) return;  // a passenger: the driver's levers
-    g_update_controls(self, method);
+// A passenger (Kerel 08.11: "gdy pociąg stoi, drugi gracz i tak nie może się ruszać"): TLD's controls run as ever
+// (walking in the cab, leaning out, the horn); only the engine's levers are the driver's.
+void update_controls_detour(Il2CppObject* self, const MethodInfo* method) { g_update_controls(self, method); }
+
+using ShiftFn = bool (*)(Il2CppObject* self, const MethodInfo* method);
+ShiftFn g_shift_up = nullptr, g_shift_down = nullptr;
+VoidFn g_toggle_brakes = nullptr;
+bool levers_ours() { return !(g_ready && g_train && driven_by_other()); }
+bool shift_up_detour(Il2CppObject* self, const MethodInfo* m) { return levers_ours() && g_shift_up(self, m); }
+bool shift_down_detour(Il2CppObject* self, const MethodInfo* m) { return levers_ours() && g_shift_down(self, m); }
+void toggle_brakes_detour(Il2CppObject* self, const MethodInfo* m) {
+    if (levers_ours()) g_toggle_brakes(self, m);
 }
 
 void update_engine_detour(Il2CppObject* self, const MethodInfo* method) {
     if (g_ready && g_train && driven_by_other()) {
         Il2CppObject* engine = il2::invoke(api.engine, g_train);
         if (self == engine) {
+            // TLDCoop_DLC (Kerel 08.11: "koła się nie ruszają"): TLD's own update runs (the wheels, smoke, sounds),
+            // on the driver's state before and after it
+            Il2CppObject* st = il2::invoke(api.engine_state, self);
+            apply_engine(st);
+            g_update_engine(self, method);
             apply_engine(il2::invoke(api.engine_state, self));
             return;
         }
@@ -971,6 +1046,29 @@ bool init() {
             logx::warn("train: the track's region exits not found; a passenger won't ride into the next region");
         }
     }
+    {  // the levers a passenger leaves alone
+        const MethodInfo* up = il2::find_method(engine, "MaybeShiftUp", 0);
+        const MethodInfo* down = il2::find_method(engine, "MaybeShiftDown", 0);
+        const MethodInfo* brakes = il2::find_method(engine, "ToggleBrakes", 0);
+        if (!up || !down || !brakes ||
+            !hooks::install_method("SteamTrainEngine.MaybeShiftUp", up, reinterpret_cast<void*>(&shift_up_detour),
+                                   reinterpret_cast<void**>(&g_shift_up)) ||
+            !hooks::install_method("SteamTrainEngine.MaybeShiftDown", down, reinterpret_cast<void*>(&shift_down_detour),
+                                   reinterpret_cast<void**>(&g_shift_down)) ||
+            !hooks::install_method("SteamTrainEngine.ToggleBrakes", brakes, reinterpret_cast<void*>(&toggle_brakes_detour),
+                                   reinterpret_cast<void**>(&g_toggle_brakes)))
+            logx::warn("train: the engine's levers not hooked; a passenger could move them");
+    }
+    api.toot = il2::find_method(train, "TootSteamWhistle", 0);
+    if (!api.toot || !hooks::install_method("SteamTrain.TootSteamWhistle", api.toot, reinterpret_cast<void*>(&toot_detour),
+                                            reinterpret_cast<void**>(&g_toot)))
+        api.toot = nullptr;
+    api.window_lean = il2::field_offset(train, "m_WindowLean");
+    api.optional_lock = il2::field_offset(train, "m_OptionalLock");
+    if (Il2CppClass* lock = il2::find_class(kGame, "", "Lock")) {
+        api.lock_state = il2::field_offset(lock, "m_LockState");
+        api.set_lock = il2::find_method(lock, "SetLockState", 1);
+    }
     g_ready = true;
     logx::info("train: ready (the first one into the cab drives; the others' trains follow theirs)");
     return true;
@@ -1066,6 +1164,11 @@ void on_frame(const std::string& scene, bool in_game) {
             g_next_send = now + 250;
         }
     }
+}
+
+bool riding(unsigned char player) {
+    float x = 0, y = 0, z = 0, yaw = 0;
+    return ride_spot(player, x, y, z, yaw);
 }
 
 bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw) {

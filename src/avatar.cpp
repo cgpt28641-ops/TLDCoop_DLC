@@ -2769,7 +2769,9 @@ void drive_actions(Avatar& a, Il2CppObject* animation, const net::StateMsg& s, f
 void drive_animation(Avatar& a, const net::StateMsg& s, double now) {
     const double dt = (now - a.last_pos_time) / 1000.0;
     if (a.last_pos_time > 0 && dt > 0 && dt < 0.5) {
-        const float dx = s.x - a.last_pos.x, dz = s.z - a.last_pos.z;
+        // TLDCoop_DLC (Kerel 08.11: riding the train, the avatar ran): on the train its speed is the train's, not theirs
+        const bool riding = coop_train::riding(a.player);
+        const float dx = riding ? 0.0f : s.x - a.last_pos.x, dz = riding ? 0.0f : s.z - a.last_pos.z;
         const float v = std::sqrt(dx * dx + dz * dz) / static_cast<float>(dt);
         a.speed += (v - a.speed) * static_cast<float>(std::fmin(1.0, dt * 8.0));  // smooth over ~1/8 s
         const float k = static_cast<float>(std::fmin(1.0, dt * 6.0));  // TLDCoop_DLC: which way (the mocap gait)

@@ -18,6 +18,7 @@ void on_frame(const std::string& scene, bool in_game);
 
 // Where a player's avatar stands while they ride the train in our scene (their spot in the cab, on our train). False
 // when they're not on it (or the train isn't here).
+bool riding(unsigned char player);  // they're on the train in our scene (their speed is the train's)
 bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw);
 
 // The train's locker (SteamTrain.m_Container) in our scene, and its id for world_containers ("train|GUID": it moves,
