@@ -70,11 +70,12 @@ Karol ma wyczerpane limity na prywatne repo.
 5. Opcjonalnie później: komenda F1 `avatar_shots` w modzie robi zrzuty prawdziwej postaci w grze
    (stanie, chód, bieg, obrót z kilku stron) do zipa z logami, żeby porównać z podglądem z Unity.
 
-## Discord (od 09.11)
-- Automatyczne sprawdzanie tylko 16:00–24:00, co ok. 11 minut. Poza tym tylko na hasło Karola „sprawdź Discorda”.
-- Działać **tylko**, gdy ktoś oznaczy bota. Bez oznaczenia nic nie pisać.
+## Discord (od 09.11, 19:42)
+- **Bez automatycznego sprawdzania** (za dużo tokenów). Sprawdzaj Discorda tylko wtedy, gdy Karol napisze
+  „sprawdź Discorda”. Nie ustawiaj zaplanowanych sprawdzeń.
+- Działaj tylko, gdy ktoś oznaczył bota (`inbox/mentions.lst`).
 - Most: repo cgpt28641-ops/tldcoop-discord. `gh workflow run discord.yml -R cgpt28641-ops/polar-link --ref main`,
-  potem `git pull --rebase`, potem czytać `inbox/mentions.lst`.
+  potem `git pull --rebase`, potem czytaj `inbox/mentions.lst`.
 - Pliki `outbox/*.txt` muszą mieć w pierwszej linii `#kanał` (z krzyżykiem), np. `#updates`.
 
 ## Stan do sprawdzenia przez graczy
