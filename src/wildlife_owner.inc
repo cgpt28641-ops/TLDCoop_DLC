@@ -907,8 +907,15 @@ void take_local(const net::WildCtlMsg& t, double now) {
     if ((t.flags & net::kTakeMoved) && !dead_given) moved = moved_spot(s.region, pos, yaw, now);
     for (auto& [key, ids] : g_away) ids.erase(t.id);  // v45: (ours to count again, as one of ours here)
     const int variant = net::animal_variant(s.flags);  // TLDCoop_DLC (v50): which wolf
-    Il2CppObject* ai = pool_take(s.kind, aurora, variant);
+    // TLDCoop_DLC (Shatsca 09.11: "the stag's carcass vanished as Szymon came near"): a dead one handed over is made
+    // for it first; one of our own from the spawn region's pool, dead, was removed by TLD 1.6 s later, and the body with it
+    Il2CppObject* ai = nullptr;
     bool spawned = false;
+    if (dead_given) {
+        ai = spawn_stand_in(s.kind, pos, yaw, kAiModeWander, true, variant);
+        spawned = ai != nullptr;
+    }
+    if (!ai) ai = pool_take(s.kind, aurora, variant);
     if (!ai) {
         ai = spawn_stand_in(s.kind, pos, yaw, kAiModeWander, true, variant);
         spawned = ai != nullptr;
@@ -1398,6 +1405,25 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             logx::info("wildlife: TLD switched off #%u %.1f s after we took it; switched back on and out of its spawn "
                        "region's list (%d)", it->first, (now - it->second.since_ms) / 1000, it->second.rescued);
             ++it;
+            continue;
+        }
+        // TLDCoop_DLC (Shatsca 09.11: "I wounded a stag, followed its blood, then the blood and the stag were gone"):
+        // switched off again and again right after we took it, it isn't gone for everyone: it goes back (Refuse), and
+        // the host gives it to someone else (likely itself) as it was, wounds and all
+        if (ai && alive(ai) && !it->second.dead_told && now - it->second.since_ms < 15000) {
+            logx::info("wildlife: TLD keeps switching off #%u we just took; handed back, not forgotten", it->first);
+            if (host) {
+                host_refuse(it->first, it->second.epoch, me, now);
+            } else {
+                net::WildCtlMsg r;
+                r.op = net::WildOp::Refuse;
+                r.id = it->first;
+                r.epoch = it->second.epoch;
+                send_ctl(r);
+            }
+            for (auto k = g_ids.begin(); k != g_ids.end();) k = k->second == it->first ? g_ids.erase(k) : std::next(k);
+            drop(it->second.ai);
+            it = g_owned.erase(it);
             continue;
         }
         logx::info("wildlife: our #%u is gone from our game (TLD %s it)", it->first, ai && alive(ai) ? "switched off" : "removed");

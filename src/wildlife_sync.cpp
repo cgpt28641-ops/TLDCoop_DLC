@@ -882,10 +882,15 @@ Il2CppObject* base_ai_of(Il2CppObject* go);
 int variant_of(Il2CppObject* ai) {
     if (!ai) return 0;
     const std::string c = il2::class_name_of(ai);
+    // TLDCoop_DLC (Shatsca 09.11: "for me a stag, for Szymon a doe"; "after a bow shot the stag became a doe"): the
+    // deer's kind is one (stag) for both; TLD.AI.AiDoe and AiStagWhite are variants of it, as the wolves' are (the
+    // same two bits on the wire: a wolf's variant never meets a deer's)
+    if (c.find("AiDoe") != std::string::npos) return 1;
+    if (c.find("StagWhite") != std::string::npos) return 2;
     return c.find("Timberwolf") != std::string::npos ? 1 : c.find("WolfStarving") != std::string::npos ? 2 : 0;
 }
 int prefab_variant(Il2CppObject* go) { return go ? variant_of(base_ai_of(go)) : 0; }
-const char* variant_name(int v) { return v == 1 ? "timberwolf" : v == 2 ? "starving wolf" : "ordinary one"; }
+const char* variant_name(int v) { return v == 1 ? "timberwolf / doe" : v == 2 ? "starving wolf / white stag" : "ordinary one"; }
 
 // A spawn area's prefab's variant, found once per area (its prefab may need loading).
 std::unordered_map<uintptr_t, int> g_region_variant;
@@ -935,7 +940,7 @@ Il2CppObject* template_for(int kind, bool aurora, int variant = 0) {
             il2::il2cpp_gchandle_free(it->second);
             g_templates.erase(it);
         }
-        const char* what = variant == 1 ? "timberwolf" : "starving wolf";
+        const char* what = variant_name(variant);
         Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
         for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions)))
             if (il2::read_field<int32_t>(region, api.region_kind) == kind) {
