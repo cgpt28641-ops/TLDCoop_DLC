@@ -1507,3 +1507,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 
 ### 09.11 19:42
 - Discord: NO scheduled checks any more (tokens). Check only when Karol writes „sprawdź Discorda” or just „dc”; act only on bot mentions. Animations work: see HANDOFF_ANIM.md.
+
+### 09.11 ~20:10 (dc: Shatsca's deer reports, logs 19:47)
+- Seen working: ClothingExpanded icons ("icons from TLD's loader as 'ico_GearItem__CargoToolbelt'"), fresh-kill fix
+  ("is a fresh kill: … condition 100%").
+- Deer variant: variant_of() now 1 = TLD.AI.AiDoe, 2 = AiStagWhite (same wire bits as timberwolf/starving; kind
+  differs). Fixes "stag for me, doe for Szymon" and "stag became a doe after the bow shot" (pool took any deer).
+- Dead animal handed over (kTakeDead): spawn_stand_in first, pool after (a pooled dead deer was removed by TLD 1.6 s
+  later with the carcass: "the carcass vanished as Szymon came near").
+- Taken animal switched off by TLD again after the 2 rescues within 15 s, alive: Refuse (host_refuse when host)
+  instead of Gone, so the host re-gives it with its wounds (wounded stag + blood trail vanished). UNTESTED.
