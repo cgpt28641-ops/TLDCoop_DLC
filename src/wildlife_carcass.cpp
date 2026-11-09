@@ -756,6 +756,15 @@ void receive_carcasses(double now) {
                     g_quartered.insert(c.animal);  // (the host's game hears of it and removes it)
                     continue;
                 }
+                // TLDCoop_DLC (Shatsca 09.11: "a killed wolf keeps growling where it died"): a body with nothing
+                // left on it TLD removes at once here; made again every half second (30 times for one wolf), each
+                // one played the animal's sounds. Nothing to harvest: not made.
+                if (c.meat_units <= 0 && c.hide <= 0 && c.gut <= 0) {
+                    static std::unordered_set<uint32_t> told;
+                    if (told.insert(c.animal).second)
+                        logx::info("wildlife: the host's #%u is an empty carcass (all harvested): not made here", c.animal);
+                    continue;
+                }
                 if (c.seconds_dead >= kDeathSeconds) make_local(c, now);
                 continue;
             }

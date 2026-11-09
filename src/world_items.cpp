@@ -450,6 +450,9 @@ struct PotSig {
     bool operator==(const PotSig& o) const { return kind == o.kind && state == o.state && food == o.food; }
 };
 std::unordered_map<Il2CppObject*, PotSig> g_pot_sig;
+// TLDCoop_DLC (Shatsca 09.11: "Szymon put meat on, I came in and the meat sped up and was done"): when a pot was
+// loaded from the other player's word; its food comes in a moment later, and meanwhile it reads empty
+std::unordered_map<Il2CppObject*, double> g_pot_loaded_ms;
 std::string g_scene;                             // the scene g_known is about ("" = none)
 bool g_baseline = false;                         // g_known holds at least one full scan of g_scene
 double g_last_scan = 0;
@@ -996,6 +999,7 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
         sig.food = food_ours;
     }
     g_pot_sig[pot] = sig;
+    g_pot_loaded_ms[pot] = now_ms();
     std::string after = describe_pot(pot);  // the food goes in on the pot's next frame (FindGearItemBeingCooked)
     if (!food_ours.empty()) {
         Il2CppObject* food = gear_on(object_by_pdid(food_ours));
@@ -2007,6 +2011,12 @@ void scan(double now) {
             // how a pot that is cooking is getting on, every kPotSyncMs.
             const PotSig sig = pot_sig(pot);
             PotSig& last = g_pot_sig[pot];
+            // (the host coming in told every pot "empty" 26 ms after loading the friend's cooking: the meat went in
+            // again, its cooking started over; not while the food we were told of is still on its way)
+            if (const auto ld = g_pot_loaded_ms.find(pot); ld != g_pot_loaded_ms.end()) {
+                if (now - ld->second < 5000 && last.kind == 1 && sig.kind != 1 && !g_pots_changed.count(pot)) continue;
+                if (now - ld->second >= 5000) g_pot_loaded_ms.erase(ld);
+            }
             bool tell = g_pots_changed.erase(pot) > 0;
             if (last.kind >= 0 && !(sig == last)) {
                 if (hosting())
@@ -2673,6 +2683,7 @@ void on_frame(bool in_game) {
         if (!g_scene.empty()) logx::info("items: left %s", g_scene.c_str());
         g_known.clear();
         g_pot_sig.clear();
+        g_pot_loaded_ms.clear();
         // TLDCoop_DLC: the aliases stay (ids are the game's own, one per item in every scene): cleared here, coming
         // back made the other player's item again beside ours (a copy on the floor)
         g_scene = settled;
