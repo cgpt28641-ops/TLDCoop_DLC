@@ -1517,3 +1517,11 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   later with the carcass: "the carcass vanished as Szymon came near").
 - Taken animal switched off by TLD again after the 2 rescues within 15 s, alive: Refuse (host_refuse when host)
   instead of Gone, so the host re-gives it with its wounds (wounded stag + blood trail vanished). UNTESTED.
+
+### 09.11 ~20:45 (dc: Shatsca 20:30 logs, build 18:51 UTC; deer fixes confirmed by Shatsca)
+- wildlife_carcass: a host carcass with 0 meat/hide/gut isn't made on a client (TLD removed it at once, it was made
+  again every 0.5 s, 30× for one wolf: "the dead wolf keeps growling where it died").
+- world_items pots: g_pot_loaded_ms; within 5 s of loading a pot from the friend's word, a scan that reads it not
+  cooking (food still on its way) isn't told (host came in, told 5 pots "empty", the meat went in again).
+- Open: Szymon's arrowhead put on the workbench vanished for both (20:29–20:30; no "items:" line for it at all, then
+  the host's list removed it from his save). Not fixed; needs a repro.
