@@ -1506,4 +1506,4 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   UNTESTED; log "clothing: icons from TLD's loader as …".
 
 ### 09.11 19:42
-- Discord: NO scheduled checks any more (tokens). Check only when Karol writes „sprawdź Discorda”; act only on bot mentions. Animations work: see HANDOFF_ANIM.md.
+- Discord: NO scheduled checks any more (tokens). Check only when Karol writes „sprawdź Discorda” or just „dc”; act only on bot mentions. Animations work: see HANDOFF_ANIM.md.

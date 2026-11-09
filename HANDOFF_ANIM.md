@@ -72,7 +72,7 @@ Karol ma wyczerpane limity na prywatne repo.
 
 ## Discord (od 09.11, 19:42)
 - **Bez automatycznego sprawdzania** (za dużo tokenów). Sprawdzaj Discorda tylko wtedy, gdy Karol napisze
-  „sprawdź Discorda”. Nie ustawiaj zaplanowanych sprawdzeń.
+  „sprawdź Discorda” albo krótko „dc”. Nie ustawiaj zaplanowanych sprawdzeń.
 - Działaj tylko, gdy ktoś oznaczył bota (`inbox/mentions.lst`).
 - Most: repo cgpt28641-ops/tldcoop-discord. `gh workflow run discord.yml -R cgpt28641-ops/polar-link --ref main`,
   potem `git pull --rebase`, potem czytaj `inbox/mentions.lst`.
