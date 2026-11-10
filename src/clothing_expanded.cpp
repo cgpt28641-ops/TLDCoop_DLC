@@ -1503,4 +1503,21 @@ void describe() {
     }
 }
 
+bool ready() { return g_ready && g_state == State::Ready; }
+
+void* gear_prefab(const char* name, bool tool) {
+    if (!g_ready || !name) return nullptr;
+    if (is_ours(name) && g_state != State::Ready) return nullptr;
+    return component(prefab(name), tool ? api.t_tools : api.t_gear);
+}
+
+bool give_item(const char* key, float condition) { return ready() && ui.get_pm && give(key, condition); }
+
+bool is_ours(const char* name) {
+    if (!name) return false;
+    for (const Item& it : kItems)
+        if (lower(it.key) == lower(name)) return true;
+    return false;
+}
+
 }  // namespace clothing_expanded

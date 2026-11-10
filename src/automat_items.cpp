@@ -10,6 +10,7 @@
 #include <random>
 #include <string>
 
+#include "clothing_expanded.h"
 #include "coop_notices.h"
 #include "custom_text.h"
 #include "hooks.h"
@@ -309,12 +310,27 @@ struct Recipe {
     const char* result;
     int minutes;
     Need needs[5];
+    const char* tool = nullptr;  // a ToolsItem needed (e.g. the sewing kit)
     uintptr_t bp = 0;
 };
+// TLDCoop_DLC (Shatsca 10.11: the tool belt and the scabbard can't be had alone without the DLC): ClothingExpanded's
+// belted pants and the moose bag with its scabbard sewn at the workbench (no taking off again: another pair of pants
+// needs another belt). Belts: 2x what Shatsca first agreed to, 3 h; the bag 10 h. Sewing kit needed.
+#define BELT(result, pants) \
+    {result, 180, {{pants, 1}, {"GEAR_LeatherDried", 4}, {"GEAR_GutDried", 2}, {"GEAR_Cloth", 2}}, "GEAR_SewingKit"}
 Recipe g_recipes[] = {
     {kMechanism, 60, {{"GEAR_ScrapMetal", 4}, {kBoard, 1}}},
     {kAutomat, 180, {{kMechanism, 1}, {kBoard, 2}, {"GEAR_ScrapMetal", 6}, {"GEAR_ReclaimedWoodB", 4}, {"GEAR_Cloth", 2}}},
+    BELT("GEAR_CargoToolbelt", "GEAR_CargoPants"),
+    BELT("GEAR_CombatToolbelt", "GEAR_CombatPants"),
+    BELT("GEAR_DeerskinToolbelt", "GEAR_DeerSkinPants"),
+    BELT("GEAR_InsulatedToolbelt", "GEAR_InsulatedPants"),
+    BELT("GEAR_JeansToolbelt", "GEAR_Jeans"),
+    BELT("GEAR_WorkToolbelt", "GEAR_WorkPants"),
+    {"GEAR_MooseBagPlusScabbard", 600,
+     {{"GEAR_MooseHideBag", 1}, {"GEAR_LeatherHideDried", 2}, {"GEAR_LeatherDried", 2}, {"GEAR_GutDried", 2}}, "GEAR_SewingKit"},
 };
+#undef BELT
 uintptr_t g_holder = 0;                       // the inactive object our templates live under
 std::map<std::string, uintptr_t> g_templates;  // ours (and base items not found in TLD's blueprints)
 double g_recipes_at = 0;
@@ -370,6 +386,8 @@ Il2CppObject* template_of(const std::string& name, const std::map<std::string, I
     const std::string base = d ? d->base : name;
     const auto g = game.find(base);
     if (!d && g != game.end()) return g->second;  // (the game's own prefab: what TLD's blueprints use)
+    if (!d)  // ClothingExpanded's items and game items no blueprint holds: their prefab, as TLD's blueprints use
+        if (Il2CppObject* p = static_cast<Il2CppObject*>(clothing_expanded::gear_prefab(name.c_str())); alive(p)) return p;
     Il2CppObject* from = g != game.end() ? g->second : nullptr;
     if (!from) {  // not in any blueprint: a loaded one of that name (a prefab, or one in the world: copied)
         void* fa[] = {api.t_gear};
@@ -424,7 +442,9 @@ Il2CppObject* make_blueprint(Recipe& r, Il2CppObject* source, const std::map<std
     void* na[] = {il2::il2cpp_string_new((std::string("BLUEPRINT_") + r.result).c_str())};
     il2::invoke(api.set_name, bp, na);
     il2::store_ref(bp, api.bp_required, needs);
-    il2::store_ref(bp, api.bp_tool, nullptr);
+    Il2CppObject* tool = r.tool ? static_cast<Il2CppObject*>(clothing_expanded::gear_prefab(r.tool, true)) : nullptr;
+    if (r.tool && !alive(tool)) logx::warn("automat items: recipe for %s: tool %s not found (none needed then)", r.result, r.tool);
+    il2::store_ref(bp, api.bp_tool, alive(tool) ? tool : nullptr);
     if (api.tools_class) il2::store_ref(bp, api.bp_tools, il2::il2cpp_array_new(api.tools_class, 0));
     if (api.powder_class) il2::store_ref(bp, api.bp_powder, il2::il2cpp_array_new(api.powder_class, 0));
     if (api.liquid_class) il2::store_ref(bp, api.bp_liquid, il2::il2cpp_array_new(api.liquid_class, 0));
@@ -455,6 +475,7 @@ void keep_recipes() {
     Il2CppObject* source = nullptr;
     std::vector<Recipe*> missing;
     for (Recipe& r : g_recipes) {
+        if (clothing_expanded::is_ours(r.result) && !clothing_expanded::ready()) continue;  // (not made yet / off)
         Il2CppObject* bp = target(r.bp);
         bool in = false;
         for (int32_t i = 0; bp && i < n && static_cast<size_t>(i) < il2::array_length(items) && !in; ++i)
@@ -526,6 +547,15 @@ void apply_detour(Il2CppObject* self, float hours, const MethodInfo* method) {
     for (Recipe& r : g_recipes) {
         if (target(r.bp) != bp) continue;
         Il2CppObject* gi = il2::read_field<Il2CppObject*>(self, api.op_last);
+        if (clothing_expanded::is_ours(r.result)) {
+            // (TLD's console path gives nothing for ours; if its crafting didn't make one either, ours from our copy)
+            static Il2CppObject* last_seen = nullptr;
+            if (alive(gi) && gi != last_seen) {
+                last_seen = gi;
+                logx::info("automat items: crafted %s", r.result);
+            }
+            return;
+        }
         Def* d = def_of(r.result);
         if (!alive(gi) || !d) return;
         Il2CppObject* go = il2::invoke(api.component_go, gi);
