@@ -48,6 +48,8 @@ struct Settings {
     bool fuel_drain = true;
     // TLDCoop_DLC: [clothing] enabled: ClothingExpanded's 28 items (off until tested: the 06.11 build crashed a start)
     bool clothing = false;
+    // TLDCoop_DLC: [clothing] spawn_chance: % of containers (on their first roll) that get one ClothingExpanded item
+    int clothing_spawn = 3;
     float hl_intensity = 2.0f;      // how bright (the mod's 0-3)
     float hl_range = 1.4f;          // how far they reach (x their own range, at most 20 m)
     bool hl_white = false;          // whiter light

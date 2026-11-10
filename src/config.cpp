@@ -99,6 +99,9 @@ constexpr const char* kDefaultIni =
     "; enabled: ClothingExpanded (built in): pants with a tool belt, boots with crampons, the satchel with a rifle\n"
     "; scabbard. 1 = on (some items need the Tales from the Far Territory DLC's clothes)\n"
     "enabled=1\n"
+    "; spawn_chance: % of containers (cupboards, lockers...: when the game first fills them) with one of its items\n"
+    "; (the rarer ones less often). 0 = never. In co-op the host's world decides.\n"
+    "spawn_chance=3\n"
     "\n"
     "[sky]\n"
     "; Better Night Sky (built in): finer stars and a moon with its phases. Your own look (0 = TLD's sky)\n"
@@ -317,6 +320,7 @@ Settings load() {
         WritePrivateProfileStringW(L"clothing", L"on_from_0811", L"1", ini.c_str());
     }
     s.clothing = GetPrivateProfileIntW(L"clothing", L"enabled", 1, ini.c_str()) != 0;  // TLDCoop_DLC
+    s.clothing_spawn = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"clothing", L"spawn_chance", 3, ini.c_str())), 0, 100);
     {  // TLDCoop_DLC: [houselights]
         auto num = [&](const wchar_t* key, float& v, float lo, float hi) {
             const std::string t = read(ini, key, "", L"houselights");

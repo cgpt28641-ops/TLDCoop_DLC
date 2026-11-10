@@ -16,7 +16,9 @@
 #include "hooks.h"
 #include "il2cpp_api.h"
 #include "log.h"
+#include "config.h"
 #include "net/session.h"
+#include "net_runtime.h"
 #include "paths.h"
 
 // TLDCoop_DLC: ClothingExpanded (TonisGaming; ModComponent pack, "discontinued"; Karol 06.11 on Discord: "Dobra rób 1",
@@ -758,6 +760,7 @@ struct UiApi {
     const MethodInfo *label_set = nullptr, *get_inventory = nullptr, *get_pm = nullptr, *add_item = nullptr;
     const MethodInfo *destroy_gear = nullptr, *best_with_name = nullptr, *is_wearing = nullptr, *hud = nullptr;
     const MethodInfo *load_panel = nullptr, *bar_launch = nullptr;
+    const MethodInfo *add_to_pack = nullptr, *set_hp = nullptr;  // PlayerManager.AddItemToPlayerInventory; GearItem.SetNormalizedHP
     Il2CppClass* bar_class = nullptr;
     ptrdiff_t inv_items = -1, gear_hp = -1, gear_in_pack = -1, gear_clothing = -1;
     Il2CppObject *t_label = nullptr, *t_localize = nullptr, *t_button = nullptr;
@@ -974,6 +977,48 @@ void start(Act act, const Item& it, Il2CppObject* gear) {
     il2::invoke(ui.bar_launch, bar, a);
 }
 
+// TLDCoop_DLC (Shatsca 10.11: "add GEAR_CargoToolbelt" -> "0 added", none of the 25 usable): TLD's AddItemCONSOLE
+// gives nothing for our items (its lookup doesn't reach the pack's prefabs). One of ours: a copy of the prefab we made
+// (RadialSpawnManager.GetPrefabFromName finds it), switched on, at that condition.
+Il2CppObject* instance_of(const char* key, float cond) {
+    Il2CppObject* go = prefab(key);
+    if (!go) return nullptr;
+    void* a[] = {go};
+    Il2CppObject* copy = il2::invoke(api.instantiate, nullptr, a);
+    if (!alive(copy)) return nullptr;
+    void* na[] = {str(key)};
+    il2::invoke(api.obj_set_name, copy, na);
+    set_active_go(copy, true);
+    Il2CppObject* gi = component(copy, api.t_gear);
+    if (!gi) return nullptr;
+    if (ui.set_hp) {
+        bool round = false;
+        void* ha[] = {&cond, &round};
+        il2::invoke(ui.set_hp, gi, ha);
+    }
+    return gi;
+}
+
+// One of ours into our pack: TLD's console way first, our copy if that gives nothing.
+bool give(const char* key, float cond) {
+    Il2CppObject* pm = il2::invoke(ui.get_pm, nullptr);
+    if (!pm) return false;
+    int32_t n = 1;
+    void* a[] = {str(key), &n, &cond};
+    if (alive(il2::invoke(ui.add_item, pm, a))) return true;
+    Il2CppObject* gi = ui.add_to_pack ? instance_of(key, cond) : nullptr;
+    if (!gi) {
+        logx::warn("clothing: %s: no copy of it to give", key);
+        return false;
+    }
+    bool looted = false, notify = true;
+    void* b[] = {gi, &looted, &notify};
+    il2::invoke(ui.add_to_pack, pm, b);
+    static int logged = 0;
+    if (logged++ < 3) logx::info("clothing: %s given from our own copy (TLD's console way gave nothing)", key);
+    return true;
+}
+
 void finish(bool success, bool cancel, float progress) {
     (void)progress;
     Pending p = g_pending;
@@ -987,12 +1032,7 @@ void finish(bool success, bool cancel, float progress) {
     Il2CppObject* pm = il2::invoke(ui.get_pm, nullptr);
     if (!inv || !pm) return;
     const float cond = condition_of(gear);
-    auto add = [&](const char* name, float c) {
-        int32_t n = 1;
-        void* a[] = {str(name), &n, &c};
-        Il2CppObject* g = il2::invoke(ui.add_item, pm, a);
-        return alive(g);
-    };
+    auto add = [&](const char* name, float c) { return give(name, c); };
     auto destroy = [&](Il2CppObject* g) {
         void* a[] = {g};
         il2::invoke(ui.destroy_gear, inv, a);
@@ -1052,6 +1092,8 @@ bool init_ui() {
     ui.get_inventory = il2::find_method(gm, "GetInventoryComponent", 0);
     ui.get_pm = il2::find_method(gm, "GetPlayerManagerComponent", 0);
     ui.add_item = il2::find_method_params(pm, "AddItemCONSOLE", {"System.String", "System.Int32", "System.Single"});
+    ui.add_to_pack = il2::find_method_params_quiet(pm, "AddItemToPlayerInventory", {"GearItem", "System.Boolean", "System.Boolean"});
+    if (Il2CppClass* g = il2::find_class(kGame, "", "GearItem")) ui.set_hp = il2::find_method_quiet(g, "SetNormalizedHP", 2);
     ui.destroy_gear = il2::find_method_params(inv, "DestroyGear", {"GearItem"});
     ui.inv_items = il2::field_offset(inv, "m_Items");
     if (Il2CppClass* ext = il2::find_class(kGame, "TLD.Gear", "GearItemObjectExtensions"))
@@ -1087,6 +1129,66 @@ bool init_ui() {
                                  reinterpret_cast<void*>(&update_buttons_detour), reinterpret_cast<void**>(&g_update_buttons)) &&
            hooks::install_method("ItemDescriptionPage.OnEquip (clothing)", on_equip, reinterpret_cast<void*>(&on_equip_detour),
                                  reinterpret_cast<void**>(&g_on_equip));
+}
+
+// TLDCoop_DLC (Shatsca 10.11: "na mapie się nie respią w strukturach - daj im konkretny % szans (rzadkość)"): when TLD
+// first fills a container with random gear (Container.PopulateWithRandomGear), [clothing] spawn_chance % of them get
+// one of ours too, the rarer ones less often (like Item Rarities' tiers). Solo or the host only: a friend's containers
+// come from the host's world.
+using PopulateFn = void (*)(Il2CppObject*, const MethodInfo*);
+PopulateFn g_populate = nullptr;
+const MethodInfo* g_container_add = nullptr;  // Container.AddGear(GearItem)
+int g_spawn_pct = 3;
+uint64_t g_rng = 0;
+
+uint32_t next_random() {
+    if (!g_rng) g_rng = GetTickCount64() * 6364136223846793005ull + 1442695040888963407ull;
+    g_rng ^= g_rng << 13, g_rng ^= g_rng >> 7, g_rng ^= g_rng << 17;
+    return static_cast<uint32_t>(g_rng >> 16);
+}
+
+// How common one of ours is (higher: more often): plain tool belts most, the moose bag with the scabbard least.
+int rarity_weight(const std::string& key) {
+    if (key.find("MooseBag") != std::string::npos) return 1;
+    if (key.find("Combat") != std::string::npos) return 2;
+    if (key.find("ICrampons") != std::string::npos) return 3;
+    if (key.find("NCrampons") != std::string::npos) return 5;
+    if (key.find("Cargo") != std::string::npos || key.find("Jeans") != std::string::npos || key.find("Work") != std::string::npos) return 8;
+    return 4;  // the other tool belts
+}
+
+void populate_detour(Il2CppObject* self, const MethodInfo* m) {
+    g_populate(self, m);
+    if (g_state != State::Ready || g_spawn_pct <= 0 || !alive(self) || !g_container_add) return;
+    if (const auto role = netrt::role(); role && *role != net::Role::Host) return;
+    if (static_cast<int>(next_random() % 1000) >= g_spawn_pct * 10) return;
+    int total = 0;
+    for (const Item& it : kItems) total += rarity_weight(it.key);
+    if (total <= 0) return;
+    int pick = static_cast<int>(next_random() % static_cast<uint32_t>(total));
+    const Item* chosen = nullptr;
+    for (const Item& it : kItems)
+        if ((pick -= rarity_weight(it.key)) < 0) {
+            chosen = &it;
+            break;
+        }
+    if (!chosen) return;
+    const float cond = 0.35f + static_cast<float>(next_random() % 600) / 1000.0f;  // worn: 35-95 %
+    Il2CppObject* gi = instance_of(chosen->key, cond);
+    if (!gi) return;
+    void* a[] = {gi};
+    il2::invoke(g_container_add, self, a);
+    logx::info("clothing: %s (%.0f%%) put in a container (%d%% of containers get one)", chosen->key, cond * 100, g_spawn_pct);
+}
+
+bool hook_spawns() {
+    Il2CppClass* container = il2::find_class(kGame, "", "Container");
+    const MethodInfo* populate = container ? il2::find_method_quiet(container, "PopulateWithRandomGear", 0) : nullptr;
+    g_container_add = container ? il2::find_method_params_quiet(container, "AddGear", {"GearItem"}) : nullptr;
+    g_spawn_pct = config::load().clothing_spawn;
+    if (!populate || !g_container_add) return false;
+    return hooks::install_method("Container.PopulateWithRandomGear (clothing)", populate, reinterpret_cast<void*>(&populate_detour),
+                                 reinterpret_cast<void**>(&g_populate));
 }
 
 }  // namespace
@@ -1266,6 +1368,8 @@ bool init() {
     }
     g_ready = true;
     if (!init_ui()) logx::warn("clothing: no ATTACH/DETACH button on the item page (TLD API missing or hooks failed)");
+    if (!hook_spawns()) logx::warn("clothing: its items won't turn up in containers (TLD API missing or the hook failed)");
+    else logx::info("clothing: %d%% of containers get one of its items when the game first fills them", g_spawn_pct);
     logx::info("clothing: ready (the pack in %s; its catalog loads with the game)", g_dir.string().c_str());
     return true;
 }
@@ -1328,15 +1432,9 @@ bool console(const std::string& line) {
     for (const Item& it : kItems)
         if (lower(it.key) == lower(name) || lower(short_name(it.key)) == lower(name)) found = &it;
     if (!found) return false;
-    Il2CppObject* pm = il2::invoke(ui.get_pm, nullptr);
-    if (!pm) return false;
     int added = 0;
-    for (int i = 0; i < std::clamp(count, 1, 20); ++i) {
-        int32_t n = 1;
-        float cond = 1.0f;
-        void* a[] = {str(found->key), &n, &cond};
-        if (alive(il2::invoke(ui.add_item, pm, a))) ++added;
-    }
+    for (int i = 0; i < std::clamp(count, 1, 20); ++i)
+        if (give(found->key, 1.0f)) ++added;
     logx::info("clothing: console: add %s x%d: %d added", found->key, count, added);
     return true;
 }
