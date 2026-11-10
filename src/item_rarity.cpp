@@ -122,11 +122,11 @@ void tint(Il2CppObject* square) {
     Il2CppObject* deco = api.decoration >= 0 ? il2::read_field<Il2CppObject*>(square, api.decoration) : nullptr;
     const std::string n = alive(gear) ? object_name(gear) : alive(deco) ? object_name(deco) : std::string();
     const Rarity r = n.empty() ? Rarity::None : of(n);
-    Color c = r == Rarity::None ? g_default : colour(r, 0.35f);
+    Color c = r == Rarity::None ? g_default : colour(r, 0.25f);
     void* a[] = {&c};
     il2::invoke(api.set_default, button, a);
-    put_color(button, api.hover, r == Rarity::None ? g_default_hover : colour(r, 0.55f));
-    put_color(button, api.pressed, r == Rarity::None ? g_default_pressed : colour(r, 0.65f));
+    put_color(button, api.hover, r == Rarity::None ? g_default_hover : colour(r, 0.40f));
+    put_color(button, api.pressed, r == Rarity::None ? g_default_pressed : colour(r, 0.50f));
     bool instant = true;
     void* ua[] = {&instant};
     if (api.update_color) il2::invoke(api.update_color, button, ua);

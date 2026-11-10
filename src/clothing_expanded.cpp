@@ -1156,6 +1156,8 @@ uint32_t next_random() {
 
 // How common one of ours is (higher: more often): plain tool belts most, the moose bag with the scabbard least.
 int rarity_weight(const std::string& key) {
+    // Shatsca 10.11: deerskin boots with crampons aren't to be found in buildings (made or attached only)
+    if (key.find("DeerskinICrampons") != std::string::npos || key.find("DeerskinNCrampons") != std::string::npos) return 0;
     if (key.find("MooseBag") != std::string::npos) return 1;
     if (key.find("Combat") != std::string::npos) return 2;
     if (key.find("ICrampons") != std::string::npos) return 3;
