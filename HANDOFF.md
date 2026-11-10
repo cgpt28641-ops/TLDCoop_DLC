@@ -1525,3 +1525,11 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   cooking (food still on its way) isn't told (host came in, told 5 pots "empty", the meat went in again).
 - Open: Szymon's arrowhead put on the workbench vanished for both (20:29–20:30; no "items:" line for it at all, then
   the host's list removed it from his save). Not fixed; needs a repro.
+
+### 10.11 07:10 (dc: Shatsca 23:21 logs, build 19:35 UTC 09.11)
+- Growl after death persisted even with the empty-carcass fix: a looping Wwise event posted on a puppet's emitter
+  never got its StopPlayingID. stop_puppet_sounds(p): in remove_puppet, and stop_dead_sounds() each frame (client
+  play_host_sounds and owner.inc after play_sounds): 2 s after a puppet is dead/carcass, its playing IDs stop (500 ms fade).
+- Open (feature, not started): Iron Road boat supplies (WhalingStationRegion, TLD.IslandTransit.IslandTransitExchangeBox,
+  ActiveExchangeState / AddItem / RemoveItem) not shared: Szymon's stick put in as fuel isn't in Shatsca's box.
+- Open: Shatsca 19:52 "Szymon's meat on a slot shows no cooking stage here (it floats a bit above the slot)".
