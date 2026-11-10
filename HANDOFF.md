@@ -1607,3 +1607,12 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   changes in a scene the host isn't in go to the host's g_store and are applied when the HOST gets there; another
   client entering that scene without the host gets nothing from it. So: with the host there yes; without, only what
   his own save has. TODO: host sends g_store + kept placements for a scene to a friend arriving there without him.
+
+### 11.11 ~00:45 (Shatsca 23:28: meat back on wolf carcasses after a DLL change)
+- Cause: the host's registry keeps a dead animal's BodyHarvest text (Entry.body) only from handovers/Keep; harvests in
+  the host's own game (by the host, or a friend's applied there) never refreshed it, and own_save_kept wrote that old
+  text. Next game own_load_kept + "carcass here as it was harvested in its last game" deserialized the OLD body over
+  TLD's own (harvested) one -> meat back.
+- Fix: own_save_kept first refreshes e.body (owner 0, dead) from the live carcass (g_ids -> body_text) ; log
+  "N carcass(es) saved as harvested now". UNTESTED. Carcasses already restored with meat stay so.
+- Rarity 25 % was already in the 23:0x build (their logs were 22:31).
