@@ -1536,3 +1536,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   SerializationUtils.m_SerializerSettings) -> DeserializeAll. Host sends its own every 15 s. Log "transit: the boat's
   box ...". UNTESTED: an open box panel may not refresh until reopened.
 - Open: Shatsca 19:52 "Szymon's meat on a slot shows no cooking stage here (it floats a bit above the slot)".
+- 07:50 (Kerel: check the last logs thoroughly) 23:21 logs reviewed in full: few WARNs; 72 "gone from our game (TLD
+  switched off it)" on Shatsca, among them dead bodies the host kept far from everyone (made, switched off 90 ms later,
+  lost). The Refuse-on-early-switch-off now covers dead ones too (not item_made). Seen, not changed: doe without a
+  doe model here -> an ordinary stag stands in (6x); ravaged carcass "changed" logged every 0.5 s (wolves eating);
+  "hid N of our own animal(s)" spam; ClothingExpanded remake ~450 ms per scene change.
