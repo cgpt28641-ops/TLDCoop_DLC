@@ -1775,7 +1775,20 @@ std::string describe_ownership() {
 void own_save_kept(std::vector<world_keep::Record>& out) {
     if (!hosting_now() || !own_mode()) return;
     const double h = game_hours();
-    size_t animals = 0;
+    size_t animals = 0, refreshed = 0;
+    // TLDCoop_DLC (Shatsca 10.11 23:28: meat taken from wolf carcasses came back after the next DLL/game): a carcass in
+    // our game is saved as it is now (harvested here, or by a friend and applied here), not as it was handed to us
+    std::unordered_map<uint32_t, Il2CppObject*> here;
+    for (const auto& [addr, id] : g_ids)
+        if (Il2CppObject* ai = reinterpret_cast<Il2CppObject*>(addr); alive(ai) && dead_animal(ai)) here[id] = ai;
+    for (auto& [id, e] : g_registry) {
+        if (!(e.last.flags & net::kAnimalDead) || e.owner != 0) continue;
+        const auto h_it = here.find(id);
+        if (h_it == here.end()) continue;
+        std::string now_body = body_text(h_it->second);
+        if (!now_body.empty() && now_body != e.body) e.body = std::move(now_body), ++refreshed;
+    }
+    if (refreshed) logx::info("wildlife: %zu carcass(es) saved as harvested now", refreshed);
     for (const auto& [id, e] : g_registry) {
         net::WildCtlMsg k;
         k.op = net::WildOp::Keep;
