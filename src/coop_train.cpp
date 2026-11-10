@@ -71,6 +71,14 @@ struct Api {
     ptrdiff_t optional_lock = -1, lock_state = -1;  // SteamTrain.m_OptionalLock, Lock.m_LockState
     const MethodInfo* set_lock = nullptr;       // Lock.SetLockState(LockState)
     ptrdiff_t it_box = -1, box_load = -1;       // IslandTransitInteraction.m_ExchangeBox, IslandTransitExchangeBox.m_LoadScene
+    // TLDCoop_DLC (Shatsca 09.11 23:20: "the boat's supplies on the Fulmar aren't shared: Szymon put a stick in as fuel,
+    // I don't see it"): the exchange box's state, TLD's own save of it
+    const MethodInfo* box_save = nullptr;       // static IslandTransitExchangeBox.SerializeAll()
+    const MethodInfo* box_load_all = nullptr;   // static IslandTransitExchangeBox.DeserializeAll(saveData)
+    Il2CppObject* box_type = nullptr;           // IslandTransitExchangeBoxSaveData (System.Type)
+    const MethodInfo* to_json = nullptr;        // static SerializationUtils.SerializeObject(object)
+    const MethodInfo* from_json = nullptr;      // static JsonConvert.DeserializeObject(string, Type, settings)
+    FieldInfo* json_settings = nullptr;         // SerializationUtils.m_SerializerSettings
     ptrdiff_t asset_ref = -1;                   // TrainCar.m_AssetReference
     const MethodInfo* make_car = nullptr;       // static TrainCar.FindOrCreateTrainCar(string, string, out bool)
     ptrdiff_t train_container = -1;             // SteamTrain.m_Container
@@ -953,6 +961,93 @@ void elements_tick(double now) {
     }
 }
 
+// --- Iron Road's boat: the island transit exchange box ------------------------------------------------------------------
+// TLD keeps what was put in the boat's box (fuel, water, food for the trip) in one save record for all boxes
+// (IslandTransitExchangeBox.SerializeAll / DeserializeAll). Ours, as TLD's own save text, goes to the others when it
+// changes (checked every second); theirs is loaded here as loading a save does. The host sends its own every 15 s.
+std::string g_box_known;          // the text we last had (ours or loaded)
+std::string g_box_scene;
+double g_box_next = 0, g_box_full_at = 0;
+int g_box_logged = 0;
+
+std::string box_text() {
+    if (!api.box_save || !api.to_json) return {};
+    Il2CppObject* data = il2::invoke(api.box_save, nullptr);
+    if (!data) return {};
+    void* args[] = {data};
+    return text(reinterpret_cast<Il2CppString*>(il2::invoke(api.to_json, nullptr, args)));
+}
+
+void send_box(const std::string& t) {
+    if (t.empty() || t.size() > 200000 || netrt::status().players.empty()) return;
+    net::Writer w(net::Msg::IslandBox, t.size() + 256);
+    w.put<uint8_t>(g_self);
+    w.put_blob(g_scene, 64);
+    w.put_blob(t, 200000);
+    netrt::send_packet(w, true);
+}
+
+void box_tick(double now) {
+    if (!api.box_save || now < g_box_next) return;
+    g_box_next = now + 1000;
+    if (g_box_scene != g_scene) {
+        g_box_scene = g_scene;
+        g_box_known = box_text();  // what the scene loaded with
+        g_box_full_at = now + 4000;
+        return;
+    }
+    const std::string t = box_text();
+    if (t.empty()) return;
+    if (t != g_box_known) {
+        g_box_known = t;
+        if (g_box_logged++ < 40) logx::info("transit: the boat's box changed here (%zu chars of TLD's save): sent", t.size());
+        send_box(t);
+        g_box_full_at = now + 15000;
+    } else if (hosting() && now >= g_box_full_at) {
+        send_box(t);
+        g_box_full_at = now + 15000;
+    }
+}
+
+void box_receive() {
+    static std::vector<net::Packet> in;
+    in.clear();
+    netrt::drain_packets(net::Msg::IslandBox, in);
+    const bool host = hosting();
+    for (const net::Packet& p : in) {
+        if (host) {
+            net::Writer w(net::Msg::IslandBox, p.data.size() + 16);
+            w.put_raw(p.data.data() + net::kHeaderSize, p.data.size() - net::kHeaderSize);
+            netrt::send_packet_except(p.from, w, true);
+        }
+        net::Reader r = net::packet_body(p);
+        const uint8_t from = r.get<uint8_t>();
+        const std::string scene = r.get_blob(64);
+        const std::string t = r.get_blob(200000);
+        if (!r.ok() || (host ? p.from : from) == g_self || t.empty()) continue;
+        if (!api.box_load_all || !api.from_json || !api.box_type) continue;
+        if (t == g_box_known || t == box_text()) {
+            g_box_known = t;
+            continue;
+        }
+        Il2CppObject* settings = nullptr;
+        if (api.json_settings) il2::il2cpp_field_static_get_value(api.json_settings, &settings);
+        void* args[] = {il2::il2cpp_string_new(t.c_str()), api.box_type, settings};
+        Il2CppObject* data = il2::invoke(api.from_json, nullptr, args);
+        if (!data) {
+            logx::warn("transit: player %u's boat box couldn't be read (%zu chars)", host ? p.from : from, t.size());
+            continue;
+        }
+        void* load[] = {data};
+        il2::invoke(api.box_load_all, nullptr, load);
+        g_box_known = box_text();
+        if (g_box_known.empty()) g_box_known = t;
+        if (g_box_logged++ < 40)
+            logx::info("transit: the boat's box as player %u has it (%s, %zu chars) loaded here", host ? p.from : from,
+                       scene.c_str(), t.size());
+    }
+}
+
 void elements_receive() {
     static std::vector<net::Packet> in;
     in.clear();
@@ -1213,6 +1308,20 @@ bool init() {
         if (it && xb && can) {
             api.it_box = il2::field_offset(it, "m_ExchangeBox");
             api.box_load = il2::field_offset(xb, "m_LoadScene");
+            api.box_save = il2::find_method_quiet(xb, "SerializeAll", 0);
+            api.box_load_all = il2::find_method_quiet(xb, "DeserializeAll", 1);
+            if (Il2CppClass* sd = il2::find_class(kGame, "TLD.IslandTransit", "IslandTransitExchangeBoxSaveData")) {
+                api.box_type = il2::type_object(sd);
+                if (api.box_type) il2::il2cpp_gchandle_new(api.box_type, false);
+            }
+            Il2CppClass* ser = il2::find_class("TLD.Serialization.dll", "TLD.Serialization", "SerializationUtils");
+            api.to_json = ser ? il2::find_method_quiet(ser, "SerializeObject", 1) : nullptr;
+            if (ser) api.json_settings = il2::il2cpp_class_get_field_from_name(ser, "m_SerializerSettings");
+            api.from_json = il2::find_method_params_quiet(
+                il2::find_class("Newtonsoft.Json.dll", "Newtonsoft.Json", "JsonConvert"), "DeserializeObject",
+                {"System.String", "System.Type", "Newtonsoft.Json.JsonSerializerSettings"});
+            if (!api.box_save || !api.box_load_all || !api.box_type || !api.to_json || !api.from_json)
+                logx::warn("transit: the boat's exchange box can't be shared (TLD API missing)");
             if (!hooks::install_method("IslandTransitInteraction.CanPlayerTransit", can,
                                        reinterpret_cast<void*>(&can_transit_detour),
                                        reinterpret_cast<void**>(&g_can_transit)))
@@ -1279,6 +1388,8 @@ void on_frame(const std::string& scene, bool in_game) {
     parts_receive();
     elements_receive();
     elements_tick(now);
+    box_receive();  // TLDCoop_DLC: the boat's supplies
+    box_tick(now);
     if (g_owner != kNobody && g_owner != g_self && now - g_owner_seen > kOwnerLostMs) {
         logx::info("train: no word from player %d for %.1f s: nobody drives", g_owner, (now - g_owner_seen) / 1000.0);
         g_owner = kNobody;

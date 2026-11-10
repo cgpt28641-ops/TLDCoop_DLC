@@ -950,6 +950,7 @@ struct Session::Impl {
             case Msg::Train:    // TLDCoop_DLC: Iron Road's steam train
             case Msg::TrainParts:
             case Msg::TrackElements:
+            case Msg::IslandBox:  // TLDCoop_DLC: the boat's supplies
             case Msg::Automat:  // TLDCoop_DLC: the slot machine  // TLDCoop_DLC (it was never let in: Shatsca 04.11 21:46 "the others didn't see the lights")
             case Msg::Give: {
                 if (!linked) return;

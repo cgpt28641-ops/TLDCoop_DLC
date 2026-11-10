@@ -230,7 +230,8 @@ enum class Msg : uint8_t {
     Summon = 58,       // TLDCoop_DLC: host -> a friend: come to me (F1 teleportplayer): scene[64], x, y, z, yaw (src/coop_summon.cpp)
     Train = 59,        // TLDCoop_DLC: Iron Road's steam train: the driver's (or a rider's, or the host's idle) frame (src/coop_train.cpp)
     TrainParts = 60,   // TLDCoop_DLC: the train's parts (condition, boiler) and tanks (src/coop_train.cpp)
-    TrackElements = 61 // TLDCoop_DLC: Iron Road's track switches, turntables, towers: guid + TLD's own state text
+    TrackElements = 61, // TLDCoop_DLC: Iron Road's track switches, turntables, towers: guid + TLD's own state text
+    IslandBox = 62     // TLDCoop_DLC: Iron Road's boat (island transit) exchange box: u8 from, scene[64], TLD's own save text
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
