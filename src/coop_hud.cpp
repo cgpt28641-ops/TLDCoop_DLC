@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -1880,6 +1881,7 @@ bool g_weight_icon_tried = false;
 struct StatsParts {
     std::string time, top, status, air;
     bool cold = false;  // feels-like below 0: the air line red
+    std::vector<int> ails;  // TLD AfflictionTypes on us now (icons, left middle)
 };
 StatsParts g_parts;
 
@@ -1972,6 +1974,125 @@ double weight_kg(const MethodInfo* m, Il2CppObject* o, bool& ok) {
     return ok ? static_cast<double>(u) / sapi.units_per_kg : 0;
 }
 
+// TLDCoop_DLC (Shatsca 10.11 07:58: "buffy i debuffy postaci wyświetlaj w ikonach, jeśli są na graczu, po lewej
+// środkowej części ekranu"): TLD's own affliction icons (Panel_Affliction.HasAffliction for each AfflictionType, the
+// sprite TLD shows for it, from whichever of its atlases has it)
+struct AilApi {
+    bool looked = false;
+    const MethodInfo *has = nullptr, *sprite_name = nullptr, *beneficial = nullptr, *risk = nullptr, *display = nullptr;
+    const MethodInfo *table = nullptr, *by_type = nullptr;  // GameManager.GetAfflictionDefinitionTable; ...ByType
+    ptrdiff_t icon_name = -1;                               // AfflictionDefinition.m_IconName
+    const MethodInfo *find_all = nullptr, *atlas_get = nullptr, *set_atlas = nullptr;
+    Il2CppObject* t_atlas = nullptr;
+} aapi;
+constexpr int kAilTypes = 39, kAilGeneric = 28;
+std::map<int, uintptr_t> g_ail_icons;   // type -> our sprite
+std::set<int> g_ail_no_icon;            // no atlas of TLD's has its icon: its name in the text instead
+std::vector<uintptr_t> g_atlases;       // TLD's UIAtlases
+std::chrono::steady_clock::time_point g_atlases_at{};
+
+void look_up_ails() {
+    if (aapi.looked) return;
+    aapi.looked = true;
+    if (Il2CppClass* pa = il2::find_class(kGame, "", "Panel_Affliction")) aapi.has = il2::find_method_quiet(pa, "HasAffliction", 1);
+    if (Il2CppClass* a = il2::find_class(kGame, "", "Affliction")) {
+        aapi.sprite_name = il2::find_method_quiet(a, "SpriteNameFromAfflictionType", 1);
+        aapi.beneficial = il2::find_method_quiet(a, "IsBeneficial", 1);
+        aapi.risk = il2::find_method_quiet(a, "IsRisk", 1);
+        aapi.display = il2::find_method_quiet(a, "GetDisplayName", 1);
+    }
+    if (Il2CppClass* gm = il2::find_class(kGame, "", "GameManager")) aapi.table = il2::find_method_quiet(gm, "GetAfflictionDefinitionTable", 0);
+    if (Il2CppClass* t = il2::find_class(kGame, "", "AfflictionDefinitionTable")) aapi.by_type = il2::find_method_quiet(t, "GetAfflictionDefinitionByType", 1);
+    if (Il2CppClass* d = il2::find_class(kGame, "", "AfflictionDefinition")) aapi.icon_name = il2::field_offset_quiet(d, "m_IconName");
+    if (Il2CppClass* res = il2::find_class(kCore, "UnityEngine", "Resources"))
+        aapi.find_all = il2::find_method_params_quiet(res, "FindObjectsOfTypeAll", {"System.Type"});
+    if (Il2CppClass* atlas = il2::find_class(kGame, "", "UIAtlas")) {
+        aapi.atlas_get = il2::find_method_quiet(atlas, "GetSprite", 1);
+        aapi.t_atlas = il2::type_object(atlas);
+        if (aapi.t_atlas) il2::il2cpp_gchandle_new(aapi.t_atlas, false);
+    }
+    if (Il2CppClass* sprite = il2::find_class(kGame, "", "UISprite")) aapi.set_atlas = il2::find_method_quiet(sprite, "set_atlas", 1);
+    logx::info("hud: affliction icons: has %s, sprite names %s/%s, atlases %s", aapi.has ? "yes" : "no",
+               aapi.sprite_name ? "yes" : "no", aapi.icon_name >= 0 ? "yes" : "no",
+               aapi.find_all && aapi.atlas_get && aapi.set_atlas ? "yes" : "no");
+}
+
+bool ail_flag(const MethodInfo* m, int type) {
+    bool v = false;
+    int32_t t = type;
+    void* a[] = {&t};
+    return m && il2::invoke_value(m, nullptr, v, a) && v;
+}
+
+std::string ail_string(const MethodInfo* m, int type) {
+    if (!m) return {};
+    int32_t t = type;
+    void* a[] = {&t};
+    Il2CppObject* s = il2::invoke(m, nullptr, a);
+    return s ? il2::to_utf8(reinterpret_cast<Il2CppString*>(s)) : std::string();
+}
+
+std::string ail_sprite(int type) {
+    std::string name = ail_string(aapi.sprite_name, type);
+    if (name.empty() && aapi.table && aapi.by_type && aapi.icon_name >= 0) {
+        Il2CppObject* table = il2::invoke(aapi.table, nullptr);
+        int32_t t = type;
+        void* a[] = {&t};
+        Il2CppObject* def = table ? il2::invoke(aapi.by_type, table, a) : nullptr;
+        Il2CppString* s = def ? get<Il2CppString*>(def, aapi.icon_name) : nullptr;
+        if (s) name = il2::to_utf8(s);
+    }
+    return name;
+}
+
+Il2CppObject* atlas_with(const std::string& sprite) {
+    if (!aapi.find_all || !aapi.atlas_get || !aapi.t_atlas || sprite.empty()) return nullptr;
+    auto has = [&](Il2CppObject* atlas) {
+        void* a[] = {il2::il2cpp_string_new(sprite.c_str())};
+        return alive(atlas) && il2::invoke(aapi.atlas_get, atlas, a) != nullptr;
+    };
+    for (uintptr_t h : g_atlases)
+        if (Il2CppObject* at = live(h); at && has(at)) return at;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_atlases_at) return nullptr;  // (a fresh look at most every 10 s: FindObjectsOfTypeAll walks everything)
+    g_atlases_at = now + std::chrono::seconds(10);
+    for (uintptr_t& h : g_atlases) drop(h);
+    g_atlases.clear();
+    void* a[] = {aapi.t_atlas};
+    Il2CppObject* all = il2::invoke(aapi.find_all, nullptr, a);
+    for (size_t i = 0; i < il2::array_length(all); ++i)
+        if (Il2CppObject* o = il2::array_object_at(all, i); alive(o)) g_atlases.push_back(hold(o));
+    logx::info("hud: affliction icons: %zu atlases of TLD's", g_atlases.size());
+    for (uintptr_t h : g_atlases)
+        if (Il2CppObject* at = live(h); at && has(at)) return at;
+    return nullptr;
+}
+
+Il2CppObject* make_ail_icon(Il2CppObject* parent_transform, int type, int size) {
+    const std::string sprite = ail_sprite(type);
+    Il2CppObject* atlas = atlas_with(sprite);
+    if (!atlas || !aapi.set_atlas) return nullptr;
+    Il2CppObject* copy = clone_under(hud_crosshair(), parent_transform, "Ail" + std::to_string(type));
+    if (!copy) return nullptr;
+    strip_anchor(copy);
+    void* aa[] = {atlas};
+    il2::invoke(aapi.set_atlas, copy, aa);
+    void* sa[] = {il2::il2cpp_string_new(sprite.c_str())};
+    il2::invoke(api.sprite_set_name, copy, sa);
+    bool valid = false;
+    if (!il2::invoke_value(api.sprite_valid, copy, valid) || !valid) {
+        destroy(go_of(copy));
+        return nullptr;
+    }
+    set_int(api.widget_set_pivot, copy, kPivotCenter);
+    set_int(api.widget_set_width, copy, size);
+    set_int(api.widget_set_height, copy, size);
+    const Color bad{0.88f, 0.32f, 0.26f, 1}, risk{0.95f, 0.76f, 0.25f, 1}, good{0.45f, 0.82f, 0.95f, 1};
+    set_color(copy, ail_flag(aapi.beneficial, type) ? good : ail_flag(aapi.risk, type) ? risk : bad);
+    logx::info("hud: affliction icon for type %d is TLD's '%s'", type, sprite.c_str());
+    return copy;
+}
+
 StatsParts stats_parts() {
     look_up_stats();
     StatsParts out;
@@ -2011,9 +2132,7 @@ StatsParts stats_parts() {
     Il2CppObject* cond = il2::invoke(sapi.condition, nullptr);
     // (warmth: off, Shatsca 08.11 "ciepło nie chcę jednak zupełnie na HUD-zie")
     (void)cond;  // (condition: TLD's own health bar shows it; Shatsca 08.11 "kondycję zupełnie usuń")
-    bool ok_body = false;
-    const float body = invoke_float(sapi.body_temp, fr, ok_body);
-    if (ok_body && body > 20 && body < 45) snprintf(line, sizeof(line), "%s %.1f°C", pl ? "CIAŁO" : "BODY", body), add(out.status, line, "   ");
+    (void)fr;  // (the body's temperature: off, Shatsca 10.11 "usuń z HUD rubrykę CIEPŁO")
     // top left: the weight (by its icon), the light in hand, what ails us
     bool ok_w = false, ok_c = false;
     const double kg = weight_kg(sapi.inv_weight, il2::invoke(sapi.inventory, nullptr), ok_w);
@@ -2042,6 +2161,20 @@ StatsParts stats_parts() {
             const float left = invoke_float(sapi.flare_left, flare, ok);
             if (ok) snprintf(line, sizeof(line), "%s %.0f%%", pl ? "RACA" : "FLARE", 100.0f * std::clamp(left, 0.0f, 1.0f)), add(out.top, line, "\n");
         }
+    }
+    look_up_ails();
+    if (aapi.has) {  // TLD's afflictions and buffs as its icons (show_stats); the ones without an icon by name
+        std::string named;
+        for (int t = 0; t < kAilTypes; ++t) {
+            if (t == kAilGeneric || !ail_flag(aapi.has, t)) continue;
+            out.ails.push_back(t);
+            if (g_ail_no_icon.count(t)) {
+                const std::string name = ail_string(aapi.display, t);
+                if (!name.empty()) named += (named.empty() ? "" : ", ") + upper(name);
+            }
+        }
+        if (!named.empty()) add(out.top, named, "\n");
+        return out;
     }
     uint8_t condition = 0;
     uint32_t bits = 0;
@@ -2074,6 +2207,41 @@ void put_stats(StatsLabel& l, Il2CppObject* label, const std::string& text, Il2C
     place_on_screen(transform_of(label), ui_camera, x, y);
 }
 
+// TLDCoop_DLC (Shatsca 10.11 07:58: "sprint daj nieco wyżej, przesuń go tylko w górę o 1,5 rozmiaru obecnej ikony, bo
+// gryzie się np. z łukiem"): TLD's sprint bar 1.5x its height up from where TLD puts it
+void lift_sprint_bar(Il2CppObject* hud) {
+    static ptrdiff_t center = -2, back = -2;
+    if (center == -2) {
+        Il2CppClass* hc = il2::find_class(kGame, "", "Panel_HUD");
+        center = il2::field_offset_quiet(hc, "m_Sprite_SprintCenter");
+        back = il2::field_offset_quiet(hc, "m_Sprite_SprintBarBackground");
+    }
+    if (!hud || sapi.sprint_bar < 0 || !api.get_local_position || !api.set_local_position) return;
+    Il2CppObject* bar = get<Il2CppObject*>(hud, sapi.sprint_bar);
+    Il2CppObject* tf = transform_of(bar);
+    Vector3 at{};
+    if (!tf || !il2::invoke_value(api.get_local_position, tf, at)) return;
+    static Vector3 put{};
+    static Il2CppObject* put_on = nullptr;
+    if (put_on == tf && std::fabs(at.x - put.x) < 0.01f && std::fabs(at.y - put.y) < 0.01f) return;  // ours still
+    auto height_of = [](Il2CppObject* w) {
+        int h = 0;
+        return alive(w) && il2::invoke_value(api.widget_height, w, h) ? h : 0;
+    };
+    const int h_center = center >= 0 ? height_of(get<Il2CppObject*>(hud, center)) : 0;
+    const int h_back = back >= 0 ? height_of(get<Il2CppObject*>(hud, back)) : 0;
+    const int h_bar = height_of(bar);
+    int h = h_center > 0 ? h_center : h_back > 0 ? h_back : h_bar;
+    if (h <= 0) h = 24;
+    h = std::clamp(h, 8, 80);
+    put = {at.x, at.y + 1.5f * static_cast<float>(h), at.z};
+    set_vec(api.set_local_position, tf, put);
+    static int logged = 0;
+    if (logged++ < 3)
+        logx::info("hud: sprint bar up %.0f (icon %d, back %d, bar %d) from y %.1f", 1.5f * h, h_center, h_back, h_bar, at.y);
+    put_on = tf;
+}
+
 void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
     Il2CppObject* r = live(g_stats_root);
     if (!r) {
@@ -2087,6 +2255,9 @@ void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
         for (StatsLabel* l : {&g_time_l, &g_top_l, &g_status_l, &g_air_l}) drop(l->label), l->shown.clear();
         drop(g_weight_icon);
         g_weight_icon_tried = false;
+        for (auto& [t, h] : g_ail_icons) drop(h);
+        g_ail_icons.clear();
+        g_ail_no_icon.clear();
         r = go;
         logx::info("hud: made the stats panel under TLD's HUD");
     }
@@ -2118,6 +2289,7 @@ void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
         // abstract; the bar's own class's override is the one to call
         if (alive(bar)) il2::invoke(il2::virtual_method(bar, sapi.rect_set_alpha), bar, aa);
     }
+    lift_sprint_bar(hud);
     static std::chrono::steady_clock::time_point next{};
     const auto now = std::chrono::steady_clock::now();
     if (now >= next) {
@@ -2140,6 +2312,33 @@ void show_stats(Il2CppObject* hud, Il2CppObject* ui_camera, float px) {
     Il2CppObject* air = stats_label(g_air_l, r, "StatsAir", kAirFont, 6);
     if (air) set_color(air, g_parts.cold ? Color{0.9f, 0.3f, 0.27f, 1} : g_text_color);
     put_stats(g_air_l, air, g_parts.air, ui_camera, kAirLeft * px, kAirAbove * px);
+    // the affliction icons: a column on the left, around the middle of the screen
+    constexpr int kAilSize = 30;
+    constexpr float kAilStep = 36, kAilLeft = kStatsLeft + 16;
+    std::vector<Il2CppObject*> shown;
+    for (int t : g_parts.ails) {
+        if (g_ail_no_icon.count(t)) continue;
+        Il2CppObject* icon = nullptr;
+        if (auto it = g_ail_icons.find(t); it != g_ail_icons.end()) icon = live(it->second);
+        if (!icon) {
+            if (auto it = g_ail_icons.find(t); it != g_ail_icons.end()) drop(it->second), g_ail_icons.erase(it);
+            icon = make_ail_icon(go_transform(r), t, kAilSize);
+            if (!icon) {
+                g_ail_no_icon.insert(t);
+                logx::warn("hud: no icon of TLD's for affliction type %d ('%s'): by name instead", t, ail_sprite(t).c_str());
+                continue;
+            }
+            g_ail_icons[t] = hold(icon);
+        }
+        shown.push_back(icon);
+    }
+    for (auto& [t, h] : g_ail_icons)
+        if (Il2CppObject* icon = live(h); icon && std::find(shown.begin(), shown.end(), icon) == shown.end()) set_active(go_of(icon), false);
+    const float top = height * 0.5f + (static_cast<float>(shown.size()) - 1) * kAilStep * px * 0.5f;
+    for (size_t i = 0; i < shown.size(); ++i) {
+        set_active(go_of(shown[i]), true);
+        place_on_screen(transform_of(shown[i]), ui_camera, kAilLeft * px, top - static_cast<float>(i) * kAilStep * px);
+    }
 }
 
 void late_update() {
