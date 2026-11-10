@@ -810,6 +810,7 @@ struct Puppet {
     std::vector<uint64_t> emitters;                     // its Wwise sound objects, same order as the host's animal
     std::unordered_map<uint32_t, uint32_t> playing;     // host playing ID -> ours
     bool carcass = false;                               // a real carcass (wildlife_carcass) has taken its place
+    double dead_since_ms = 0;                           // TLDCoop_DLC: when we saw it dead (its loops stop after)
     bool aurora = false;                                // TLDCoop_DLC: the aurora model
     bool params_dirty = false;                          // TLDCoop_DLC: a new record came: its parameters to apply
     // TLDCoop_DLC (v44), wildlife ownership: drawn ahead of its owner's records; which handover they come from
@@ -1125,7 +1126,20 @@ void free_stuck_arrows(Il2CppObject* copy) {
         il2::invoke(api.arrow_detach, il2::array_object_at(arrows, i));
 }
 
+// TLDCoop_DLC (Shatsca 09.11: "we killed 9 wolves, the growling is still heard after they died"): what the owner's
+// game played on a copy (a growl loops) stops when the copy goes or its animal dies; its stop may never come (TLD
+// stops a dead animal's sounds by its object, not by playing ID).
+void stop_puppet_sounds(Puppet& p, int32_t fade_ms) {
+    if (!g_stop_playing) {
+        p.playing.clear();
+        return;
+    }
+    for (const auto& [theirs, ours] : p.playing) g_stop_playing(ours, fade_ms, 4 /* linear */);
+    p.playing.clear();
+}
+
 void remove_puppet(Puppet& p) {
+    stop_puppet_sounds(p, 0);
     free_stuck_arrows(target(p.go));
     destroy(target(p.go), false);
     drop(p.go);
@@ -1240,10 +1254,30 @@ void play_sounds(const std::vector<net::AnimalSound>& sounds) {
     }
 }
 
+double now_ms();
+// a dead one's (or a carcass's) loops stop, 2 s after its death cry began
+void stop_dead_sounds() {
+    const double now = now_ms();
+    for (auto& [id, p] : g_puppets) {
+        const bool dead = p.carcass || (p.latest.flags & net::kAnimalDead);
+        if (!dead) {
+            p.dead_since_ms = 0;
+            continue;
+        }
+        if (p.dead_since_ms == 0) p.dead_since_ms = now;
+        if (!p.playing.empty() && now - p.dead_since_ms > 2000) {
+            static int told = 0;
+            if (told++ < 5) logx::info("wildlife: #%u is dead: its %zu sound(s) still playing here stopped", id, p.playing.size());
+            stop_puppet_sounds(p, 500);
+        }
+    }
+}
+
 void play_host_sounds() {
     g_sounds_in.clear();
     netrt::drain_animal_sounds(g_sounds_in);
     play_sounds(g_sounds_in);
+    stop_dead_sounds();
 }
 
 // --- the host's animals attacking us (milestone 7c) -------------------------------------------------------------------

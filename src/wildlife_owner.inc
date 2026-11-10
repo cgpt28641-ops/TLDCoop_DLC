@@ -1548,6 +1548,7 @@ void own_puppets_frame(double now) {
 }
 
 void play_sounds(const std::vector<net::AnimalSound>& sounds);
+void stop_dead_sounds();
 
 // Everything that comes in: frames, control, sounds.
 void own_receive(const std::string& scene, bool in_game, double now) {
@@ -1634,6 +1635,7 @@ void own_receive(const std::string& scene, bool in_game, double now) {
         sounds.insert(sounds.end(), part.begin(), part.end());
     }
     if (in_game) play_sounds(sounds);
+    if (in_game) stop_dead_sounds();  // TLDCoop_DLC
 }
 
 void own_send_sounds(std::vector<net::AnimalSound>& sounds) {
