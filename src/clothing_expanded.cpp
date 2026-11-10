@@ -811,7 +811,13 @@ bool accessory_here(const char* key) {
 Act act_for(const std::string& name, const Item*& out) {
     const std::string n = lower(name);
     for (const Item& it : kItems)
-        if (lower(it.key) == n) return out = &it, Act::Detach;
+        if (lower(it.key) == n) {
+            // TLDCoop_DLC (Shatsca 10.11: DETACH greyed out / "take it off first" for the belt and the scabbard): without
+            // the DLC there's no tool belt or scabbard to get back, so no DETACH for them (crampons always come off)
+            const std::string e = lower(it.extra);
+            if (e != "gear_crampons" && e != "gear_improvisedcrampons" && !accessory_here(it.extra)) break;
+            return out = &it, Act::Detach;
+        }
     for (const Item& it : kItems)  // attach: the first made item of this base (crampons: the real ones' first)
         if (lower(it.base) == n && lower(it.extra) != "gear_improvisedcrampons") {
             // crampons: either kind will do
@@ -882,10 +888,11 @@ PageButton* page_button(Il2CppObject* page) {
     if (!alive(copy)) return nullptr;
     void* na[] = {str("TLDCoop_ClothingButton")};
     il2::invoke(api.obj_set_name, copy, na);
-    // After DROP, one step on as EXAMINE -> DROP goes (a row or a column, whichever TLD has).
-    const Vec3 a = local_of(alive(examine) ? examine : equip), b = local_of(drop);
-    Vec3 at{b.x + (b.x - a.x), b.y + (b.y - a.y), b.z};
-    if (!alive(examine)) at = {b.x, b.y - 40, b.z};
+    // TLDCoop_DLC (Shatsca 10.11: "przycisk ODEPNIJ wychodzi poza ekran, umieść go z lewej strony"): before the first
+    // button, one step back as EXAMINE -> DROP goes (a row or a column, whichever TLD has); it was after DROP.
+    const Vec3 a = local_of(alive(examine) ? examine : equip), b = local_of(drop), first = local_of(equip);
+    Vec3 at{first.x - (b.x - a.x), first.y - (b.y - a.y), first.z};
+    if (!alive(examine)) at = {first.x, first.y + 40, first.z};
     void* pa[] = {&at};
     il2::invoke(ui.tf_set_local, il2::invoke(ui.go_tf, copy), pa);
     PageButton* slot = nullptr;
@@ -1181,6 +1188,51 @@ void populate_detour(Il2CppObject* self, const MethodInfo* m) {
     logx::info("clothing: %s (%.0f%%) put in a container (%d%% of containers get one)", chosen->key, cond * 100, g_spawn_pct);
 }
 
+// TLDCoop_DLC (Shatsca 10.11: the moose bag with the scabbard on, the rifle still weighs its full 4 kg): without the
+// DLC there's no scabbard to copy its weight buff from, so the worn GEAR_MooseBagPlusScabbard halves one rifle here
+// (GearItem.GetItemWeightKG, unless TLD is asked without the clothing bonus).
+using WeightFn = int64_t (*)(Il2CppObject*, float, bool, const MethodInfo*);
+WeightFn g_weight = nullptr;
+ptrdiff_t g_gun_item = -1, g_gun_type = -1;
+bool g_scabbard_worn = false;
+double g_scabbard_checked = -1e9;
+
+bool scabbard_worn() {
+    const double now = net::now_ms();
+    if (now - g_scabbard_checked < 500) return g_scabbard_worn;
+    g_scabbard_checked = now;
+    g_scabbard_worn = false;
+    if (g_state != State::Ready || accessory_here("GEAR_RifleScabbardA")) return false;  // the DLC's own buff does it
+    Il2CppObject* bag = inventory_find("GEAR_MooseBagPlusScabbard");
+    Il2CppObject* clothing = bag ? get<Il2CppObject*>(bag, ui.gear_clothing) : nullptr;
+    bool worn = false;
+    g_scabbard_worn = alive(clothing) && il2::invoke_value(ui.is_wearing, clothing, worn) && worn;
+    return g_scabbard_worn;
+}
+
+int64_t weight_detour(Il2CppObject* self, float mult, bool ignore_bonus, const MethodInfo* m) {
+    const int64_t w = g_weight(self, mult, ignore_bonus, m);
+    static bool busy = false;
+    if (ignore_bonus || busy || !alive(self) || g_gun_item < 0 || g_gun_type < 0) return w;
+    Il2CppObject* gun = get<Il2CppObject*>(self, g_gun_item);
+    if (!alive(gun) || get<int32_t>(gun, g_gun_type) != 1 /* GunType.Rifle */) return w;
+    busy = true;
+    const bool worn = scabbard_worn();
+    busy = false;
+    return worn ? w / 2 : w;
+}
+
+bool hook_scabbard() {
+    Il2CppClass* gear = il2::find_class(kGame, "", "GearItem");
+    Il2CppClass* gun = il2::find_class(kGame, "", "GunItem");
+    const MethodInfo* weight = gear ? il2::find_method_params_quiet(gear, "GetItemWeightKG", {"System.Single", "System.Boolean"}) : nullptr;
+    g_gun_item = gear ? il2::field_offset_quiet(gear, "m_GunItem") : -1;
+    g_gun_type = gun ? il2::field_offset_quiet(gun, "m_GunType") : -1;
+    if (!weight || g_gun_item < 0 || g_gun_type < 0) return false;
+    return hooks::install_method("GearItem.GetItemWeightKG (clothing scabbard)", weight, reinterpret_cast<void*>(&weight_detour),
+                                 reinterpret_cast<void**>(&g_weight));
+}
+
 bool hook_spawns() {
     Il2CppClass* container = il2::find_class(kGame, "", "Container");
     const MethodInfo* populate = container ? il2::find_method_quiet(container, "PopulateWithRandomGear", 0) : nullptr;
@@ -1370,6 +1422,7 @@ bool init() {
     if (!init_ui()) logx::warn("clothing: no ATTACH/DETACH button on the item page (TLD API missing or hooks failed)");
     if (!hook_spawns()) logx::warn("clothing: its items won't turn up in containers (TLD API missing or the hook failed)");
     else logx::info("clothing: %d%% of containers get one of its items when the game first fills them", g_spawn_pct);
+    if (!hook_scabbard()) logx::warn("clothing: the moose bag's scabbard won't lighten a rifle (TLD API missing or the hook failed)");
     logx::info("clothing: ready (the pack in %s; its catalog loads with the game)", g_dir.string().c_str());
     return true;
 }
