@@ -1600,3 +1600,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   special rifles; Legendary guns+bow; Epic hides/expedition/ClothingExpanded; Rare tools/medicine/light; Uncommon
   clothes/preserved food/cured; None keys/notes; else Common). coop.ini [rarity] enabled=1. Not on clothing slots yet.
   UNTESTED.
+- 00:05 (Shatsca 23:44 logs, build 21:49/21:54): deerskin crampon boots (I/N) never put in containers (weight 0;
+  one turned up in WhalingWarehouse); rarity tint alpha 0.25 (hover 0.40, pressed 0.50). Workbench recipes confirmed.
+- Karol asked: does a player in another region see furniture/structures others placed there earlier? Code: the host
+  sends a scene's placements (PlaceableManager) only to a friend arriving in the HOST's scene (g_together). A client's
+  changes in a scene the host isn't in go to the host's g_store and are applied when the HOST gets there; another
+  client entering that scene without the host gets nothing from it. So: with the host there yes; without, only what
+  his own save has. TODO: host sends g_store + kept placements for a scene to a friend arriving there without him.
