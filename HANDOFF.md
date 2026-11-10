@@ -1554,3 +1554,15 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   The old text list stays only if HasAffliction can't be found. Log lines "hud: affliction icon(s) ...".
 - Sprint bar (Panel_HUD.m_SprintBar) lifted by 1.5x the height of m_Sprite_SprintCenter (else its background, else the
   bar; clamped 8..80) from where TLD puts it; re-applied when TLD moves it. Log "hud: sprint bar up ...". UNTESTED.
+
+### 10.11 ~21:10 (dc: Shatsca 19:45 #błędy, log of build 08:13 UTC)
+- ClothingExpanded: catalog in, 25/25 items made, but `add GEAR_CargoToolbelt` -> "0 added": TLD's
+  PlayerManager.AddItemCONSOLE returns null for our items. New give(key, cond): AddItemCONSOLE first; if null, our own
+  copy (Object.Instantiate of the prefab from RadialSpawnManager.GetPrefabFromName, renamed to the key, SetActive,
+  GearItem.SetNormalizedHP) -> PlayerManager.AddItemToPlayerInventory(gi, false, true). Used by the console `add` and by
+  ATTACH. Log "given from our own copy". UNTESTED.
+- World spawns (Shatsca: "daj im konkretny % szans (rzadkość)"; she linked Deaadman/item-rarities): hook
+  Container.PopulateWithRandomGear (post); solo/host only; [clothing] spawn_chance (default 3 %) of containers get one
+  item, picked by weight (Cargo/Jeans/Work belts 8, other belts 4, N crampons 5, I crampons 3, Combat 2, MooseBag 1),
+  condition 35-95 %, via Container.AddGear. Log "put in a container". Only containers TLD fills for the first time.
+- Also in log: "GEAR_ToolBelt isn't in this game (a DLC's?)" on Shatsca: no ATTACH for tool belts there (base missing).
