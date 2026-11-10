@@ -1541,3 +1541,16 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   lost). The Refuse-on-early-switch-off now covers dead ones too (not item_made). Seen, not changed: doe without a
   doe model here -> an ordinary stag stands in (6x); ravaged carcass "changed" logged every 0.5 s (wolves eating);
   "hid N of our own animal(s)" spam; ClothingExpanded remake ~450 ms per scene change.
+
+### 10.11 ~09:30 (dc: Shatsca 07:58 on #claude-komendy, HUD)
+- coop_hud stats: the CIAŁO/BODY temperature row (out.status) is gone ("usuń z HUD rubrykę CIEPŁO"; warmth itself was
+  off since 08.11).
+- Afflictions/buffs as TLD's icons, left middle of the screen (column, 30 UI units, step 36, centred on mid-height):
+  every 250 ms Panel_Affliction.HasAffliction(AfflictionType 0..38, not Generic 28); sprite from
+  Affliction.SpriteNameFromAfflictionType (fallback AfflictionDefinitionTable...m_IconName); atlas = the UIAtlas
+  (Resources.FindObjectsOfTypeAll, re-scan at most every 10 s) whose GetSprite(name) is non-null; clone of the
+  crosshair + set_atlas + set_spriteName. Tint: beneficial blue, risk yellow, bad red. A type with no icon found ->
+  its name (Affliction.GetDisplayName) in the top-left text (log "no icon of TLD's for affliction type N").
+  The old text list stays only if HasAffliction can't be found. Log lines "hud: affliction icon(s) ...".
+- Sprint bar (Panel_HUD.m_SprintBar) lifted by 1.5x the height of m_Sprite_SprintCenter (else its background, else the
+  bar; clamped 8..80) from where TLD puts it; re-applied when TLD moves it. Log "hud: sprint bar up ...". UNTESTED.
