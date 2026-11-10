@@ -1519,6 +1519,7 @@ void init() {
 }
 
 void on_frame(const std::string& scene, bool in_game) {
+    if (!g_test || !api.ok) automat_items::on_frame(in_game);  // (ClothingExpanded's workbench recipes, automat or not)
     if (!g_test || !api.ok) {  // (a friend's messages: dropped, never left waiting)
         static std::vector<net::Packet> stale;
         stale.clear();

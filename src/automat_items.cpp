@@ -475,7 +475,7 @@ void keep_recipes() {
     Il2CppObject* source = nullptr;
     std::vector<Recipe*> missing;
     for (Recipe& r : g_recipes) {
-        if (clothing_expanded::is_ours(r.result) && !clothing_expanded::ready()) continue;  // (not made yet / off)
+        if (clothing_expanded::is_ours(r.result) ? !clothing_expanded::ready() : !g_drops) continue;  // (off / not yet)
         Il2CppObject* bp = target(r.bp);
         bool in = false;
         for (int32_t i = 0; bp && i < n && static_cast<size_t>(i) < il2::array_length(items) && !in; ++i)
@@ -834,8 +834,9 @@ void init(bool drops) {
     if (api.ok && !loads) logx::warn("automat items: loading saved ones isn't hooked (one InstantiateAndDeserializeGearItem missing)");
     const MethodInfo* finish = panel ? il2::find_method(panel, "BreakDownFinished", 0) : nullptr;
     const bool boards = api.ok && hook("Panel_BreakDown.BreakDownFinished (automat)", finish, &finish_detour, &g_finish);
-    // recipes (test only for now)
-    if (api.ok && drops) {
+    // recipes: the automat's (test only for now) and ClothingExpanded's (always; Shatsca 10.11: none at the workbench,
+    // the recipes were set up only with [automat] test=1)
+    if (api.ok) {
         Il2CppClass* bpd = il2::find_class(kGame, "TLD.Gear", "BlueprintData");
         Il2CppClass* bpm = il2::find_class(kGame, "TLD.Gear", "BlueprintManager");
         Il2CppClass* op = il2::find_class(kGame, "TLD.Gear", "CraftingOperation");
