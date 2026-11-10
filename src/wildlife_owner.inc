@@ -1410,7 +1410,10 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
         // TLDCoop_DLC (Shatsca 09.11: "I wounded a stag, followed its blood, then the blood and the stag were gone"):
         // switched off again and again right after we took it, it isn't gone for everyone: it goes back (Refuse), and
         // the host gives it to someone else (likely itself) as it was, wounds and all
-        if (ai && alive(ai) && !it->second.dead_told && now - it->second.since_ms < 15000) {
+        // (10.11, Kerel "check the last logs thoroughly": 72 of ours switched off at once, dead bodies the host kept for
+        // a friend far away among them, "we run #19437450 now (stag, Dead...)", 90 ms later gone: a body too goes back,
+        // frozen in the registry until it can be kept, not lost)
+        if (ai && alive(ai) && !it->second.item_made && now - it->second.since_ms < 15000) {
             logx::info("wildlife: TLD keeps switching off #%u we just took; handed back, not forgotten", it->first);
             if (host) {
                 host_refuse(it->first, it->second.epoch, me, now);
