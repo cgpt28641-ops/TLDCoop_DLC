@@ -1530,6 +1530,9 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Growl after death persisted even with the empty-carcass fix: a looping Wwise event posted on a puppet's emitter
   never got its StopPlayingID. stop_puppet_sounds(p): in remove_puppet, and stop_dead_sounds() each frame (client
   play_host_sounds and owner.inc after play_sounds): 2 s after a puppet is dead/carcass, its playing IDs stop (500 ms fade).
-- Open (feature, not started): Iron Road boat supplies (WhalingStationRegion, TLD.IslandTransit.IslandTransitExchangeBox,
-  ActiveExchangeState / AddItem / RemoveItem) not shared: Szymon's stick put in as fuel isn't in Shatsca's box.
+- 07:30 Iron Road boat supplies (Kerel: "take Iron Road"): coop_train box_tick/box_receive. Every 1 s
+  IslandTransitExchangeBox.SerializeAll() -> SerializationUtils.SerializeObject; changed -> Msg::IslandBox (62:
+  u8 from, scene[64], text<=200000; host relays); received -> JsonConvert.DeserializeObject(text, SaveData type,
+  SerializationUtils.m_SerializerSettings) -> DeserializeAll. Host sends its own every 15 s. Log "transit: the boat's
+  box ...". UNTESTED: an open box panel may not refresh until reopened.
 - Open: Shatsca 19:52 "Szymon's meat on a slot shows no cooking stage here (it floats a bit above the slot)".
