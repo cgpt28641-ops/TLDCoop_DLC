@@ -1593,3 +1593,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (automat_items::init `if (api.ok && drops)`, and slot_machine::on_frame returned before automat_items::on_frame).
   Now always; the automat's own recipes still only with test=1 (keep_recipes skips them when !g_drops).
 - Item rarities: Karol agreed (via Shatsca 21:55) to OUR OWN version (own list/colours), not GPL code. TODO next.
+- ~23:40 (Kerel: "dasz radę dziś") item_rarity.cpp/.h (own code, own keyword list; idea only from Deaadman's GPL mod):
+  hooks InventoryGridItem.Refresh / RefreshEmptyItem / RefreshDecorationItem (post): m_Button (UIButtonColor)
+  set_defaultColor = rarity colour a 0.35, hover 0.55, pressed 0.65, UpdateColor(true); None -> the square's own colour
+  (read once). Rarity by first matching keyword rule on the prefab base name (Mythic: tldcoop/moosebagplusscabbard/
+  special rifles; Legendary guns+bow; Epic hides/expedition/ClothingExpanded; Rare tools/medicine/light; Uncommon
+  clothes/preserved food/cured; None keys/notes; else Common). coop.ini [rarity] enabled=1. Not on clothing slots yet.
+  UNTESTED.
