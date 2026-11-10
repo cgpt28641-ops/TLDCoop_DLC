@@ -1566,3 +1566,15 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   item, picked by weight (Cargo/Jeans/Work belts 8, other belts 4, N crampons 5, I crampons 3, Combat 2, MooseBag 1),
   condition 35-95 %, via Container.AddGear. Log "put in a container". Only containers TLD fills for the first time.
 - Also in log: "GEAR_ToolBelt isn't in this game (a DLC's?)" on Shatsca: no ATTACH for tool belts there (base missing).
+
+### 10.11 ~22:00 (dc: Shatsca 20:15 #claude-komendy, ClothingExpanded test)
+- Shatsca confirmed: `add GEAR_CargoToolbelt`, `GEAR_WorkNCrampons`, `GEAR_MooseBagPlusScabbard` work; crampons
+  attach/detach on other boots works; the belt lowers the weight. She has no Tales DLC: `add GEAR_ToolBelt` /
+  `GEAR_RifleScabbardA` give nothing (TLD's own items, not ours).
+- The ATTACH/DETACH button went off the right edge: now one step BEFORE the first button (equip - (drop - examine)).
+- DETACH for belt/scabbard items with no DLC accessory (accessory_here false) is not offered any more (was greyed out /
+  "take it off first"); crampons always.
+- Scabbard without the DLC: no WeightReductionBuff to copy, so the rifle kept 4 kg. Hook GearItem.GetItemWeightKG(float,
+  bool): rifle (GunItem.m_GunType == 1) halved while GEAR_MooseBagPlusScabbard is worn (checked every 0.5 s), only if
+  GEAR_RifleScabbardA isn't in the game. UNTESTED.
+- Container spawns from the 21:10 build stay on (3 %, MooseBag weight 1 of ~107).
