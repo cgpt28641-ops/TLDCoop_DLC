@@ -1578,3 +1578,14 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   bool): rifle (GunItem.m_GunType == 1) halved while GEAR_MooseBagPlusScabbard is worn (checked every 0.5 s), only if
   GEAR_RifleScabbardA isn't in the game. UNTESTED.
 - Container spawns from the 21:10 build stay on (3 %, MooseBag weight 1 of ~107).
+
+### 10.11 ~23:00 (Shatsca 21:37: recipes; item-rarities)
+- Shatsca (he) confirmed: all crampon items, MooseBag add, container spawns, scabbard weight halving, button left, HUD.
+- Workbench recipes (automat_items g_recipes, new Recipe.tool): 6 belted pants = pants + 4 GEAR_LeatherDried +
+  2 GEAR_GutDried + 2 GEAR_Cloth, 180 min; GEAR_MooseBagPlusScabbard = GEAR_MooseHideBag + 2 GEAR_LeatherHideDried +
+  2 GEAR_LeatherDried + 2 GEAR_GutDried, 600 min; both need GEAR_SewingKit (bp m_RequiredTool = its ToolsItem prefab).
+  Results/needs = prefabs via clothing_expanded::gear_prefab (RadialSpawnManager.GetPrefabFromName). Skipped until
+  clothing_expanded::ready(). No un-sewing. UNTESTED: whether TLD's crafting instantiates our result (AddItemCONSOLE
+  didn't); log "automat items: crafted GEAR_..." if it did.
+- Deaadman/item-rarities: GPL-3 (code + ItemRarities.ir data). Not copied; asked Karol: own version (own table/colours)
+  or accept GPL. Its idea: rarity tiers Common..Mythic, coloured grid squares/clothing slots/labels.
