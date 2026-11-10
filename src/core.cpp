@@ -21,6 +21,7 @@
 #include "coop_train.h"
 #include "fuel_transfer.h"
 #include "clothing_expanded.h"
+#include "item_rarity.h"
 #include "slot_machine.h"
 #include "coop_features.h"
 #include "custom_pictures.h"
@@ -850,6 +851,7 @@ void on_runtime_ready() {
     fuel_transfer::init(); // TLDCoop_DLC: DRAIN FUEL on a kerosene lamp (coop.ini [fuel])
     if (config::load().clothing) clothing_expanded::init();  // TLDCoop_DLC: ClothingExpanded (coop.ini [clothing])
     else logx::info("clothing: off (coop.ini [clothing] enabled=0)");
+    item_rarity::init();   // TLDCoop_DLC: rarity colours in the inventory (coop.ini [rarity])
     slot_machine::init();  // TLDCoop_DLC: the automat (coop.ini [automat] test=1)
     dynamic_trees::init();
     seamless_interiors::init();  // TLDCoop_DLC

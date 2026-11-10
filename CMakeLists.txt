@@ -60,6 +60,7 @@ add_library(tldcoop SHARED
   src/coop_train.cpp   # TLDCoop_DLC: Iron Road's steam train in co-op
   src/custom_text.cpp  # TLDCoop_DLC: our entries in TLD's string table
   src/clothing_expanded.cpp  # TLDCoop_DLC: ClothingExpanded (TonisGaming)
+  src/item_rarity.cpp  # TLDCoop_DLC: item rarities (our own)
   ${CMAKE_BINARY_DIR}/clothing_expanded.rc  # (its bundles and catalog)
   src/food_tweaker.cpp  # TLDCoop_DLC: Food Tweaker (built in)
   src/coop_activity.cpp  # TLDCoop_DLC: what a player's body is busy with (avatar motion capture)
