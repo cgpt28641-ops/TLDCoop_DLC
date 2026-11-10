@@ -1589,3 +1589,7 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   didn't); log "automat items: crafted GEAR_..." if it did.
 - Deaadman/item-rarities: GPL-3 (code + ItemRarities.ir data). Not copied; asked Karol: own version (own table/colours)
   or accept GPL. Its idea: rarity tiers Common..Mythic, coloured grid squares/clothing slots/labels.
+- 23:15 Shatsca: no recipe at the workbench (log build 21:49). Cause: recipes were set up only with [automat] test=1
+  (automat_items::init `if (api.ok && drops)`, and slot_machine::on_frame returned before automat_items::on_frame).
+  Now always; the automat's own recipes still only with test=1 (keep_recipes skips them when !g_drops).
+- Item rarities: Karol agreed (via Shatsca 21:55) to OUR OWN version (own list/colours), not GPL code. TODO next.
