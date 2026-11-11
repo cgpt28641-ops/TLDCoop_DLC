@@ -1559,6 +1559,8 @@ void* gear_prefab(const char* name, bool tool) {
     return component(prefab(name), tool ? api.t_tools : api.t_gear);
 }
 
+void* make_copy(const char* key) { return ready() && is_ours(key) ? instance_of(key, 1.0f) : nullptr; }
+
 bool give_item(const char* key, float condition) { return ready() && ui.get_pm && give(key, condition); }
 
 bool is_ours(const char* name) {

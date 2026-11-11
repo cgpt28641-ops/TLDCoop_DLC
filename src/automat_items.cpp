@@ -222,7 +222,22 @@ Il2CppObject* make_ref_proxy_detour(Il2CppString* ref, Il2CppObject* proxy, Il2C
 }
 
 Il2CppObject* make_detour(Il2CppString* name, const MethodInfo* method) {
-    if (!starts_with(name, "GEAR_TLDCOOP_")) return g_make(name, method);
+    if (!starts_with(name, "GEAR_TLDCOOP_")) {
+        Il2CppObject* gi = g_make(name, method);
+        // TLDCoop_DLC (Shatsca 11.11 18:58: "after leaving and joining again the belted pants and crampon boots are gone"):
+        // TLD's own lookup gives nothing for ClothingExpanded's items (as its console didn't): loading a save, they
+        // were dropped. Ours from our copy.
+        if (!alive(gi) && name) {
+            const std::string n = text(name);
+            if (clothing_expanded::is_ours(n.c_str()))
+                if (Il2CppObject* c = static_cast<Il2CppObject*>(clothing_expanded::make_copy(n.c_str())); alive(c)) {
+                    static int logged = 0;
+                    if (logged++ < 20) logx::info("automat items: TLD made no %s; ours from ClothingExpanded's copy", n.c_str());
+                    return c;
+                }
+        }
+        return gi;
+    }
     Def* d = def_of(text(name));
     if (!d) return g_make(name, method);
     Il2CppObject* gi = g_make(il2::il2cpp_string_new(d->base), method);
@@ -242,7 +257,35 @@ Il2CppObject* make_text_detour(Il2CppString* name, Il2CppObject* saved, Il2CppOb
 
 Il2CppObject* make_proxy_detour(Il2CppString* name, Il2CppObject* proxy, Il2CppObject* parent, bool fix, bool in_container,
                                 const MethodInfo* method) {
-    if (!starts_with(name, "GEAR_TLDCOOP_")) return g_make_proxy(name, proxy, parent, fix, in_container, method);
+    if (!starts_with(name, "GEAR_TLDCOOP_")) {
+        Il2CppObject* gi = g_make_proxy(name, proxy, parent, fix, in_container, method);
+        if (!alive(gi) && name && proxy) {  // TLDCoop_DLC: ClothingExpanded's, loaded from a save (see make_detour)
+            const std::string n = text(name);
+            if (clothing_expanded::is_ours(n.c_str()))
+                if (Il2CppObject* c = static_cast<Il2CppObject*>(clothing_expanded::make_copy(n.c_str())); alive(c)) {
+                    static const MethodInfo* deser = il2::find_method_params_quiet(
+                        il2::find_class(kGame, "", "GearItem"), "Deserialize", {"GearItemSaveDataProxy", "System.Boolean"});
+                    static const MethodInfo* set_parent = il2::find_method_params_quiet(
+                        il2::find_class(kCore, "UnityEngine", "Transform"), "SetParent", {"UnityEngine.Transform", "System.Boolean"});
+                    static const MethodInfo* comp_tf =
+                        il2::find_method_quiet(il2::find_class(kCore, "UnityEngine", "Component"), "get_transform", 0);
+                    Il2CppObject* tf = comp_tf ? il2::invoke(comp_tf, c) : nullptr;
+                    if (parent && set_parent && tf) {
+                        bool keep = false;
+                        void* pa[] = {parent, &keep};
+                        il2::invoke(set_parent, tf, pa);
+                    }
+                    if (deser) {
+                        void* da[] = {proxy, &fix};
+                        il2::invoke(deser, c, da);
+                    }
+                    static int logged = 0;
+                    if (logged++ < 20) logx::info("automat items: TLD loaded no %s; ours from ClothingExpanded's copy, as saved", n.c_str());
+                    return c;
+                }
+        }
+        return gi;
+    }
     Def* d = def_of(text(name));
     if (!d) return g_make_proxy(name, proxy, parent, fix, in_container, method);
     Il2CppObject* gi = g_make_proxy(il2::il2cpp_string_new(d->base), proxy, parent, fix, in_container, method);

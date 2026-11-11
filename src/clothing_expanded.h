@@ -22,6 +22,8 @@ bool ready();
 void* gear_prefab(const char* name, bool tool = false);
 // One of ours into the player's pack (1 = full condition). True: given.
 bool give_item(const char* key, float condition);
+// A fresh copy of one of ours (its GearItem), for TLD's own InstantiateGearItem(name) (loading a save); null if not.
+void* make_copy(const char* key);
 // Is this name one of ours?
 bool is_ours(const char* name);
 
