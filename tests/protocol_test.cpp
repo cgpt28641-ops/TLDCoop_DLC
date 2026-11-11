@@ -268,6 +268,7 @@ int main() {
     put.pos[0] = 92.3f, put.pos[1] = 102.2f, put.pos[2] = 1424.3f;
     put.rot[0] = 0, put.rot[1] = 0.7f, put.rot[2] = 0, put.rot[3] = 0.7f;
     put.gear = text(5000, 'A');
+    put.owner = 2;  // (v51)
     round_trip("ItemPut", Msg::ItemPut, put, write_item_put, read_item_put);
 
     ItemGoneMsg gone;
