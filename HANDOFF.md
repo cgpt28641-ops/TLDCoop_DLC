@@ -1616,3 +1616,9 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Fix: own_save_kept first refreshes e.body (owner 0, dead) from the live carcass (g_ids -> body_text) ; log
   "N carcass(es) saved as harvested now". UNTESTED. Carcasses already restored with meat stay so.
 - Rarity 25 % was already in the 23:0x build (their logs were 22:31).
+- 01:15 Boat box (Karol 01:05 + logs): contents DOUBLED on each load (59k -> 119k -> 221k chars): DeserializeAll adds
+  to the static exchange state, and every game re-sent its copy (host relayed raw + its own 15 s copy -> ping-pong).
+  Now: IslandTransitExchangeBox.Reset() before DeserializeAll (load_box); host-authoritative: a friend's change goes to
+  the host only (send_packet), host loads it and broadcasts its resulting text; clients load only the host's (from 0);
+  while s_ActiveExchangeBox.m_ShowingPanel here the host's copy waits (g_box_pending). UNTESTED. Doubled items already
+  in a save stay doubled (take them out by hand).
