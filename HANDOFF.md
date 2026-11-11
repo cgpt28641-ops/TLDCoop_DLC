@@ -1652,3 +1652,6 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   AddItemCONSOLE didn't) -> dropped. automat_items make_detour: null + clothing_expanded::is_ours -> make_copy (our
   instance); make_proxy_detour: same + GearItem.Deserialize(proxy, fix) + SetParent(parent). Log "TLD made/loaded no
   X; ours from ClothingExpanded's copy". Items already lost stay lost. UNTESTED.
+- ~19:55 Shatsca confirmed: belted pants + crampon boots survive leaving/rejoining ✅; rarity weaker ✅ (now 12.5 %);
+  belt lightens hammer + hatchet but not the prybar (not a ToolsItem). is_tool(): ToolsItem or name has prybar/knife/
+  hatchet/hammer/hacksaw/wrench/shovel/pickaxe/crowbar (cached per item). Bridge: no 👀 reaction on #chat (Karol).
