@@ -1647,3 +1647,8 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Old report 01:13 "waiting for sleeping after a player left": log: Szymon left 01:13:14, Kerel in bed (1 of 2),
   host in bed 01:13:22.9, settle 2 s, Szymon back 01:13:24.3 (3 players) -> waited for him again. Leaving is handled
   (not waited for); it looked stuck because he rejoined within the 2 s settle. Not changed.
+- ~19:15 (Shatsca 18:58: "after leaving and joining again the belted pants and crampon boots are gone"; belt weight
+  confirmed working 19:00): loading a save, TLD's GearItem.InstantiateGearItem(name) gives nothing for our items (as
+  AddItemCONSOLE didn't) -> dropped. automat_items make_detour: null + clothing_expanded::is_ours -> make_copy (our
+  instance); make_proxy_detour: same + GearItem.Deserialize(proxy, fix) + SetParent(parent). Log "TLD made/loaded no
+  X; ours from ClothingExpanded's copy". Items already lost stay lost. UNTESTED.
