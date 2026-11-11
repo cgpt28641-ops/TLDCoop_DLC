@@ -1,5 +1,6 @@
-# TLDCoop_DLC: the Discord bridge's runner. The bridge (bridge.py) and the server's messages live in the PRIVATE repo
-# cgpt28641-ops/tldcoop-discord; it runs here because this repo is public (Actions minutes; 07.11 the private pool ran
+# TLDCoop_DLC: the Discord bridge's runner. The bridge (bridge.py) and the server's messages live in the repo
+# cgpt28641-ops/tldcoop-discord (public since 11.11: the messages are kept there only ENCRYPTED, crypt.py seals them
+# with its vault.pub after each run; no key on GitHub); it runs here because this repo is public (Actions minutes; 07.11 the private pool ran
 # out). It checks that repo out with the secret DISCORD_REPO_TOKEN (a fine-grained token: Contents read/write on
 # tldcoop-discord only), runs the bridge with DISCORD_BOT_TOKEN, and pushes inbox/outbox back there. Nothing of the
 # messages is printed in this public log (the bridge prints counts only).
@@ -42,13 +43,19 @@ jobs:
           DISCORD_DEFAULT_CHANNEL: ${{ vars.DISCORD_DEFAULT_CHANNEL }}
         run: |
           if python3 bridge.py . > /dev/null 2>&1; then echo "bridge ok"; else echo "bridge FAILED"; exit 1; fi
+      # Karol 11.11: the messages go into git only sealed (encrypted). If sealing fails nothing is saved.
+      - name: Seal
+        working-directory: bridge
+        run: |
+          python3 -c "import cryptography" 2>/dev/null || pip install -q --break-system-packages cryptography || pip install -q cryptography
+          python3 crypt.py seal . > /dev/null
       - name: Save
         working-directory: bridge
         run: |
           git config user.name "TLDCoop bridge"
           git config user.email "bridge@users.noreply.github.com"
           mkdir -p inbox outbox
-          git add -A inbox outbox
+          git add -A inbox outbox vault
           if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
           git commit -q -m "discord: $(date -u +%Y-%m-%dT%H:%MZ)"
           for i in 1 2 3; do
