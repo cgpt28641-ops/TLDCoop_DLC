@@ -961,7 +961,7 @@ inline bool read_item_put(Reader& r, ItemPutMsg& m) {
     get_floats(r, m.pos, 3);
     get_floats(r, m.rot, 4);
     m.gear = r.get_long_blob(kGearTextMax);
-    m.owner = r.left() >= 1 ? r.get<uint8_t>() : kNoPotOwner;
+    m.owner = r.get<uint8_t>();  // (v51)
     return r.ok();
 }
 
