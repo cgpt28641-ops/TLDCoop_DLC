@@ -1655,3 +1655,37 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - ~19:55 Shatsca confirmed: belted pants + crampon boots survive leaving/rejoining ✅; rarity weaker ✅ (now 12.5 %);
   belt lightens hammer + hatchet but not the prybar (not a ToolsItem). is_tool(): ToolsItem or name has prybar/knife/
   hatchet/hammer/hacksaw/wrench/shovel/pickaxe/crowbar (cached per item). Bridge: no 👀 reaction on #chat (Karol).
+
+### 11.11 ~22:55 (logs 22:30 of all three, build 18:34; Karol: pots owner-only, "option 1")
+- Shatsca 19:47 "meat vanished twice after adding it to the fire": TLD's dummy pot (meat put on a fire without a
+  pot) has no id; give_id made it from the slot's position -> both players' dummies on a slot had the SAME id
+  (be1461a4 / dafcb0d0 in every game): each game removed / put back the other's twice a second; and the game with the
+  faster cooking skill finished the raw meat first ("gone"). Fixes (world_items):
+  - give_id(gi, at, fresh): after the scene's first scan (baseline_now()) and not a Seamless room clone -> a random
+    id (PdidTable.GenerateNewID). The first scan keeps the position-made id (both games loaded the same save).
+  - Owned pots (Karol's option 1): g_pot_owner (CookingPotItem* -> player). Ours on StartCooking/Boiling/Melting
+    (not inside apply_put: g_applying). ItemPutMsg.owner (PROTOCOL v51; kNoPotOwner 0xFF) = owner_for_record (a pot
+    on a fire, or the food in one). apply_put wrapper sets the owner from the record (g_pot_heard = now).
+    foreign_pot(pot): owned by someone else who is linked and in our scene (remote_state.scene == g_scene), on a
+    fire (m_GearPlacePointAttachedTo / m_FireBeingUsed), heard within 45 s (else anyone's again). Foreign: hooks skip
+    UpdateCookingTimeAndState / UpdateMeltingSnow / UpdateBoilingWater / CheckForFireBurntOut /
+    DoConditionDamageToPot; PerformInteraction / PickUpCookedItem / PickUpCookedGearItem / PickUpWater / PickUpSnow
+    refused with a HUD line "To położył na ognisku X - tylko on może to zabrać"; scan never tells anything about a
+    foreign pot or its food (Known.foreign; no send_gone). The pot's owner tells changes and the 5 s progress (also
+    ready / ruined); the host only for pots nobody here owns. Owner gone from the scene -> the pot is anyone's.
+    UNTESTED.
+- Shatsca 20:01 "deer still change after a shot (doe -> stag)": Kerel's game took the doe (#17914576) where no doe
+  spawn area is: spawn_stand_in made a stag ("only a ordinary one could take its place"). Now variant_ref(kind,
+  variant) (a doe area's AssetReferenceBaseAi, a doe here, or the template the host's doe was shown with) is passed
+  to SpawnRegion.InstantiateSpawn instead. UNTESTED.
+- Kerel 22:03 "no animals far from the host, then a pack of wolves when the host came near": under ownership the
+  host spawns; TLD spawns only regions near ITS player; at ~250 m the wolf region near Kerel woke and spawned 10
+  wolves (per_player 50 % x 2 friends) 17-64 m from him. region_update_detour's m_OverrideDistanceToCamera never
+  fired (its "kept on" line never logged). New hooks (only in the spawning game): SpawnRegion.
+  SpawnRegionCloseEnoughForSpawning -> true when a friend is within m_SpawnRegionDisableDistance (250) of its
+  centre; SpawnRegion.SpawnPositionTooCloseToCamera -> true within max(m_ClosestSpawnDistanceToPlayer, 80) m of a
+  friend. Logs "a spawn region N m from a friend spawns as if near us", "no animal is spawned within N m of a
+  friend". UNTESTED.
+- Seen, not changed: "plant X isn't harvested in the host's world; put back" when a friend joins (host's world rules);
+  "GEAR_ToolBelt has no buff to copy" (no DLC: our weight_detour does it); GearItem.Awake NRE x10 at the main menu while
+  making ClothingExpanded items (harmless).
