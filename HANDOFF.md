@@ -1640,3 +1640,10 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (seq ++g_seq). The client's receive_put applies them (its scene). Log "objects: player N is in X, where we aren't;
   sent the N change(s) the others made there". The host's OWN placements in a scene it isn't in can't go (only in its
   save). UNTESTED.
+- ~18:55 (Shatsca 18:35 report, build 15:07): belted pants (found in a drawer) lighten nothing: no DLC -> no
+  WeightReductionBuff copied from GEAR_ToolBelt. weight_detour now also: while one of our *Toolbelt pants is worn
+  (and GEAR_ToolBelt isn't in the game) the 3 heaviest tools (GearItem.m_ToolsItem) in Inventory.m_Items
+  (List<GearItemObject>, 16-byte structs from 0x20) weigh half; recomputed every 0.5 s. UNTESTED.
+- Old report 01:13 "waiting for sleeping after a player left": log: Szymon left 01:13:14, Kerel in bed (1 of 2),
+  host in bed 01:13:22.9, settle 2 s, Szymon back 01:13:24.3 (3 players) -> waited for him again. Leaving is handled
+  (not waited for); it looked stuck because he rejoined within the 2 s settle. Not changed.
