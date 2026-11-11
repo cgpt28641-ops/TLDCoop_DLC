@@ -72,8 +72,10 @@ struct Owned {
     bool moved = false;      // kTakeMoved: placed anew in its region once TLD has started it
     int rescued = 0;         // TLDCoop_DLC: times TLD switched it off right after we took it and we put it back
     bool item_made = false;  // TLDCoop_DLC: a dead rabbit/ptarmigan made a carcass item: forgotten when it goes
+    bool old_body = false;   // TLDCoop_DLC: kTakeOld: not made fresh (condition, frost) when it comes
 };
 std::map<uint32_t, Owned> g_owned;
+std::vector<uint32_t> g_registry_drop;  // TLDCoop_DLC: registry entries to forget once it isn't walked
 // A friend's animal that died here while the host was in the scene: the host runs its carcass; ours stays (dying) until
 // the host's carcass takes its place here (carcass_made).
 struct Dying {
@@ -411,6 +413,7 @@ void transfer(Entry& e, uint8_t to, const char* why, const std::vector<Present>&
     e.epoch = epoch;
     e.pending_to = net::kNoPlayer;
     net::WildCtlMsg t = take_from_registry(e, to, epoch);
+    if (was_frozen && (t.flags & net::kTakeDead)) t.flags |= net::kTakeOld;  // TLDCoop_DLC: kept/left alone: not fresh
     if (was_frozen) age_frozen(e, t);
     deliver_take(t, now);
 }
@@ -535,6 +538,8 @@ std::vector<net::AnimalRec> host_ingest(uint8_t owner, const std::string& scene,
 }
 
 void host_arbitrate(const std::vector<Present>& players, double now) {
+    for (uint32_t id : g_registry_drop) g_registry.erase(id);  // TLDCoop_DLC: old bodies TLD's save already had
+    g_registry_drop.clear();
     if (now - g_last_arbiter < kOwnArbiterMs) return;
     g_last_arbiter = now;
     // Who has been in which scene since when (the spawning game: the one there longest).
@@ -911,6 +916,28 @@ void take_local(const net::WildCtlMsg& t, double now) {
     // for it first; one of our own from the spawn region's pool, dead, was removed by TLD 1.6 s later, and the body with it
     Il2CppObject* ai = nullptr;
     bool spawned = false;
+    // TLDCoop_DLC (Shatsca 11.11 00:53: "the old wolf carcasses doubled in the same places"): a dead one kept from the
+    // last game, where TLD's own save already put its carcass back (same kind, within 3 m): that one is it. The old
+    // record goes; no second body made.
+    if (dead_given) {
+        for (Il2CppObject* other : all_animals()) {
+            if (!alive(other) || il2::read_field<int32_t>(other, api.ai_kind) != s.kind || !dead_animal(other)) continue;
+            Vector3 p{};
+            if (!il2::invoke_value(api.get_position, transform_of(other), p)) continue;
+            const float dx = p.x - pos.x, dy = p.y - pos.y, dz = p.z - pos.z;
+            if (dx * dx + dz * dz > 9.0f || std::fabs(dy) > 3.0f) continue;
+            const auto known = g_ids.find(reinterpret_cast<uintptr_t>(other));
+            if (known != g_ids.end() && known->second == t.id) continue;
+            logx::info("wildlife: #%u (%s, dead) already lies here (TLD's own carcass%s, %.1f m): its old record dropped, "
+                       "no second body", t.id, kind_name(s.kind), known != g_ids.end() ? " we share" : "",
+                       std::sqrt(dx * dx + dy * dy + dz * dz));
+            if (hosting_now()) {
+                g_registry_drop.push_back(t.id);  // (dropped after the registry's walk)
+                return;
+            }
+            return refuse("its carcass already lies here");
+        }
+    }
     if (dead_given) {
         ai = spawn_stand_in(s.kind, pos, yaw, kAiModeWander, true, variant);
         spawned = ai != nullptr;
@@ -1003,6 +1030,7 @@ void take_local(const net::WildCtlMsg& t, double now) {
         o.body = t.text;
         o.body_at = now + 1500;  // once TLD has made its carcass
     }
+    o.old_body = (t.flags & net::kTakeOld) != 0;
     g_owned[t.id] = std::move(o);
     if (moved)
         logx::info("wildlife: #%u was left alone %.1f h: placed anew in its spawn region at (%.0f, %.0f, %.0f)", t.id, t.hours,
@@ -1288,7 +1316,7 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                 logx::info("wildlife: #%u's carcass here as it was harvested in its last game (%zu bytes)", id, own.body.size());
             }
             // TLDCoop_DLC: killed moments ago (within 10 min): a fresh body, whatever the one that took its place had
-            if (wildlife_carcass::fresh_kill(ai))
+            if (!own.old_body && wildlife_carcass::fresh_kill(ai))
                 logx::info("wildlife: #%u is a fresh kill: its carcass not frozen, condition 100%%", id);
             own.body.clear();
         }

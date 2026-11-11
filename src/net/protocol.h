@@ -1755,6 +1755,7 @@ constexpr uint8_t kTakeDead = 1;     // Take: the animal died on its owner; the 
 constexpr uint8_t kTakeKept = 2;     // Take: the old owner keeps it (a fight began meanwhile); `to` is the old owner
 constexpr uint8_t kTakeNoState = 4;  // Take: the old owner hasn't got it any more: the host's registry fills it in
 constexpr uint8_t kTakeMoved = 8;    // v45 Take: nobody saw it for a while (hours): placed anew in its spawn region
+constexpr uint8_t kTakeOld = 32;     // TLDCoop_DLC Take (with kTakeDead): an old body (kept/frozen): not a fresh kill
 constexpr uint8_t kTakeBody = 16;    // v45 Take (with kTakeDead): `text` is its carcass (BodyHarvest.Serialize())
 constexpr uint8_t kKillGone = 1;     // v45 Kill: it didn't die, it's just gone (TLD put it away): no respawn wait
 constexpr uint8_t kKillCounted = 2;  // v45 Kill: TLD's own spawn region bookkeeping already counted it where it died
