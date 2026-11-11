@@ -1212,16 +1212,61 @@ bool scabbard_worn() {
     return g_scabbard_worn;
 }
 
+// TLDCoop_DLC (Shatsca 11.11 18:35: "cargo pants with the tool belt (found in a drawer) don't lighten anything"):
+// without the DLC there's no WeightReductionBuff to copy from GEAR_ToolBelt either. Ours, as the item says: while one
+// of our belted pants is worn, the three heaviest tools in the pack weigh half. (Checked every 0.5 s.)
+ptrdiff_t g_tools_item = -1;  // GearItem.m_ToolsItem
+std::vector<Il2CppObject*> g_light_tools;
+double g_belt_checked = -1e9;
+
+void check_belt() {
+    const double now = net::now_ms();
+    if (now - g_belt_checked < 500) return;
+    g_belt_checked = now;
+    g_light_tools.clear();
+    if (g_state != State::Ready || g_tools_item < 0 || accessory_here("GEAR_ToolBelt")) return;
+    bool belt = false;
+    for (const Item& it : kItems) {
+        if (lower(it.extra) != "gear_toolbelt") continue;
+        Il2CppObject* pants = inventory_find(it.key);
+        Il2CppObject* clothing = pants ? get<Il2CppObject*>(pants, ui.gear_clothing) : nullptr;
+        bool worn = false;
+        if (alive(clothing) && il2::invoke_value(ui.is_wearing, clothing, worn) && worn) {
+            belt = true;
+            break;
+        }
+    }
+    if (!belt) return;
+    Il2CppObject* inv = il2::invoke(ui.get_inventory, nullptr);
+    Il2CppObject* list = inv ? get<Il2CppObject*>(inv, ui.inv_items) : nullptr;
+    Il2CppObject* arr = list ? get<Il2CppObject*>(list, 0x10) : nullptr;
+    const int32_t n = list ? get<int32_t>(list, 0x18) : 0;
+    std::vector<std::pair<int64_t, Il2CppObject*>> tools;
+    for (int32_t i = 0; arr && i < n && static_cast<size_t>(i) < il2::array_length(arr); ++i) {
+        // List<GearItemObject>: 16-byte structs (GearItem, name) from 0x20
+        Il2CppObject* gi = get<Il2CppObject*>(arr, 0x20 + static_cast<ptrdiff_t>(i) * 16);
+        if (!alive(gi) || !alive(get<Il2CppObject*>(gi, g_tools_item))) continue;
+        tools.emplace_back(g_weight(gi, 1.0f, true, nullptr), gi);
+    }
+    std::sort(tools.begin(), tools.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (size_t i = 0; i < tools.size() && i < 3; ++i) g_light_tools.push_back(tools[i].second);
+}
+
 int64_t weight_detour(Il2CppObject* self, float mult, bool ignore_bonus, const MethodInfo* m) {
     const int64_t w = g_weight(self, mult, ignore_bonus, m);
     static bool busy = false;
-    if (ignore_bonus || busy || !alive(self) || g_gun_item < 0 || g_gun_type < 0) return w;
-    Il2CppObject* gun = get<Il2CppObject*>(self, g_gun_item);
-    if (!alive(gun) || get<int32_t>(gun, g_gun_type) != 1 /* GunType.Rifle */) return w;
+    if (ignore_bonus || busy || !alive(self)) return w;
     busy = true;
-    const bool worn = scabbard_worn();
+    bool half = false;
+    if (g_tools_item >= 0 && alive(get<Il2CppObject*>(self, g_tools_item))) {
+        check_belt();
+        half = std::find(g_light_tools.begin(), g_light_tools.end(), self) != g_light_tools.end();
+    } else if (g_gun_item >= 0 && g_gun_type >= 0) {
+        Il2CppObject* gun = get<Il2CppObject*>(self, g_gun_item);
+        half = alive(gun) && get<int32_t>(gun, g_gun_type) == 1 /* GunType.Rifle */ && scabbard_worn();
+    }
     busy = false;
-    return worn ? w / 2 : w;
+    return half ? w / 2 : w;
 }
 
 bool hook_scabbard() {
@@ -1229,6 +1274,7 @@ bool hook_scabbard() {
     Il2CppClass* gun = il2::find_class(kGame, "", "GunItem");
     const MethodInfo* weight = gear ? il2::find_method_params_quiet(gear, "GetItemWeightKG", {"System.Single", "System.Boolean"}) : nullptr;
     g_gun_item = gear ? il2::field_offset_quiet(gear, "m_GunItem") : -1;
+    g_tools_item = gear ? il2::field_offset_quiet(gear, "m_ToolsItem") : -1;
     g_gun_type = gun ? il2::field_offset_quiet(gun, "m_GunType") : -1;
     if (!weight || g_gun_item < 0 || g_gun_type < 0) return false;
     return hooks::install_method("GearItem.GetItemWeightKG (clothing scabbard)", weight, reinterpret_cast<void*>(&weight_detour),
