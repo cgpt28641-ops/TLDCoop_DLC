@@ -1077,7 +1077,6 @@ void box_receive() {
         load_box(t, from, scene);
     }
 }
-}
 
 void elements_receive() {
     static std::vector<net::Packet> in;
