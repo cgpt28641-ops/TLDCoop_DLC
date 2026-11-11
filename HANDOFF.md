@@ -1632,3 +1632,11 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   00:56 "130 kg meat doubled in the Fulmar boat" + 01:00 "5600 kcal back to 60000 when Szymon left the cabin": the box
   doubling / Szymon's stale copy overwriting: the 01:15 box fix (Reset + host the one copy).
   Kerel 00:55:40: netrt::set_ready 616 ms frame, then a 5 s timeout + reconnect (once).
+
+### 11.11 ~16:10
+- world_objects send_away_changes() (host, each frame after the together lists): a friend (linked, caught up) whose
+  remote scene is valid and not ours gets, once per (link, scene), every g_store[scene] state (the others' changes
+  kept there: placements, breakdowns, locks, doors) and g_gone[scene] (broken down without a TLD id) as ObjectPut
+  (seq ++g_seq). The client's receive_put applies them (its scene). Log "objects: player N is in X, where we aren't;
+  sent the N change(s) the others made there". The host's OWN placements in a scene it isn't in can't go (only in its
+  save). UNTESTED.
