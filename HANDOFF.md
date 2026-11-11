@@ -1622,3 +1622,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   the host only (send_packet), host loads it and broadcasts its resulting text; clients load only the host's (from 0);
   while s_ActiveExchangeBox.m_ShowingPanel here the host's copy waits (g_box_pending). UNTESTED. Doubled items already
   in a save stay doubled (take them out by hand).
+- 01:35 Reviewed the 01:05 logs fully (Karol: "sprawdzaj bardzo dokładnie"). Shatsca's 3 reports:
+  00:53 "old wolf carcasses doubled in the same places": at load the host's kept registry (own_load_kept, owner nobody,
+  dead) took each body and SPAWNED a stand-in ("one made for it") while TLD's save had already put the carcass back
+  (registered anew as #214070xx "died here"). Fix: take_local, dead_given: a dead BaseAi of the same kind within 3 m
+  (not already this id) -> no body made; host drops the old registry entry (g_registry_drop, emptied at the start of
+  host_arbitrate; not while walking it); a client refuses. Also those old bodies got "fresh kill" (stand-in's dead time
+  0): new kTakeOld (32) set by transfer when the entry was frozen -> Owned.old_body -> no fresh_kill.
+  00:56 "130 kg meat doubled in the Fulmar boat" + 01:00 "5600 kcal back to 60000 when Szymon left the cabin": the box
+  doubling / Szymon's stale copy overwriting: the 01:15 box fix (Reset + host the one copy).
+  Kerel 00:55:40: netrt::set_ready 616 ms frame, then a 5 s timeout + reconnect (once).
