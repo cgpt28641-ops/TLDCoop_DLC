@@ -1052,7 +1052,7 @@ uint8_t self_id() { return netrt::status().self_id; }
 std::string player_name(uint8_t id) {
     for (const net::PlayerInfo& p : netrt::status().players)
         if (p.id == id && !p.name.empty()) return p.name;
-    return id == 0 ? "the host" : "your friend";
+    return id == 0 ? "host" : "kolega";
 }
 
 // The pot is on a fire's cooking slot (or by a fire, cooking).
@@ -1080,7 +1080,8 @@ uint8_t owner_of(Il2CppObject* pot) {
 
 // Someone else's pot on a fire here, run by their game: we don't cook it, take from it, or tell anything about it.
 bool foreign_pot(Il2CppObject* pot) {
-    if (!g_owned_pots || !pot || !on_fire(pot) || !owner_with_us(owner_of(pot))) return false;
+    if (!g_owned_pots || !pot || owner_of(pot) == net::kNoPotOwner || !on_fire(pot) || !owner_with_us(owner_of(pot)))
+        return false;
     const auto heard = g_pot_heard.find(pot);
     if (heard != g_pot_heard.end() && now_ms() - heard->second > kOwnerSilentMs) {
         logx::info("items: %s's pot here has been silent %.0f s: anyone's again", player_name(owner_of(pot)).c_str(),
@@ -1122,7 +1123,7 @@ bool refuse_foreign(Il2CppObject* pot, const char* what) {
     if (t - last > 2000) {
         last = t;
         const uint8_t owner = owner_of(pot);
-        coop_notices::tell(player_name(owner) + " put this on the fire: only they can take it");
+        coop_notices::tell("To położył na ognisku " + player_name(owner) + " - tylko on może to zabrać");
         Il2CppObject* food = food_in(pot);
         logx::info("items: %s on %s's pot (%s): not ours, refused", what, player_name(owner).c_str(),
                    food ? name_of(food).c_str() : "empty");
