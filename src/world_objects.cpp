@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cctype>
 #include <cmath>
@@ -535,6 +536,56 @@ void send_put(const net::ObjectState& s) {
 }
 
 // Host: what one friend changed goes on to the others, as a change of ours (our counter: each friend's is its own).
+// TLDCoop_DLC (Karol 10.11: "does someone in another region see the furniture/structures we moved there earlier?"):
+// host: a friend arriving in a scene we aren't in gets what the other friends changed there while we were away
+// (g_store: placements, broken down, locks, doors) and what was broken down there without a TLD id (g_gone), as the
+// changes they were, once per arrival there (per link). The host's own placements there are in its save only.
+struct AwaySent {
+    uint32_t link = 0;
+    std::string scene;
+};
+std::array<AwaySent, net::kMaxPlayers> g_away_sent{};
+
+void send_away_changes() {
+    const net::Status st = netrt::status();
+    for (const net::PlayerInfo& p : st.players) {
+        if (p.id == 0 || p.id >= net::kMaxPlayers) continue;
+        AwaySent& sent = g_away_sent[p.id];
+        const auto r = p.linked && p.caught_up ? netrt::remote_state(p.id) : std::nullopt;
+        if (!r) {
+            sent = AwaySent{};
+            continue;
+        }
+        if (!r->valid || r->scene.empty()) continue;
+        if (r->scene == g_scene) {  // with us: our live list (g_together)
+            sent = AwaySent{};
+            continue;
+        }
+        if (sent.link == p.link && sent.scene == r->scene) continue;
+        sent = AwaySent{p.link, r->scene};
+        size_t n = 0;
+        auto send_one = [&](const net::ObjectState& s) {
+            net::ObjectPutMsg m;
+            m.scene = r->scene;
+            m.object = s;
+            m.seq = ++g_seq;
+            net::Writer w(net::Msg::ObjectPut, net::kMaxMessage);
+            net::write_object_put(w, m);
+            if (!w.ok()) return;
+            netrt::send_packet_to(p.id, w, true);
+            ++n;
+        };
+        std::unordered_set<std::string> keys;
+        if (const auto it = g_store.find(r->scene); it != g_store.end())
+            for (const auto& [key, s] : it->second) keys.insert(key), send_one(s);
+        if (const auto it = g_gone.find(r->scene); it != g_gone.end())
+            for (const auto& [key, s] : it->second)
+                if (!keys.count(key)) send_one(s);
+        if (n) logx::info("objects: player %u is in %s, where we aren't; sent the %zu change(s) the others made there", p.id,
+                          r->scene.c_str(), n);
+    }
+}
+
 void pass_on(uint8_t from, net::ObjectPutMsg m) {
     m.seq = ++g_seq;
     net::Writer w(net::Msg::ObjectPut, net::kMaxMessage);
@@ -1874,6 +1925,7 @@ void on_frame(bool in_game) {
     track_moving_decoration();  // TLDCoop_DLC
     if (!hosting()) return;
     for (uint8_t id : g_together.arrived(g_scene)) send_list(id, g_together.only_resync(id));  // (see world_items)
+    send_away_changes();  // TLDCoop_DLC
 }
 
 bool share(const net::ObjectState& s) {
