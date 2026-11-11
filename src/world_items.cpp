@@ -167,6 +167,19 @@ struct Api {
     const MethodInfo* pot_drop_food = nullptr;     // CookingPotItem.DestroyGearItemBeingCooked()
     // TLDCoop_DLC
     ptrdiff_t pot_inspected = -1;                  // CookingPotItem.m_IsBeingInspected
+    // TLDCoop_DLC (Karol 11.11): a pot on a fire is its owner's (who put it there): only their game cooks it, only
+    // they take from it
+    ptrdiff_t pot_gear = -1;                       // CookingPotItem.m_GearItem
+    ptrdiff_t pot_slot = -1;                       // CookingPotItem.m_GearPlacePointAttachedTo
+    const MethodInfo* pot_interact = nullptr;      // CookingPotItem.PerformInteraction()
+    const MethodInfo* pot_cook_tick = nullptr;     // CookingPotItem.UpdateCookingTimeAndState(float, float)
+    const MethodInfo* pot_melt_tick = nullptr;     // CookingPotItem.UpdateMeltingSnow()
+    const MethodInfo* pot_boil_tick = nullptr;     // CookingPotItem.UpdateBoilingWater()
+    const MethodInfo* pot_burnt_out = nullptr;     // CookingPotItem.CheckForFireBurntOut()
+    const MethodInfo* pot_damage = nullptr;        // CookingPotItem.DoConditionDamageToPot()
+    const MethodInfo* pot_take_gear = nullptr;     // CookingPotItem.PickUpCookedGearItem(bool)
+    const MethodInfo* pot_take_water = nullptr;    // CookingPotItem.PickUpWater()
+    const MethodInfo* pot_take_snow = nullptr;     // CookingPotItem.PickUpSnow()
     ptrdiff_t pot_force_particles = -1;            // CookingPotItem.m_ForceParticleUpdate
     const MethodInfo* pot_visuals = nullptr;       // CookingPotItem.UpdateVisuals()
     const MethodInfo* pot_water_mesh = nullptr;    // CookingPotItem.SetUpWaterMesh()
@@ -341,13 +354,20 @@ std::string made_id(const std::string& what, const Vector3& at, int duplicate) {
     return id;
 }
 
-std::string give_id(Il2CppObject* gi, const Vector3& at) {
+// TLDCoop_DLC (Karol 11.11): `fresh`: made in our game just now (not loaded from the save both games share), e.g. TLD's
+// dummy pot under meat put on a fire: a new random id. Made from where it lies, two players' meat on the same cooking
+// slot got the same id in both games ("be1461a4" in each) and each game took the other's for its own: removed,
+// put back, removed, twice a second, until the meat was gone.
+std::string give_id(Il2CppObject* gi, const Vector3& at, bool fresh) {
     const std::string what = name_of(gi);
     std::string id;
-    for (int duplicate = 0; duplicate < 16; ++duplicate) {
+    if (fresh && api.new_pdid)
+        id = text(reinterpret_cast<Il2CppString*>(il2::invoke(api.new_pdid, nullptr)));
+    for (int duplicate = 0; id.empty() && duplicate < 16; ++duplicate) {
         id = made_id(what, at, duplicate);
-        if (!object_by_pdid(id)) break;
+        if (object_by_pdid(id)) id.clear();
     }
+    if (id.empty()) id = made_id(what, at, 16);
     void* args[] = {il2::invoke(api.component_go, gi), il2::il2cpp_string_new(id.c_str())};
     il2::invoke(api.attach_guid, nullptr, args);
     return pdid_of(gi);
@@ -375,6 +395,7 @@ struct Loose {
 };
 
 int g_without_id = 0, g_ids_given = 0;
+bool baseline_now();  // g_baseline (below)
 
 std::vector<Loose> scan_loose(bool give_ids) {
     std::vector<Loose> out;
@@ -392,7 +413,9 @@ std::vector<Loose> scan_loose(bool give_ids) {
         pose_of(gi, l.pos, l.rot);
         l.units = units_of(gi);
         if (l.pdid.empty() && give_ids) {
-            l.pdid = give_id(gi, l.pos);
+            // (in the first scan of a scene, or a Seamless Interiors room just up: both games have it, the same id)
+            const bool fresh = baseline_now() && !seamless_interiors::is_clone_object(gi);
+            l.pdid = give_id(gi, l.pos, fresh);
             if (!l.pdid.empty()) ++g_ids_given;
         }
         if (l.pdid.empty()) {
@@ -438,6 +461,7 @@ struct Known {
     int snare = -1;          // a snare's state (snare_state), -1 for other items
     bool opened = false;     // TLDCoop_DLC: a can opened or smashed open (opened_of)
     bool burning = false;    // TLDCoop_DLC: a flare or torch burning (burning_light)
+    bool foreign = false;    // TLDCoop_DLC: someone else's pot on a fire, or the food in it (foreign_pot): theirs to tell
 };
 std::unordered_map<std::string, Known> g_known;  // our pdid -> item
 double g_door_until = 0;  // TLDCoop_DLC: a door is being used until then (door_used)
@@ -453,8 +477,19 @@ std::unordered_map<Il2CppObject*, PotSig> g_pot_sig;
 // TLDCoop_DLC (Shatsca 09.11: "Szymon put meat on, I came in and the meat sped up and was done"): when a pot was
 // loaded from the other player's word; its food comes in a moment later, and meanwhile it reads empty
 std::unordered_map<Il2CppObject*, double> g_pot_loaded_ms;
+// TLDCoop_DLC (Karol 11.11, Shatsca 11.11 19:47 "dwa razy zniknęło mięso po dodaniu do ogniska"): who put each pot on a
+// fire (CookingPotItem -> player id). Two games cooking one pot raced (the faster cooking skill finished it first: its
+// raw meat "gone", the other game's put it back, again and again) until the meat was lost. Now only the owner's game
+// cooks it and tells how it goes; the others show it and can't take from it while the owner is in the scene.
+std::unordered_map<Il2CppObject*, uint8_t> g_pot_owner;
+int g_applying = 0;  // inside apply_put / load_pot: TLD's own calls then aren't the player's doing
+bool g_owned_pots = false;  // the hooks that keep a friend's pot from cooking here are in
+std::unordered_map<Il2CppObject*, double> g_pot_heard;  // when the owner last told us of their pot
+constexpr double kOwnerSilentMs = 45000;  // the owner's game says how its pot is getting on every kPotSyncMs; silent
+                                          // this long (it never heard it was theirs): the pot is anyone's again
 std::string g_scene;                             // the scene g_known is about ("" = none)
 bool g_baseline = false;                         // g_known holds at least one full scan of g_scene
+bool baseline_now() { return g_baseline; }
 double g_last_scan = 0;
 double g_fast_until = 0;  // TLDCoop_DLC: scan every kFastScanMs until then (a burning flare or torch flies)
 uint32_t g_seq = 0;                              // our change counter
@@ -537,6 +572,8 @@ void reset(const char* why) {
     if (!g_known.empty()) logx::info("items: forgetting shared item state (%s)", why);
     g_known.clear();
     g_pot_sig.clear();
+    g_pot_owner.clear();
+    g_pot_heard.clear();
     g_scene.clear();
     g_baseline = false;
     g_newest.clear();
@@ -1009,32 +1046,166 @@ void load_pot(Il2CppObject* gi, const std::string& gear, const std::string& wire
         logx::info("items: the other player's %s (%s) %s", name_of(gi).c_str(), short_id(wire).c_str(), after.c_str());
 }
 
+uint8_t self_id() { return netrt::status().self_id; }
+
+// TLDCoop_DLC: the player's name, for what our HUD says
+std::string player_name(uint8_t id) {
+    for (const net::PlayerInfo& p : netrt::status().players)
+        if (p.id == id && !p.name.empty()) return p.name;
+    return id == 0 ? "the host" : "your friend";
+}
+
+// The pot is on a fire's cooking slot (or by a fire, cooking).
+bool on_fire(Il2CppObject* pot) {
+    if (!pot) return false;
+    if (api.pot_slot >= 0 && alive(get<Il2CppObject*>(pot, api.pot_slot))) return true;
+    return api.pot_fire >= 0 && alive(get<Il2CppObject*>(pot, api.pot_fire));
+}
+
+// The owner (someone else) is in the game and in our scene: their game runs the pot.
+bool owner_with_us(uint8_t id) {
+    if (id == net::kNoOwner || id == self_id()) return false;
+    bool linked = false;
+    for (const net::PlayerInfo& p : netrt::status().players)
+        if (p.id == id) linked = true;
+    if (!linked) return false;
+    const auto r = netrt::remote_state(id);
+    return r && r->valid && r->scene == g_scene;
+}
+
+uint8_t owner_of(Il2CppObject* pot) {
+    const auto it = pot ? g_pot_owner.find(pot) : g_pot_owner.end();
+    return it == g_pot_owner.end() ? net::kNoOwner : it->second;
+}
+
+// Someone else's pot on a fire here, run by their game: we don't cook it, take from it, or tell anything about it.
+bool foreign_pot(Il2CppObject* pot) {
+    if (!g_owned_pots || !pot || !on_fire(pot) || !owner_with_us(owner_of(pot))) return false;
+    const auto heard = g_pot_heard.find(pot);
+    if (heard != g_pot_heard.end() && now_ms() - heard->second > kOwnerSilentMs) {
+        logx::info("items: %s's pot here has been silent %.0f s: anyone's again", player_name(owner_of(pot)).c_str(),
+                   (now_ms() - heard->second) / 1000);
+        g_pot_owner.erase(pot);
+        g_pot_heard.erase(heard);
+        return false;
+    }
+    return true;
+}
+
+// The pot a food item is cooking in (one of the pots whose owner we know), or null.
+Il2CppObject* pot_cooking(Il2CppObject* food) {
+    if (!alive(food)) return nullptr;
+    for (const auto& [pot, owner] : g_pot_owner)
+        if (alive(pot) && food_in(pot) == food) return pot;
+    return nullptr;
+}
+
+// Who to name as the owner in an item's record: a pot on a fire, or the food in one.
+uint8_t owner_for_record(Il2CppObject* gi) {
+    Il2CppObject* pot = pot_of(gi);
+    if (!pot) pot = pot_cooking(gi);
+    if (!pot || !on_fire(pot)) return net::kNoOwner;
+    return owner_of(pot);
+}
+
+// Ours from now on: we put it on the fire / put something in it.
+void own_pot(Il2CppObject* pot) {
+    if (!pot || g_applying) return;
+    g_pot_owner[pot] = self_id();
+}
+
+// Not ours to take: says so on the HUD (once in a while).
+bool refuse_foreign(Il2CppObject* pot, const char* what) {
+    if (g_applying || !foreign_pot(pot)) return false;
+    static double last = -1e18;
+    const double t = now_ms();
+    if (t - last > 2000) {
+        last = t;
+        const uint8_t owner = owner_of(pot);
+        coop_notices::tell(player_name(owner) + " put this on the fire: only they can take it");
+        Il2CppObject* food = food_in(pot);
+        logx::info("items: %s on %s's pot (%s): not ours, refused", what, player_name(owner).c_str(),
+                   food ? name_of(food).c_str() : "empty");
+    }
+    return true;
+}
+
 using PotFn = void (*)(Il2CppObject* self, const MethodInfo* method);
 using PotFoodFn = void (*)(Il2CppObject* self, Il2CppObject* gi, const MethodInfo* method);
 using PotBoilFn = void (*)(Il2CppObject* self, int64_t litres, bool take_water, const MethodInfo* method);
 using PotMeltFn = void (*)(Il2CppObject* self, int64_t litres, const MethodInfo* method);
+using PotTickFn = void (*)(Il2CppObject* self, float cook_minutes, float ready_minutes, const MethodInfo* method);
+using PotBoolFn = bool (*)(Il2CppObject* self, const MethodInfo* method);
+using PotTakeGearFn = void (*)(Il2CppObject* self, bool to_pack, const MethodInfo* method);
 PotFn g_pot_take = nullptr;
 PotFoodFn g_pot_cook = nullptr;
 PotBoilFn g_pot_boil = nullptr;
 PotMeltFn g_pot_melt = nullptr;
+PotTickFn g_pot_cook_tick = nullptr;
+PotFn g_pot_melt_tick = nullptr, g_pot_boil_tick = nullptr, g_pot_burnt_out = nullptr, g_pot_damage = nullptr;
+PotFn g_pot_take_water = nullptr, g_pot_take_snow = nullptr;
+PotBoolFn g_pot_interact = nullptr;
+PotTakeGearFn g_pot_take_gear = nullptr;
 
 void pot_take_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (refuse_foreign(self, "take")) return;
     g_pot_take(self, method);
     g_pots_changed.insert(self);
 }
 void pot_cook_detour(Il2CppObject* self, Il2CppObject* gi, const MethodInfo* method) {
     g_pot_cook(self, gi, method);
+    own_pot(self);
     g_pots_changed.insert(self);
 }
 void pot_boil_detour(Il2CppObject* self, int64_t litres, bool take_water, const MethodInfo* method) {
     g_pot_boil(self, litres, take_water, method);
+    own_pot(self);
     g_pots_changed.insert(self);
 }
 void pot_melt_detour(Il2CppObject* self, int64_t litres, const MethodInfo* method) {
     g_pot_melt(self, litres, method);
+    own_pot(self);
     g_pots_changed.insert(self);
 }
-
+// The owner's game cooks it (its cooking skill, its fire): ours only shows what it tells.
+void pot_cook_tick_detour(Il2CppObject* self, float cook_minutes, float ready_minutes, const MethodInfo* method) {
+    if (foreign_pot(self)) return;
+    g_pot_cook_tick(self, cook_minutes, ready_minutes, method);
+}
+void pot_melt_tick_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (foreign_pot(self)) return;
+    g_pot_melt_tick(self, method);
+}
+void pot_boil_tick_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (foreign_pot(self)) return;
+    g_pot_boil_tick(self, method);
+}
+void pot_burnt_out_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (foreign_pot(self)) return;
+    g_pot_burnt_out(self, method);
+}
+void pot_damage_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (foreign_pot(self)) return;
+    g_pot_damage(self, method);
+}
+bool pot_interact_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (refuse_foreign(self, "interact")) return false;
+    return g_pot_interact(self, method);
+}
+void pot_take_gear_detour(Il2CppObject* self, bool to_pack, const MethodInfo* method) {
+    if (refuse_foreign(self, "take the food")) return;
+    g_pot_take_gear(self, to_pack, method);
+}
+void pot_take_water_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (refuse_foreign(self, "take the water")) return;
+    g_pot_take_water(self, method);
+    g_pots_changed.insert(self);
+}
+void pot_take_snow_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (refuse_foreign(self, "take the snow")) return;
+    g_pot_take_snow(self, method);
+    g_pots_changed.insert(self);
+}
 // --- sending -------------------------------------------------------------------------------------------------------
 
 // The item as ItemPut: TLD's save record for it, lying at `pos` / `rot`. False if TLD made none or it's too big.
@@ -1055,6 +1226,7 @@ bool make_put(Il2CppObject* gi, const std::string& pdid, const std::string& pref
     if (m.pdid != pdid) replace_all(m.gear, pdid, m.pdid);  // our copy goes by another id here
     m.pos[0] = pos.x, m.pos[1] = pos.y, m.pos[2] = pos.z;
     m.rot[0] = rot.x, m.rot[1] = rot.y, m.rot[2] = rot.z, m.rot[3] = rot.w;
+    m.owner = owner_for_record(gi);  // TLDCoop_DLC: a pot on a fire (or the food in it): whose it is
     if (m.gear.size() > net::kGearTextMax) {
         logx::warn("items: %s's save record is too big to send (%zu chars)", m.prefab.c_str(), m.gear.size());
         return false;
@@ -1406,7 +1578,7 @@ void seat_on_slot(Il2CppObject* gi, const std::string& gear, const Vector3& pos,
     logx::info("items: the other player's %s put on our cooking slot there (%.2f m off)", prefab, best_d);
 }
 
-void apply_put(const net::ItemPutMsg& m, double now) {
+void apply_put_record(const net::ItemPutMsg& m, double now) {
     if (net::is_unique_gear(m.prefab)) {  // (never sent; a game from before keeps theirs to themselves too)
         logx::info("items: the other player's %s (%s) is one of a kind: ours stays ours", m.prefab.c_str(),
                    short_id(m.pdid).c_str());
@@ -1599,6 +1771,27 @@ void apply_put(const net::ItemPutMsg& m, double now) {
                : (m.flags & net::kItemNotYours) ? "lies where it was again"
                                                 : "is here now",
                pos.x, pos.y, pos.z, light_state(made).c_str());
+}
+
+// TLDCoop_DLC: the other player's record, applied; a pot on a fire it names an owner for is theirs (or ours) from now
+// on, and TLD's own calls meanwhile (a slot taking it, the pot loading) aren't ours.
+void apply_put(const net::ItemPutMsg& m, double now) {
+    ++g_applying;
+    apply_put_record(m, now);
+    --g_applying;
+    Il2CppObject* pot = pot_of(gear_on(object_by_pdid(our_id(m.pdid))));
+    if (!pot) return;
+    if (m.owner != net::kNoOwner && on_fire(pot)) {
+        const uint8_t had = owner_of(pot);
+        g_pot_owner[pot] = m.owner;
+        g_pot_heard[pot] = now;
+        if (had != m.owner && m.owner != self_id())
+            logx::info("items: the pot %s (%s) on the fire is %s's: their game cooks it, only they take from it",
+                       m.prefab.c_str(), short_id(m.pdid).c_str(), player_name(m.owner).c_str());
+    } else if (!on_fire(pot)) {
+        g_pot_owner.erase(pot);
+        g_pot_heard.erase(pot);
+    }
 }
 
 void remove_ours(const std::string& ours, const char* why) {
@@ -1934,6 +2127,14 @@ void scan(double now) {
     if (first) apply_pending();  // what the other player changed here while we were elsewhere
     else if (room_up && hosting()) apply_pending();  // TLDCoop_DLC: changes that waited for a room of ours
     const double t0 = now_ms();
+    for (auto it = g_pot_owner.begin(); it != g_pot_owner.end();) {  // TLDCoop_DLC: pots gone from the world
+        if (alive(it->first)) {
+            ++it;
+        } else {
+            g_pot_heard.erase(it->first);
+            it = g_pot_owner.erase(it);
+        }
+    }
     std::vector<Loose> loose = scan_loose(true);
     std::string inspected, placing;
     busy_items(inspected, placing);
@@ -1969,6 +2170,14 @@ void scan(double now) {
             continue;
         }
         Known& k = it->second;
+        // TLDCoop_DLC (Karol 11.11): someone else's pot on a fire here, or the food in it: their game tells how it goes
+        k.foreign = foreign_pot(pot_of(l.gi)) || foreign_pot(pot_cooking(l.gi));
+        if (k.foreign) {
+            k.pos = l.pos;
+            k.rot = l.rot;
+            if (Il2CppObject* pot = pot_of(l.gi)) g_pot_sig[pot] = pot_sig(pot);
+            continue;
+        }
         if (distance(l.pos, k.pos) > kStillMetres) {
             k.pos = l.pos;
             k.rot = l.rot;
@@ -2018,8 +2227,12 @@ void scan(double now) {
                 if (now - ld->second >= 5000) g_pot_loaded_ms.erase(ld);
             }
             bool tell = g_pots_changed.erase(pot) > 0;
+            // TLDCoop_DLC: the pot's owner (who put it on the fire) tells how it goes; the host for a pot nobody here owns
+            const uint8_t owner = on_fire(pot) ? owner_of(pot) : net::kNoOwner;
+            const bool ours = owner != net::kNoOwner && owner == self_id();
+            const bool runs_it = ours || (hosting() && !owner_with_us(owner));
             if (last.kind >= 0 && !(sig == last)) {
-                if (hosting())
+                if (runs_it)
                     tell = true;
                 else if (sig.kind != last.kind && !(last.kind == 2 && sig.kind == 3))  // (snow melts by itself)
                     tell = true;
@@ -2028,8 +2241,9 @@ void scan(double now) {
             // TLDCoop_DLC: never while the food it names is in our pack (a stale record would bind it there)
             Il2CppObject* cooking = food_in(pot);
             const bool food_packed = cooking && in_pack(cooking);
-            const bool regular = !tell && hosting() && sig.kind > 0 && sig.state == 0 && now - k.changed_ms >= kPotSyncMs &&
-                                 !food_packed;
+            // (the owner's word also while the food is ready or ruined: others know it's still theirs)
+            const bool regular = !tell && runs_it && sig.kind > 0 && (sig.state == 0 || ours) &&
+                                 now - k.changed_ms >= kPotSyncMs && !food_packed;
             if ((tell || regular) && k.shared && !food_packed) {
                 if (Il2CppObject* food = cooking; food && tell) {  // the food first: the pot finds it by id
                     const std::string id = pdid_of(food);
@@ -2099,6 +2313,9 @@ void scan(double now) {
         }
         if (it->second.unique)
             logx::info("items: %s (%s), one of a kind, is gone from our world; the other player keeps theirs",
+                       it->second.prefab.c_str(), short_id(it->first).c_str());
+        else if (it->second.foreign)  // TLDCoop_DLC: someone else's pot or food on a fire: theirs to tell
+            logx::info("items: %s (%s), on someone else's fire slot, left our view; their game tells what became of it",
                        it->second.prefab.c_str(), short_id(it->first).c_str());
         else if (it->second.shared && !through_door && !all_at_once)
             send_gone(it->first, it->second);
@@ -2620,6 +2837,17 @@ bool init() {
         api.pot_force_particles = il2::field_offset(pot, "m_ForceParticleUpdate");
         api.pot_visuals = il2::find_method(pot, "UpdateVisuals", 0);
         api.pot_water_mesh = il2::find_method(pot, "SetUpWaterMesh", 0);
+        api.pot_gear = il2::field_offset_quiet(pot, "m_GearItem");
+        api.pot_slot = il2::field_offset_quiet(pot, "m_GearPlacePointAttachedTo");
+        api.pot_interact = il2::find_method_quiet(pot, "PerformInteraction", 0);
+        api.pot_cook_tick = il2::find_method_quiet(pot, "UpdateCookingTimeAndState", 2);
+        api.pot_melt_tick = il2::find_method_quiet(pot, "UpdateMeltingSnow", 0);
+        api.pot_boil_tick = il2::find_method_quiet(pot, "UpdateBoilingWater", 0);
+        api.pot_burnt_out = il2::find_method_quiet(pot, "CheckForFireBurntOut", 0);
+        api.pot_damage = il2::find_method_quiet(pot, "DoConditionDamageToPot", 0);
+        api.pot_take_gear = il2::find_method_quiet(pot, "PickUpCookedGearItem", 1);
+        api.pot_take_water = il2::find_method_quiet(pot, "PickUpWater", 0);
+        api.pot_take_snow = il2::find_method_quiet(pot, "PickUpSnow", 0);
     }
     api.food = il2::field_offset(gear, "m_FoodItem");
     if (Il2CppClass* food = il2::find_class(kGame, "", "FoodItem")) api.food_opened = il2::field_offset(food, "m_Opened");
@@ -2646,6 +2874,36 @@ bool init() {
                               reinterpret_cast<void**>(&g_pot_boil)) &&
         hooks::install_method("CookingPotItem.StartMeltingSnow", api.pot_melt, reinterpret_cast<void*>(&pot_melt_detour),
                               reinterpret_cast<void**>(&g_pot_melt));
+    // TLDCoop_DLC (Karol 11.11): a pot on a fire is its owner's: only their game cooks it, only they take from it
+    const auto pot_hook = [](const char* name, const MethodInfo* m, void* detour, void** orig) {
+        return m && hooks::install_method(name, m, detour, orig);
+    };
+    const bool owned_pots =
+        pots && api.pot_slot >= 0 &&
+        pot_hook("CookingPotItem.UpdateCookingTimeAndState", api.pot_cook_tick, reinterpret_cast<void*>(&pot_cook_tick_detour),
+                 reinterpret_cast<void**>(&g_pot_cook_tick)) &&
+        pot_hook("CookingPotItem.UpdateMeltingSnow", api.pot_melt_tick, reinterpret_cast<void*>(&pot_melt_tick_detour),
+                 reinterpret_cast<void**>(&g_pot_melt_tick)) &&
+        pot_hook("CookingPotItem.UpdateBoilingWater", api.pot_boil_tick, reinterpret_cast<void*>(&pot_boil_tick_detour),
+                 reinterpret_cast<void**>(&g_pot_boil_tick)) &&
+        pot_hook("CookingPotItem.PerformInteraction", api.pot_interact, reinterpret_cast<void*>(&pot_interact_detour),
+                 reinterpret_cast<void**>(&g_pot_interact));
+    g_owned_pots = owned_pots;
+    // (the rest: extra safety, each on its own)
+    if (owned_pots) {
+        pot_hook("CookingPotItem.CheckForFireBurntOut", api.pot_burnt_out, reinterpret_cast<void*>(&pot_burnt_out_detour),
+                 reinterpret_cast<void**>(&g_pot_burnt_out));
+        pot_hook("CookingPotItem.DoConditionDamageToPot", api.pot_damage, reinterpret_cast<void*>(&pot_damage_detour),
+                 reinterpret_cast<void**>(&g_pot_damage));
+        pot_hook("CookingPotItem.PickUpCookedGearItem", api.pot_take_gear, reinterpret_cast<void*>(&pot_take_gear_detour),
+                 reinterpret_cast<void**>(&g_pot_take_gear));
+        pot_hook("CookingPotItem.PickUpWater", api.pot_take_water, reinterpret_cast<void*>(&pot_take_water_detour),
+                 reinterpret_cast<void**>(&g_pot_take_water));
+        pot_hook("CookingPotItem.PickUpSnow", api.pot_take_snow, reinterpret_cast<void*>(&pot_take_snow_detour),
+                 reinterpret_cast<void**>(&g_pot_take_snow));
+    }
+    logx::info("world items: pots on a fire %s", owned_pots ? "are their owner's (only they take from it, their game cooks it)"
+                                                           : "are NOT owned (hooks missing): every game cooks them");
     if (g_ready) {
         Il2CppClass* gm = il2::find_class(kGame, "", "GameManager");
         const MethodInfo* load_menu = il2::find_method(gm, "LoadMainMenu", 0);
@@ -2684,6 +2942,8 @@ void on_frame(bool in_game) {
         g_known.clear();
         g_pot_sig.clear();
         g_pot_loaded_ms.clear();
+        g_pot_owner.clear();
+        g_pot_heard.clear();
         // TLDCoop_DLC: the aliases stay (ids are the game's own, one per item in every scene): cleared here, coming
         // back made the other player's item again beside ours (a copy on the floor)
         g_scene = settled;
