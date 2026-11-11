@@ -76,6 +76,9 @@ struct Api {
     const MethodInfo* box_save = nullptr;       // static IslandTransitExchangeBox.SerializeAll()
     const MethodInfo* box_load_all = nullptr;   // static IslandTransitExchangeBox.DeserializeAll(saveData)
     Il2CppObject* box_type = nullptr;           // IslandTransitExchangeBoxSaveData (System.Type)
+    const MethodInfo* box_reset = nullptr;      // static IslandTransitExchangeBox.Reset() (before loading: no doubles)
+    FieldInfo* box_active = nullptr;            // static IslandTransitExchangeBox.s_ActiveExchangeBox
+    ptrdiff_t box_showing = -1;                 // IslandTransitExchangeBox.m_ShowingPanel
     const MethodInfo* to_json = nullptr;        // static SerializationUtils.SerializeObject(object)
     const MethodInfo* from_json = nullptr;      // static JsonConvert.DeserializeObject(string, Type, settings)
     FieldInfo* json_settings = nullptr;         // SerializationUtils.m_SerializerSettings
@@ -1009,43 +1012,71 @@ void box_tick(double now) {
     }
 }
 
+// TLDCoop_DLC (Karol 11.11 01:05, logs: the box's text doubled 59k -> 119k -> 221k): DeserializeAll adds to what the
+// box holds, and every game sent its own copy back and forth. Now: TLD's box state cleared (Reset) before loading; the
+// host is the one copy: a friend's change goes to the host only, the host loads it and sends the result to everyone;
+// a friend loads only the host's. Not while that box's panel is open here (then when it's closed).
+std::string g_box_pending;  // the host's copy, waiting for our box panel to close
+uint8_t g_box_pending_from = 0;
+
+bool box_panel_open() {
+    if (!api.box_active || api.box_showing < 0) return false;
+    Il2CppObject* box = nullptr;
+    il2::il2cpp_field_static_get_value(api.box_active, &box);
+    return alive(box) && get<bool>(box, api.box_showing);
+}
+
+bool load_box(const std::string& t, uint8_t from, const std::string& scene) {
+    Il2CppObject* settings = nullptr;
+    if (api.json_settings) il2::il2cpp_field_static_get_value(api.json_settings, &settings);
+    void* args[] = {il2::il2cpp_string_new(t.c_str()), api.box_type, settings};
+    Il2CppObject* data = il2::invoke(api.from_json, nullptr, args);
+    if (!data) {
+        logx::warn("transit: player %u's boat box couldn't be read (%zu chars)", from, t.size());
+        return false;
+    }
+    if (api.box_reset) il2::invoke(api.box_reset, nullptr);
+    void* load[] = {data};
+    il2::invoke(api.box_load_all, nullptr, load);
+    g_box_known = box_text();
+    if (g_box_known.empty()) g_box_known = t;
+    if (g_box_logged++ < 40)
+        logx::info("transit: the boat's box as player %u has it (%s, %zu chars) loaded here (now %zu)", from, scene.c_str(),
+                   t.size(), g_box_known.size());
+    return true;
+}
+
 void box_receive() {
     static std::vector<net::Packet> in;
     in.clear();
     netrt::drain_packets(net::Msg::IslandBox, in);
     const bool host = hosting();
+    if (!host && !g_box_pending.empty() && !box_panel_open()) {
+        const std::string t = std::move(g_box_pending);
+        g_box_pending.clear();
+        if (t != g_box_known) load_box(t, g_box_pending_from, g_scene);
+    }
     for (const net::Packet& p : in) {
-        if (host) {
-            net::Writer w(net::Msg::IslandBox, p.data.size() + 16);
-            w.put_raw(p.data.data() + net::kHeaderSize, p.data.size() - net::kHeaderSize);
-            netrt::send_packet_except(p.from, w, true);
-        }
         net::Reader r = net::packet_body(p);
         const uint8_t from = r.get<uint8_t>();
         const std::string scene = r.get_blob(64);
         const std::string t = r.get_blob(200000);
-        if (!r.ok() || (host ? p.from : from) == g_self || t.empty()) continue;
-        if (!api.box_load_all || !api.from_json || !api.box_type) continue;
-        if (t == g_box_known || t == box_text()) {
-            g_box_known = t;
+        if (!r.ok() || t.empty() || !api.box_load_all || !api.from_json || !api.box_type) continue;
+        if (host) {  // a friend's change: ours too, then everyone gets the result
+            if (p.from == g_self) continue;
+            if (t != g_box_known && load_box(t, p.from, scene)) send_box(g_box_known);
             continue;
         }
-        Il2CppObject* settings = nullptr;
-        if (api.json_settings) il2::il2cpp_field_static_get_value(api.json_settings, &settings);
-        void* args[] = {il2::il2cpp_string_new(t.c_str()), api.box_type, settings};
-        Il2CppObject* data = il2::invoke(api.from_json, nullptr, args);
-        if (!data) {
-            logx::warn("transit: player %u's boat box couldn't be read (%zu chars)", host ? p.from : from, t.size());
+        if (p.from != 0 && from != 0) continue;  // (a friend's: only the host's copy counts)
+        if (t == g_box_known) continue;
+        if (box_panel_open()) {
+            g_box_pending = t;
+            g_box_pending_from = from;
             continue;
         }
-        void* load[] = {data};
-        il2::invoke(api.box_load_all, nullptr, load);
-        g_box_known = box_text();
-        if (g_box_known.empty()) g_box_known = t;
-        if (g_box_logged++ < 40)
-            logx::info("transit: the boat's box as player %u has it (%s, %zu chars) loaded here", host ? p.from : from,
-                       scene.c_str(), t.size());
+        load_box(t, from, scene);
     }
+}
 }
 
 void elements_receive() {
@@ -1310,6 +1341,9 @@ bool init() {
             api.box_load = il2::field_offset(xb, "m_LoadScene");
             api.box_save = il2::find_method_quiet(xb, "SerializeAll", 0);
             api.box_load_all = il2::find_method_quiet(xb, "DeserializeAll", 1);
+            api.box_reset = il2::find_method_quiet(xb, "Reset", 0);
+            api.box_active = il2::il2cpp_class_get_field_from_name(xb, "s_ActiveExchangeBox");
+            api.box_showing = il2::field_offset_quiet(xb, "m_ShowingPanel");
             if (Il2CppClass* sd = il2::find_class(kGame, "TLD.IslandTransit", "IslandTransitExchangeBoxSaveData")) {
                 api.box_type = il2::type_object(sd);
                 if (api.box_type) il2::il2cpp_gchandle_new(api.box_type, false);
