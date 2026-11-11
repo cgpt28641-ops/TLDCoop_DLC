@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "coop_lapse.h"
@@ -1219,6 +1220,21 @@ ptrdiff_t g_tools_item = -1;  // GearItem.m_ToolsItem
 std::vector<Il2CppObject*> g_light_tools;
 double g_belt_checked = -1e9;
 
+// A tool for the belt: TLD's ToolsItem, or by name (Shatsca 11.11 19:40: hammer and hatchet got lighter, the prybar
+// didn't: TLD's prybar isn't a ToolsItem)
+bool is_tool(Il2CppObject* gi) {
+    if (g_tools_item >= 0 && alive(get<Il2CppObject*>(gi, g_tools_item))) return true;
+    static std::unordered_map<Il2CppObject*, bool> seen;  // (by name, once per item: weights are asked often)
+    if (const auto it = seen.find(gi); it != seen.end()) return it->second;
+    if (seen.size() > 4096) seen.clear();
+    const std::string n = lower(prefab_name(gi));
+    bool tool = false;
+    for (const char* k : {"prybar", "knife", "hatchet", "hammer", "hacksaw", "wrench", "shovel", "pickaxe", "crowbar"})
+        if (n.find(k) != std::string::npos) tool = true;
+    seen[gi] = tool;
+    return tool;
+}
+
 void check_belt() {
     const double now = net::now_ms();
     if (now - g_belt_checked < 500) return;
@@ -1245,7 +1261,7 @@ void check_belt() {
     for (int32_t i = 0; arr && i < n && static_cast<size_t>(i) < il2::array_length(arr); ++i) {
         // List<GearItemObject>: 16-byte structs (GearItem, name) from 0x20
         Il2CppObject* gi = get<Il2CppObject*>(arr, 0x20 + static_cast<ptrdiff_t>(i) * 16);
-        if (!alive(gi) || !alive(get<Il2CppObject*>(gi, g_tools_item))) continue;
+        if (!alive(gi) || !is_tool(gi)) continue;
         tools.emplace_back(g_weight(gi, 1.0f, true, nullptr), gi);
     }
     std::sort(tools.begin(), tools.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
@@ -1258,7 +1274,7 @@ int64_t weight_detour(Il2CppObject* self, float mult, bool ignore_bonus, const M
     if (ignore_bonus || busy || !alive(self)) return w;
     busy = true;
     bool half = false;
-    if (g_tools_item >= 0 && alive(get<Il2CppObject*>(self, g_tools_item))) {
+    if (is_tool(self)) {
         check_belt();
         half = std::find(g_light_tools.begin(), g_light_tools.end(), self) != g_light_tools.end();
     } else if (g_gun_item >= 0 && g_gun_type >= 0) {
