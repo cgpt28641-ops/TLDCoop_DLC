@@ -138,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 50;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 51;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -200,6 +200,8 @@ constexpr uint16_t kProtocolVersion = 50;  // v4: World. v5: Animals. v6: sounds
                                            // v47 (TLDCoop_DLC): ids up to 200 bytes (kPdidMax); Shot (a flare round seen
                                            // by the others); Controllers' loot per_player
                                            // v50 (TLDCoop_DLC): ObjectKind::Rope (a climbing rope put down on an anchor)
+                                           // v51 (TLDCoop_DLC): ItemPutMsg.owner (who put a pot / food on a fire:
+                                           // only they can take it, only their game cooks it)
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -912,7 +914,11 @@ struct ItemPutMsg {
     float pos[3] = {};
     float rot[4] = {0, 0, 0, 1};
     std::string gear;    // GearSaveData.m_SearializedGear: everything TLD saves about the item (its pose included)
+    // TLDCoop_DLC (v51, Karol 11.11): a pot on a fire (or the food in it): the player who put it there (only they can
+    // take it, only their game cooks it); kNoOwner for anything else.
+    uint8_t owner = 0xFF;
 };
+constexpr uint8_t kNoOwner = 0xFF;
 // NotYours: host -> the taker: your take is refused (someone else's came first): out of your pack. LostToss: the same,
 // someone took it at the same moment and won the coin toss.
 enum class ItemGoneReason : uint8_t { Taken = 1, Destroyed = 2, NotInHostWorld = 3, NotYours = 4, LostToss = 5 };
@@ -943,6 +949,7 @@ inline void write_item_put(Writer& w, const ItemPutMsg& m) {
     put_floats(w, m.pos, 3);
     put_floats(w, m.rot, 4);
     w.put_long_blob(m.gear);
+    w.put(m.owner);
 }
 
 inline bool read_item_put(Reader& r, ItemPutMsg& m) {
@@ -954,6 +961,7 @@ inline bool read_item_put(Reader& r, ItemPutMsg& m) {
     get_floats(r, m.pos, 3);
     get_floats(r, m.rot, 4);
     m.gear = r.get_long_blob(kGearTextMax);
+    m.owner = r.left() >= 1 ? r.get<uint8_t>() : kNoOwner;
     return r.ok();
 }
 
