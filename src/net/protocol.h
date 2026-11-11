@@ -915,10 +915,10 @@ struct ItemPutMsg {
     float rot[4] = {0, 0, 0, 1};
     std::string gear;    // GearSaveData.m_SearializedGear: everything TLD saves about the item (its pose included)
     // TLDCoop_DLC (v51, Karol 11.11): a pot on a fire (or the food in it): the player who put it there (only they can
-    // take it, only their game cooks it); kNoOwner for anything else.
+    // take it, only their game cooks it); kNoPotOwner for anything else.
     uint8_t owner = 0xFF;
 };
-constexpr uint8_t kNoOwner = 0xFF;
+constexpr uint8_t kNoPotOwner = 0xFF;
 // NotYours: host -> the taker: your take is refused (someone else's came first): out of your pack. LostToss: the same,
 // someone took it at the same moment and won the coin toss.
 enum class ItemGoneReason : uint8_t { Taken = 1, Destroyed = 2, NotInHostWorld = 3, NotYours = 4, LostToss = 5 };
@@ -961,7 +961,7 @@ inline bool read_item_put(Reader& r, ItemPutMsg& m) {
     get_floats(r, m.pos, 3);
     get_floats(r, m.rot, 4);
     m.gear = r.get_long_blob(kGearTextMax);
-    m.owner = r.left() >= 1 ? r.get<uint8_t>() : kNoOwner;
+    m.owner = r.left() >= 1 ? r.get<uint8_t>() : kNoPotOwner;
     return r.ok();
 }
 

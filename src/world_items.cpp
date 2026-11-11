@@ -1064,7 +1064,7 @@ bool on_fire(Il2CppObject* pot) {
 
 // The owner (someone else) is in the game and in our scene: their game runs the pot.
 bool owner_with_us(uint8_t id) {
-    if (id == net::kNoOwner || id == self_id()) return false;
+    if (id == net::kNoPotOwner || id == self_id()) return false;
     bool linked = false;
     for (const net::PlayerInfo& p : netrt::status().players)
         if (p.id == id) linked = true;
@@ -1075,7 +1075,7 @@ bool owner_with_us(uint8_t id) {
 
 uint8_t owner_of(Il2CppObject* pot) {
     const auto it = pot ? g_pot_owner.find(pot) : g_pot_owner.end();
-    return it == g_pot_owner.end() ? net::kNoOwner : it->second;
+    return it == g_pot_owner.end() ? net::kNoPotOwner : it->second;
 }
 
 // Someone else's pot on a fire here, run by their game: we don't cook it, take from it, or tell anything about it.
@@ -1104,7 +1104,7 @@ Il2CppObject* pot_cooking(Il2CppObject* food) {
 uint8_t owner_for_record(Il2CppObject* gi) {
     Il2CppObject* pot = pot_of(gi);
     if (!pot) pot = pot_cooking(gi);
-    if (!pot || !on_fire(pot)) return net::kNoOwner;
+    if (!pot || !on_fire(pot)) return net::kNoPotOwner;
     return owner_of(pot);
 }
 
@@ -1781,7 +1781,7 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     --g_applying;
     Il2CppObject* pot = pot_of(gear_on(object_by_pdid(our_id(m.pdid))));
     if (!pot) return;
-    if (m.owner != net::kNoOwner && on_fire(pot)) {
+    if (m.owner != net::kNoPotOwner && on_fire(pot)) {
         const uint8_t had = owner_of(pot);
         g_pot_owner[pot] = m.owner;
         g_pot_heard[pot] = now;
@@ -2228,8 +2228,8 @@ void scan(double now) {
             }
             bool tell = g_pots_changed.erase(pot) > 0;
             // TLDCoop_DLC: the pot's owner (who put it on the fire) tells how it goes; the host for a pot nobody here owns
-            const uint8_t owner = on_fire(pot) ? owner_of(pot) : net::kNoOwner;
-            const bool ours = owner != net::kNoOwner && owner == self_id();
+            const uint8_t owner = on_fire(pot) ? owner_of(pot) : net::kNoPotOwner;
+            const bool ours = owner != net::kNoPotOwner && owner == self_id();
             const bool runs_it = ours || (hosting() && !owner_with_us(owner));
             if (last.kind >= 0 && !(sig == last)) {
                 if (runs_it)

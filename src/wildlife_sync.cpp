@@ -569,6 +569,64 @@ void region_update_detour(Il2CppObject* region, const MethodInfo* method) {
     if (forced) *(reinterpret_cast<char*>(region) + g_region_override) = 0;
 }
 
+// TLDCoop_DLC (Kerel 11.11 22:03: far ahead of the host on the tracks he met no animals; as the host came within
+// ~250 m, its game spawned a whole pack at once, 17-64 m from him): the spawning game lets a region a friend is near
+// spawn as if we were near (SpawnRegion.SpawnRegionCloseEnoughForSpawning), and never puts a new animal close to a
+// friend (SpawnRegion.SpawnPositionTooCloseToCamera), as TLD never does close to its own player.
+using RegionBoolFn = bool (*)(Il2CppObject* region, const MethodInfo* method);
+using SpawnSpotFn = bool (*)(Il2CppObject* region, Vector3 pos, const MethodInfo* method);
+RegionBoolFn g_region_close = nullptr;
+bool spawning_here();  // (below: ownership off, or we spawn in this scene)
+SpawnSpotFn g_spot_too_close = nullptr;
+float g_spawn_keep_off = 0;  // SpawnRegionManager.m_ClosestSpawnDistanceToPlayer (read once)
+
+float region_reach() {
+    if (g_region_reach <= 0) {
+        Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
+        static ptrdiff_t off = il2::field_offset_quiet(il2::find_class(kGame, "", "SpawnRegionManager"),
+                                                       "m_SpawnRegionDisableDistance");
+        const float d = manager && off >= 0 ? il2::read_field<float>(manager, off) : 0;
+        g_region_reach = d > 50 ? d : 250;
+        logx::info("wildlife: spawn regions within %.0f m of a friend are kept on as near us", g_region_reach);
+    }
+    return g_region_reach;
+}
+
+bool region_close_detour(Il2CppObject* region, const MethodInfo* method) {
+    if (g_region_close(region, method)) return true;
+    if (g_friend_spots.empty() || !spawning_here() || api.region_center < 0 || !region) return false;
+    const float reach = region_reach();
+    const Vector3 c = il2::read_field<Vector3>(region, api.region_center);
+    for (const Vector3& f : g_friend_spots) {
+        const float dx = c.x - f.x, dz = c.z - f.z;
+        if (dx * dx + dz * dz <= reach * reach) {
+            static int logged = 0;
+            if (logged++ < 5)
+                logx::info("wildlife: a spawn region %.0f m from a friend spawns as if near us", std::sqrt(dx * dx + dz * dz));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool spot_too_close_detour(Il2CppObject* region, Vector3 pos, const MethodInfo* method) {
+    if (g_spot_too_close(region, pos, method)) return true;
+    if (g_friend_spots.empty()) return false;
+    if (g_spawn_keep_off <= 0) {
+        Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
+        static ptrdiff_t off = il2::field_offset_quiet(il2::find_class(kGame, "", "SpawnRegionManager"),
+                                                       "m_ClosestSpawnDistanceToPlayer");
+        const float d = manager && off >= 0 ? il2::read_field<float>(manager, off) : 0;
+        g_spawn_keep_off = std::max(d, 80.0f);
+        logx::info("wildlife: no animal is spawned within %.0f m of a friend", g_spawn_keep_off);
+    }
+    for (const Vector3& f : g_friend_spots) {
+        const float dx = pos.x - f.x, dy = pos.y - f.y, dz = pos.z - f.z;
+        if (dx * dx + dy * dy + dz * dz < g_spawn_keep_off * g_spawn_keep_off) return true;
+    }
+    return false;
+}
+
 // TLDCoop_DLC: animals handed between the games when the host leaves a scene a friend stays in and comes back.
 std::string g_took_over_scene;  // friend: our animals took the host's places here (the host went elsewhere)
 struct Handover {
@@ -1316,6 +1374,38 @@ int puppet_variant(uint32_t id) {
     return it != g_puppets.end() ? it->second.variant : -1;
 }
 
+// TLDCoop_DLC (Shatsca 11.11 20:01 "te jelenie nadal się zmieniają po strzale (łania - jeleń)"): the addressable
+// reference of a kind's variant (a doe's, a timberwolf's...), found once: a spawn area of it here, or an animal of it
+// here. Kerel shot the host's doe where only stags spawn: the doe handed to him was made from a stag's area, a stag.
+std::unordered_map<int, uintptr_t> g_variant_refs;
+Il2CppObject* variant_ref(int kind, int variant) {
+    const int key = kind + variant * 1000;
+    if (const auto it = g_variant_refs.find(key); it != g_variant_refs.end()) {
+        if (Il2CppObject* ref = target(it->second)) return ref;
+        il2::il2cpp_gchandle_free(it->second);
+        g_variant_refs.erase(it);
+    }
+    Il2CppObject* found = nullptr;
+    Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
+    for (Il2CppObject* region : list_items(il2::read_field<Il2CppObject*>(manager, api.spawn_regions))) {
+        if (il2::read_field<int32_t>(region, api.region_kind) != kind) continue;
+        Il2CppObject* asset = region_asset(region, 0);
+        if (asset && region_variant(region, asset) == variant) {
+            found = asset;
+            break;
+        }
+    }
+    if (!found && api.ai_asset_ref >= 0)
+        for (Il2CppObject* ai : all_animals())
+            if (il2::read_field<int32_t>(ai, api.ai_kind) == kind && variant_of(ai) == variant)
+                if ((found = il2::read_field<Il2CppObject*>(ai, api.ai_asset_ref))) break;
+    if (!found && api.ai_asset_ref >= 0)  // (the model the host's animal of it was shown with here)
+        if (Il2CppObject* tpl_ai = base_ai_of(template_for(kind, false, variant)); tpl_ai && variant_of(tpl_ai) == variant)
+            found = il2::read_field<Il2CppObject*>(tpl_ai, api.ai_asset_ref);
+    if (found) g_variant_refs[key] = hold(found);
+    return found;
+}
+
 Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees, int32_t mode = 14 /* AiMode.Struggle */,
                              bool wake = true, int variant = -1) {
     if (!api.instantiate_spawn && !api.instantiate_spawn_legacy) return nullptr;
@@ -1341,6 +1431,12 @@ Il2CppObject* spawn_stand_in(int kind, Vector3 pos, float yaw_degrees, int32_t m
     Il2CppObject* ai = nullptr;
     if (api.instantiate_spawn && api.region_spawn_list >= 0) {
         Il2CppObject* asset = region_asset(best, wildlife);
+        // TLDCoop_DLC: no area of its variant here: the nearest area makes it, from its own variant's model
+        if (variant >= 0 && asset && region_variant(best, asset) != variant)
+            if (Il2CppObject* own = variant_ref(kind, variant)) {
+                logx::info("wildlife: no %s area here; one is made from its own model", variant_name(variant));
+                asset = own;
+            }
         void* args[] = {asset, &pos, &rot, &mode, &wildlife};
         if (asset) ai = il2::invoke(api.instantiate_spawn, best, args);
     } else if (api.instantiate_spawn_legacy) {
@@ -1822,6 +1918,8 @@ void mirror(const std::string& scene, double now) {
 #include "wildlife_regions.inc"
 #include "wildlife_owner.inc"
 
+bool spawning_here() { return !own_mode() || i_control(g_own_scene); }
+
 // While we mirror the host's animals, TLD's own spawning stays off: every spawn it makes at runtime (topping up a
 // region, respawning) goes through SpawnRegion.Spawn, and anything it made would only be hidden again. Animals
 // restored from the save at load are hidden once by hide_our_animals.
@@ -2197,6 +2295,13 @@ bool init() {
             region_update && g_region_override >= 0)
             hooks::install_method("SpawnRegion.UpdateFromManager", region_update,
                                   reinterpret_cast<void*>(&region_update_detour), reinterpret_cast<void**>(&g_region_update));
+        // TLDCoop_DLC (Kerel 11.11): regions near a friend spawn; never right beside one
+        if (const MethodInfo* close = il2::find_method_quiet(spawn_region, "SpawnRegionCloseEnoughForSpawning", 0))
+            hooks::install_method("SpawnRegion.SpawnRegionCloseEnoughForSpawning", close,
+                                  reinterpret_cast<void*>(&region_close_detour), reinterpret_cast<void**>(&g_region_close));
+        if (const MethodInfo* spot = il2::find_method_quiet(spawn_region, "SpawnPositionTooCloseToCamera", 1))
+            hooks::install_method("SpawnRegion.SpawnPositionTooCloseToCamera", spot,
+                                  reinterpret_cast<void*>(&spot_too_close_detour), reinterpret_cast<void**>(&g_spot_too_close));
         if (api.region_target)  // TLDCoop_DLC (v46): more animals with more players
             hooks::install_method("SpawnRegion.CalculateTargetPopulation", api.region_target,
                                   reinterpret_cast<void*>(&target_detour), reinterpret_cast<void**>(&g_target_population));
