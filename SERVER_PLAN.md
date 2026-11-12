@@ -60,7 +60,19 @@ Today `hosting()` is true in exactly one game and lots of code checks it. With a
 7. **No host**: the menu's CO-OP has "connect to server (IP:port)"; the old host mode stays for playing without
    a server.
 
-## Things to decide with Karol
+## Decided (Karol 12.11)
+
+- **Where:** their own empty PC, **Windows** (10/11). It also runs **the Discord bot** (bridge.py, all the time instead
+  of GitHub Actions every 10 min; later: server status / restart / save from Discord).
+- **World:** the one they play now stays: import the host's world_keep `worlds/<save>.bin` + the host's TLD save's
+  scenes (each player keeps their own character save).
+- **Joining:** by the join code as now, **without a second Steam account**: try Steam's anonymous game server login
+  (SteamGameServer_Init + LogOnAnonymous with steamclient from the Steamworks SDK / SteamCMD redistributables, no TLD
+  ownership needed; clients find it by its code in the server list's game tags instead of a lobby, and talk to its
+  SteamID over SteamGameServerNetworking P2P). Proven first, in stage 0 — if Steam won't relay to an anonymous game
+  server for TLD's app id, fall back to UDP IP:port through Tailscale (free, no router setup).
+
+## Was open (now decided above)
 
 - The world to start from: an existing host save (import its world_keep `.bin` + a scan of every scene's items the
   first time someone enters) or a fresh world.
