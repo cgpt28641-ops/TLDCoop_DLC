@@ -1222,11 +1222,18 @@ double g_belt_checked = -1e9;
 
 // A tool for the belt: TLD's ToolsItem, or by name (Shatsca 11.11 19:40: hammer and hatchet got lighter, the prybar
 // didn't: TLD's prybar isn't a ToolsItem)
+// (by name, kept per item for a few seconds only: weights are asked often, and an address is another item's once the
+// first is gone)
+std::unordered_map<Il2CppObject*, bool> g_tool_seen;
+double g_tool_seen_since = 0;
 bool is_tool(Il2CppObject* gi) {
     if (g_tools_item >= 0 && alive(get<Il2CppObject*>(gi, g_tools_item))) return true;
-    static std::unordered_map<Il2CppObject*, bool> seen;  // (by name, once per item: weights are asked often)
+    auto& seen = g_tool_seen;
+    if (const double now = net::now_ms(); now - g_tool_seen_since > 5000 || seen.size() > 4096) {
+        seen.clear();
+        g_tool_seen_since = now;
+    }
     if (const auto it = seen.find(gi); it != seen.end()) return it->second;
-    if (seen.size() > 4096) seen.clear();
     const std::string n = lower(prefab_name(gi));
     bool tool = false;
     for (const char* k : {"prybar", "knife", "hatchet", "hammer", "hacksaw", "wrench", "shovel", "pickaxe", "crowbar"})
