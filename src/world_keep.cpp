@@ -143,6 +143,15 @@ void load() {
     }
     logx::info("keep: loaded %zu change(s) kept with this game for scenes we weren't in (%s)%s", loaded,
                path.filename().string().c_str(), bad || loaded < count ? "; some were unreadable" : "");
+    if (bad || loaded < count) {
+        // TLDCoop_DLC (12.11): the next save writes the file without what couldn't be read: a copy stays beside it
+        std::error_code ec;
+        auto copy = path;
+        copy += L".unread";
+        std::filesystem::copy_file(path, copy, std::filesystem::copy_options::overwrite_existing, ec);
+        logx::warn("keep: %zu of %u record(s) in %s couldn't be read (%zu bad); the file as it was is kept as %s", count - loaded,
+                   count, path.filename().string().c_str(), bad, ec ? "nothing (the copy failed)" : copy.filename().string().c_str());
+    }
 }
 
 using SaveGlobalFn = void (*)(Il2CppObject* slot, const MethodInfo* method);

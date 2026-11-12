@@ -602,6 +602,7 @@ void host_arbitrate(const std::vector<Present>& players, double now) {
                 e.owner = net::kNoPlayer;
             }
             const double h = game_hours();
+            if (e.frozen_h < 0 && h >= 0) e.frozen_h = h;  // (frozen while the clock couldn't be read: from now)
             if (e.frozen_h >= 0 && h >= 0 && h - e.frozen_h > kFrozenForgetHours) {
                 logx::info("wildlife: #%u (%s) forgotten (nobody came near it for %.0f game hours)", e.id,
                            kind_name(e.last.kind), h - e.frozen_h);
@@ -919,13 +920,16 @@ void take_local(const net::WildCtlMsg& t, double now) {
     // TLDCoop_DLC (Shatsca 11.11 00:53: "the old wolf carcasses doubled in the same places"): a dead one kept from the
     // last game, where TLD's own save already put its carcass back (same kind, within 3 m): that one is it. The old
     // record goes; no second body made.
-    if (dead_given) {
+    // (12.11, logs 11.11 21:20:37: a wolf just shot in a pack fight, another wolf's carcass 1.3 m away: taken for that
+    // one, its own carcass never made - gone for everyone. Only for a body kept from before (kTakeOld), and only at the
+    // very same spot: the doubles lay 0.0-0.1 m apart.)
+    if (dead_given && (t.flags & net::kTakeOld)) {
         for (Il2CppObject* other : all_animals()) {
             if (!alive(other) || il2::read_field<int32_t>(other, api.ai_kind) != s.kind || !dead_animal(other)) continue;
             Vector3 p{};
             if (!il2::invoke_value(api.get_position, transform_of(other), p)) continue;
             const float dx = p.x - pos.x, dy = p.y - pos.y, dz = p.z - pos.z;
-            if (dx * dx + dz * dz > 9.0f || std::fabs(dy) > 3.0f) continue;
+            if (dx * dx + dz * dz > 0.5f * 0.5f || std::fabs(dy) > 1.0f) continue;
             const auto known = g_ids.find(reinterpret_cast<uintptr_t>(other));
             if (known != g_ids.end() && known->second == t.id) continue;
             logx::info("wildlife: #%u (%s, dead) already lies here (TLD's own carcass%s, %.1f m): its old record dropped, "
@@ -1727,6 +1731,7 @@ void own_reset(const char* why, bool restore_hidden) {
 void own_frame(const std::string& scene, bool in_game, double now) {
     const bool host = hosting_now();
     if (g_own_counter == 0) g_own_counter = static_cast<uint32_t>((GetTickCount64() * 2654435761ull) >> 7) & 0x7FFFFF;  // v45
+    if (scene == "MainMenu") g_hours_seen = -1;  // another save may load: its clock is another
     if (scene == "MainMenu" && (!g_registry.empty() || !g_region_store.empty())) {
         // v45: another save may come: what's kept goes with this one (world_keep reads it back)
         logx::info("wildlife: main menu: the registry (%zu) and the spawn regions kept (%zu scene(s)) are put away",
@@ -1802,7 +1807,8 @@ std::string describe_ownership() {
 
 void own_save_kept(std::vector<world_keep::Record>& out) {
     if (!hosting_now() || !own_mode()) return;
-    const double h = game_hours();
+    // (TLD saves while a scene loads too: the clock can't be read then; the latest it did read this game)
+    const double h = game_hours() >= 0 ? game_hours() : g_hours_seen;
     size_t animals = 0, refreshed = 0;
     // TLDCoop_DLC (Shatsca 10.11 23:28: meat taken from wolf carcasses came back after the next DLL/game): a carcass in
     // our game is saved as it is now (harvested here, or by a friend and applied here), not as it was handed to us

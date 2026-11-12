@@ -22,11 +22,21 @@ double g_region_keys_ms = -1e18;
 std::unordered_map<uintptr_t, int32_t> g_pop_extra;  // controller: SpawnRegion -> animals of it counted though not active here
 int g_pop_logged = 0;
 
+// TLDCoop_DLC (12.11, logs 11.11: while a scene loads TLD's clock reads "day 1 15:35" for a second or two; animals
+// frozen in that moment (the host just left their scene) were stamped with hour 15, and half a second later, the clock
+// back at day 36, "forgotten: nobody came near for 846 game hours": 11 animals, carcasses with their meat among them,
+// at every scene change of the host). -1 (unknown) while our scene is loading, or when the clock reads over an hour
+// earlier than it already did in this game (it only ever goes forward).
+double g_hours_seen = -1;  // the latest the clock has read this game (reset at the main menu)
 double game_hours() {
     if (!api.tod || !api.hours_played) return -1;
+    if (core::settled_scene().empty()) return -1;
     Il2CppObject* tod = il2::invoke(api.tod, nullptr);
     float h = -1;
-    return tod && il2::invoke_value(api.hours_played, tod, h) && std::isfinite(h) ? h : -1;
+    if (!tod || !il2::invoke_value(api.hours_played, tod, h) || !std::isfinite(h) || h < 0) return -1;
+    if (g_hours_seen >= 0 && h < g_hours_seen - 1.0) return -1;
+    if (h > g_hours_seen) g_hours_seen = h;
+    return h;
 }
 
 Il2CppObject* region_of(Il2CppObject* ai) {

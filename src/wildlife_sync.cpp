@@ -28,6 +28,7 @@
 #include "paths.h"
 #include "seamless_interiors.h"
 #include "wildlife_carcass.h"
+#include "core.h"
 #include "world_keep.h"
 
 namespace wildlife_sync {
