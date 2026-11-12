@@ -1177,7 +1177,15 @@ void pot_melt_detour(Il2CppObject* self, int64_t litres, const MethodInfo* metho
 }
 // The owner's game cooks it (its cooking skill, its fire): ours only shows what it tells.
 void pot_cook_tick_detour(Il2CppObject* self, float cook_minutes, float ready_minutes, const MethodInfo* method) {
-    if (foreign_pot(self)) return;
+    if (foreign_pot(self)) {
+        static bool said = false;  // (so a log shows the hook is reached: TLD may have inlined the call)
+        if (!said) {
+            said = true;
+            logx::info("items: %s's pot here isn't cooked by our game (its owner's cooks it); first time this game",
+                       player_name(owner_of(self)).c_str());
+        }
+        return;
+    }
     g_pot_cook_tick(self, cook_minutes, ready_minutes, method);
 }
 void pot_melt_tick_detour(Il2CppObject* self, const MethodInfo* method) {

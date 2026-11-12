@@ -1744,3 +1744,32 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   (retried, taken 13 min later), "can't take (rabbit): we aren't in its scene" (scene change race), 25 plants "put back"
   on each friend's arrival (same list for both: their saves differ from the host's world; the host's wins).
 - UNTESTED in the game, all of it.
+
+### 12.11 ~13:50 (Karol: "go through the whole mod's code and fix the bugs")
+How: MSVC /W4 output of the CI build (12 warnings, all shadowing / narrowing, none real); every field offset found
+"quietly" checked for unguarded use (all get/put helpers guard off < 0; just_zoom's loops check); containers changed
+inside their own range-for (none); every src diff since 10.11 re-read (untested code); then the 22:30 logs of all
+three mined per module for outcomes that don't add up. NOT read line by line: the ~79k lines as a whole (seamless_*,
+avatar, coop_menu, coop_hud, session.cpp only where the above led). Found and fixed:
+- **Carcass of a wolf just killed vanished** (logs 21:20:37, #17914599: shot by Kerel, run by Szymon, "already lies here
+  (TLD's own carcass we share, 1.3 m): its old record dropped, no second body", then "gone (no word of it)"): the
+  11.11 01:18 double-carcass check took ANY dead animal of the kind within 3 m for the same body; in a pack fight the
+  next wolf's carcass was never made. Now only for bodies kept from before (kTakeOld) and within 0.5 m (the real
+  doubles lay 0.0-0.1 m apart).
+- **Animals and carcasses "forgotten" at every scene change of the host** (11 in this session, e.g. #17914605, a wolf
+  carcass: "frozen ... nobody is near it" 22:18:52.217, "forgotten (nobody came near it for 846 game hours)"
+  22:18:52.791): while a scene loads TLD's clock reads "day 1 15:35" for 1-2 s; entries frozen then were stamped hour
+  15 and expired (7 days) as soon as the clock was back at day 36. wildlife_regions game_hours(): -1 while
+  core::settled_scene() is empty, or when it reads over an hour less than it already did this game (g_hours_seen,
+  reset at the main menu); a frozen entry without an hour gets one at the next good reading; own_save_kept uses the
+  last good reading while a load is on.
+- world_keep: if any record of the world file can't be read, the file as it was is copied to <name>.bin.unread before
+  the next save writes over it.
+- Boat box: the host also waits for its own open box panel before loading a friend's copy (Reset under an open panel).
+- ClothingExpanded is_tool: the by-name answers are kept 5 s (were kept per address until 4096 entries: another
+  item at a freed item's address took its answer).
+- A once-per-game log line when our game first skips cooking a friend's pot (to see the hook is reached).
+- Looked at, left: the scabbard halves every rifle (text says one); send_gone reports a destroyed stackable without
+  an object as "taken" (harmless: removed either way); the two "coin toss" arrows were real races (both players at
+  the carcass).
+- UNTESTED in the game.

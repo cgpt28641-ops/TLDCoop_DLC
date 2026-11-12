@@ -1051,10 +1051,10 @@ void box_receive() {
     in.clear();
     netrt::drain_packets(net::Msg::IslandBox, in);
     const bool host = hosting();
-    if (!host && !g_box_pending.empty() && !box_panel_open()) {
+    if (!g_box_pending.empty() && !box_panel_open()) {
         const std::string t = std::move(g_box_pending);
         g_box_pending.clear();
-        if (t != g_box_known) load_box(t, g_box_pending_from, g_scene);
+        if (t != g_box_known && load_box(t, g_box_pending_from, g_scene) && host) send_box(g_box_known);
     }
     for (const net::Packet& p : in) {
         net::Reader r = net::packet_body(p);
@@ -1064,7 +1064,13 @@ void box_receive() {
         if (!r.ok() || t.empty() || !api.box_load_all || !api.from_json || !api.box_type) continue;
         if (host) {  // a friend's change: ours too, then everyone gets the result
             if (p.from == g_self) continue;
-            if (t != g_box_known && load_box(t, p.from, scene)) send_box(g_box_known);
+            if (t == g_box_known) continue;
+            if (box_panel_open()) {  // (12.11: the host too: TLD's box isn't reset under its open panel)
+                g_box_pending = t;
+                g_box_pending_from = p.from;
+                continue;
+            }
+            if (load_box(t, p.from, scene)) send_box(g_box_known);
             continue;
         }
         if (p.from != 0 && from != 0) continue;  // (a friend's: only the host's copy counts)
