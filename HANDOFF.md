@@ -1689,3 +1689,13 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
 - Seen, not changed: "plant X isn't harvested in the host's world; put back" when a friend joins (host's world rules);
   "GEAR_ToolBelt has no buff to copy" (no DLC: our weight_detour does it); GearItem.Awake NRE x10 at the main menu while
   making ClothingExpanded items (harmless).
+
+### 12.11 ~07:05 (Shatsca 11.11 23:12 #claude-komendy: no quitting in a fight; Karol: do it)
+- coop_death: Panel_PauseMenu.OnQuitGame hooked: in co-op (netrt::role) while PlayerStruggle.InStruggle() or
+  wildlife_sync::attacked_now(30) (one of our game's BaseAi in Attack / PassingAttack / Struggle with target_of == us
+  within 30 m) -> nothing happens, HUD "Nie możesz wyjść z gry w trakcie walki", log "death: Quit pressed in a fight
+  (co-op): refused". Alt+F4 can't be stopped. UNTESTED.
+- Shatsca 23:23: SkyCoop Reborn (Filigrani, MIT, MelonLoader C# + dedicated server) analysed, answered on
+  #claude-komendy, no code taken. Theirs we lack: proximity + radio voice chat, PvP (melee/weapons vs players, squads,
+  kill feed, shrinking-zone modes, spectator), knocked down + revive, poker, players seen in vehicles, per-player book
+  progress / collectible dupes, presents, dedicated server. Their cooking: one side cooks, others show (like ours now).
