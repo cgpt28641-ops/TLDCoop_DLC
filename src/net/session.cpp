@@ -918,9 +918,16 @@ struct Session::Impl {
             case Msg::ObjectList:
             case Msg::FireList:
             case Msg::WaterList:
+            case Msg::Server: {  // TLDCoop_DLC: a dedicated server's word to a player
+                if (hosting() || !linked) return;
+                keep_packet(*l, type, data, size, now);
+                break;
+            }
+            // TLDCoop_DLC: either way now: a host's to its friends, and a player's to a dedicated server that asked for
+            // them (Msg::Server). A host's game never drains a friend's: it is dropped there (trim_packets).
             case Msg::GameMode:
             case Msg::Features: {
-                if (hosting() || !linked) return;
+                if (!linked) return;
                 keep_packet(*l, type, data, size, now);
                 break;
             }
@@ -964,7 +971,11 @@ struct Session::Impl {
                 break;
             }
             case Msg::World: {
-                if (hosting() || !linked) return;
+                if (!linked) return;
+                if (hosting()) {  // TLDCoop_DLC: the world source's, to a dedicated server (the app keeps it)
+                    keep_packet(*l, type, data, size, now);
+                    break;
+                }
                 WorldMsg w;
                 if (!read_world(r, w)) return;
                 if (have_remote_world && static_cast<int32_t>(w.seq - remote_world.seq) <= 0) return;

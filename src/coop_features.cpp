@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 
+#include "coop_server.h"
 #include "log.h"
 #include "net/protocol.h"
 #include "net_runtime.h"
@@ -76,6 +77,19 @@ void client_frame() {
     }
 }
 
+// TLDCoop_DLC: on a dedicated server: the first game gives its switches (the server keeps them: they are the world's
+// from then on, ours too once it says them back); the world source goes on telling how much snow its trees carry.
+double g_server_sent_ms = 0;
+void server_frame() {
+    if (!coop_server::wants_features() && !coop_server::world_source()) return;
+    const double now = net::now_ms();
+    if (now - g_server_sent_ms < (coop_server::wants_features() ? 2000 : kResendMs)) return;
+    g_server_sent_ms = now;
+    net::Writer w(net::Msg::Features, 64);
+    net::write_features(w, g_own, g_own_snow);
+    netrt::send_packet(w, true);
+}
+
 bool client() {
     const auto role = netrt::role();
     return role && *role == net::Role::Client;
@@ -97,6 +111,7 @@ void on_frame() {
     if (role && *role == net::Role::Host) host_frame();
     if (role && *role == net::Role::Client) {
         client_frame();
+        server_frame();
     } else {
         g_host_known = false;
         g_host_snow = -1;

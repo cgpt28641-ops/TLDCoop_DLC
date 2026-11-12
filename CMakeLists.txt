@@ -51,6 +51,7 @@ add_library(tldcoop SHARED
   src/slot_machine.cpp  # TLDCoop_DLC: the automat (slot machine), test builds
   src/automat_items.cpp  # TLDCoop_DLC: the automat's items (board, mechanism, automat)
   src/coop_features.cpp
+  src/coop_server.cpp  # TLDCoop_DLC: playing on a dedicated server (tldserver)
   src/dynamic_trees.cpp
   src/seamless_interiors.cpp  # TLDCoop_DLC: Seamless Interiors (karsontr13), with permission
   src/custom_pictures.cpp

@@ -24,6 +24,7 @@
 #include "item_rarity.h"
 #include "slot_machine.h"
 #include "coop_features.h"
+#include "coop_server.h"
 #include "custom_pictures.h"
 #include "loading_screen.h"
 #ifdef TLDCOOP_DEV_CONSOLE  // TLDCoop_DLC: for testing; to be removed (src/dev_console.h)
@@ -601,6 +602,7 @@ void on_frame() {
     TIMED("steam_dispatch::on_frame", steam_dispatch::on_frame());
     if (g_net_enabled) TIMED("notice_reload", notice_reload(scene));
     if (g_net_enabled) TIMED("push_local_state", push_local_state(scene));
+    TIMED("coop_server::on_frame", coop_server::on_frame());  // TLDCoop_DLC: first: what a dedicated server wants of us
     if (g_net_enabled) TIMED("world_sync::on_frame", world_sync::on_frame(scene, in_game));
     TIMED("wildlife_sync::on_frame", wildlife_sync::on_frame(scene, in_game));  // also tidies up when co-op stops
     TIMED("wildlife_targets::on_frame", wildlife_targets::on_frame());

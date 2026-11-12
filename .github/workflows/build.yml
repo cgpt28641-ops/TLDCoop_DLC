@@ -164,3 +164,17 @@ jobs:
           if [ -f build/winhttp.map ]; then cp build/winhttp.map winhttp.map && gh release upload dll-latest winhttp.map -R "$GITHUB_REPOSITORY" --clobber || echo "::warning::winhttp.map not uploaded"; else echo "::warning::no winhttp.map"; fi
           gh release edit dll-latest -R "$GITHUB_REPOSITORY" --notes "Only winhttp.dll, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
           echo "::notice::winhttp.dll is in the dll-latest release"
+
+      # TLDCoop_DLC: the branch "server" (playing on the dedicated server, polar-link-server): its winhttp.dll goes to
+      # the release "dll-server", for testing next to main's dll-latest. Never main's release.
+      - name: winhttp.dll to the dll-server release (branch server)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/server'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view dll-server -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create dll-server -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" --title "winhttp.dll (dedicated server test)" --notes "Test build"
+          gh release upload dll-server build/winhttp.dll -R "$GITHUB_REPOSITORY" --clobber
+          gh release edit dll-server -R "$GITHUB_REPOSITORY" --notes "winhttp.dll for the dedicated server test, branch server, build ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
+          echo "::notice::winhttp.dll is in the dll-server release"

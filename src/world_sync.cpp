@@ -1,3 +1,4 @@
+#include "coop_server.h"
 #include "world_sync.h"
 
 #include <windows.h>
@@ -171,7 +172,7 @@ void aurora_value_detour(Il2CppObject* self, const MethodInfo* method) {
     g_aurora_value(self, method);
     if (!self || g_aurora_active < 0 || g_host_aurora < 0 || now_ms_ws() - g_host_aurora_ms > 10000) return;
     const auto role = netrt::role();
-    if (!role || *role == net::Role::Host) return;
+    if (!role || *role == net::Role::Host || coop_server::world_source()) return;  // (the world source's is its own)
     float* v = reinterpret_cast<float*>(reinterpret_cast<char*>(self) + g_aurora_active);
     if (std::fabs(*v - g_host_aurora) > 0.2f && g_aurora_logged++ < 5)
         logx::info("world: aurora %.0f%% here, %.0f%% at the host's: the host's taken", *v * 100, g_host_aurora * 100);
@@ -419,7 +420,9 @@ void on_frame(const std::string& scene, bool in_game) {
     if (!role) return;
     const double now = now_ms();
 
-    if (*role == net::Role::Host) {
+    // TLDCoop_DLC: on a dedicated server the game it picked as the world source publishes like a host (to the server)
+    const bool source = *role == net::Role::Client && coop_server::world_source();
+    if (*role == net::Role::Host || source) {
         if (now - g_last_publish < kPublishMs) return;
         g_last_publish = now;
         // TLDCoop_DLC: while our game loads a scene (a house's door) and its first seconds in it, its clock and weather
@@ -438,7 +441,12 @@ void on_frame(const std::string& scene, bool in_game) {
         g_held_logged = false;
         net::WorldMsg w = read_world(in_game);
         if (w.valid && !settling) g_last_good_ms = now;
-        netrt::set_world(w);
+        if (source) {
+            if (w.valid && !settling) coop_server::publish_world(w);  // (only a settled one: the server keeps the last)
+            g_applied = Applied{};  // (once we follow again: everything checked anew)
+        } else {
+            netrt::set_world(w);
+        }
         return;
     }
 

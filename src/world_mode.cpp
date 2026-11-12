@@ -1,3 +1,4 @@
+#include "coop_server.h"
 #include "world_mode.h"
 
 #include <algorithm>
@@ -315,8 +316,27 @@ void take_packets() {
     }
 }
 
+// TLDCoop_DLC: a dedicated server nobody gave an experience mode and seed yet takes ours: they are the world's from
+// then on (it keeps them; everyone who joins later, and we ourselves next time, plays at them).
+double g_server_sent_ms = 0;
+void give_server_mode(bool in_game) {
+    if (!coop_server::wants_mode() || !in_game || g_overriding || core::settled_scene().empty()) return;
+    const double now = net::now_ms();
+    if (now - g_server_sent_ms < 3000) return;  // (again until it stops asking)
+    g_server_sent_ms = now;
+    const std::string text = serialize_now();
+    const int32_t* seed = seed_field();
+    if (text.empty() || !seed || text.size() > net::kGameModeMax || mode_name(text) == "MainMenu") return;
+    net::Writer w(net::Msg::GameMode, net::kMaxMessage);
+    net::write_game_mode(w, text, *seed);
+    netrt::send_packet(w, true);
+    logx::info("mode: the dedicated server has no mode yet: gave it ours, %s (our game's seed %d); it is the world's now",
+               mode_name(text).c_str(), *seed);
+}
+
 void client_frame(bool in_game) {
     take_packets();
+    give_server_mode(in_game);
     if (netrt::status().connected) {
         if (g_linked_at < 0) g_linked_at = net::now_ms();
     } else {

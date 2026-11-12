@@ -55,9 +55,16 @@ public:
 
         sockaddr_in local{};
         const uint16_t bind_port = cfg.role == Role::Host ? cfg.port : 0;
-        if (!make_addr(cfg.bind_ip, bind_port, local)) return fail("bad bind address '" + cfg.bind_ip + "'");
+        // TLDCoop_DLC (12.11): a friend's socket bound to this PC only (bind_ip=127.0.0.1, coop.ini's default) can't
+        // reach a host on another PC: nothing left the machine, and the host never heard a thing. Bound to any then.
+        std::string bind_ip = cfg.bind_ip;
+        if (cfg.role == Role::Client && bind_ip.rfind("127.", 0) == 0 && cfg.host_ip.rfind("127.", 0) != 0) {
+            bind_ip = "0.0.0.0";
+            if (log_) log_("udp: bind_ip " + cfg.bind_ip + " can't reach " + cfg.host_ip + "; bound to 0.0.0.0 instead");
+        }
+        if (!make_addr(bind_ip, bind_port, local)) return fail("bad bind address '" + bind_ip + "'");
         if (bind(sock_, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) != 0)
-            return fail("bind " + cfg.bind_ip + ":" + std::to_string(bind_port) + " failed (port in use?)");
+            return fail("bind " + bind_ip + ":" + std::to_string(bind_port) + " failed (port in use?)");
         if (cfg.role == Role::Client) {
             sockaddr_in host{};
             if (!make_addr(cfg.host_ip, cfg.port, host)) return fail("bad host address '" + cfg.host_ip + "'");
