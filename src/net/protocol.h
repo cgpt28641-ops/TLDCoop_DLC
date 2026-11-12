@@ -952,7 +952,9 @@ inline void write_item_put(Writer& w, const ItemPutMsg& m) {
     w.put(m.owner);
 }
 
-inline bool read_item_put(Reader& r, ItemPutMsg& m) {
+// `kept`: a record from the host's world file (world_keep), which may have been written before v51: no owner byte
+// then. (12.11: read strictly, every item record kept before the update failed to load in the first v51 build.)
+inline bool read_item_put(Reader& r, ItemPutMsg& m, bool kept = false) {
     m.scene = r.get_str(kSceneLen);
     m.seq = r.get<uint32_t>();
     m.flags = r.get<uint8_t>();
@@ -961,6 +963,10 @@ inline bool read_item_put(Reader& r, ItemPutMsg& m) {
     get_floats(r, m.pos, 3);
     get_floats(r, m.rot, 4);
     m.gear = r.get_long_blob(kGearTextMax);
+    if (kept && r.ok() && r.left() == 0) {
+        m.owner = kNoPotOwner;
+        return true;
+    }
     m.owner = r.get<uint8_t>();  // (v51)
     return r.ok();
 }

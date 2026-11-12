@@ -47,7 +47,7 @@ std::wstring stamp() {
 }
 
 // The copy, then the oldest ones beyond what's kept. On a thread of its own: the load goes on meanwhile.
-void back_up(fs::path from, fs::path root, int keep) {
+void back_up(fs::path from, fs::path worlds, fs::path root, int keep) {
     std::error_code ec;
     const fs::path to = root / stamp();
     fs::create_directories(to, ec);
@@ -55,6 +55,13 @@ void back_up(fs::path from, fs::path root, int keep) {
     if (ec) {
         logx::warn("backup: copying %ls to %ls failed: %s", from.c_str(), to.c_str(), ec.message().c_str());
         return;
+    }
+    // TLDCoop_DLC (12.11): the host's world files too (world_keep: what it keeps of the world outside TLD's save); a
+    // build that couldn't read them would otherwise lose them at its first save
+    if (!worlds.empty() && fs::exists(worlds, ec)) {
+        fs::create_directories(to / L"_tldcoop_worlds", ec);
+        fs::copy(worlds, to / L"_tldcoop_worlds", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+        if (ec) logx::warn("backup: copying %ls failed: %s", worlds.c_str(), ec.message().c_str());
     }
     std::uintmax_t bytes = 0;
     for (const auto& e : fs::recursive_directory_iterator(to, ec))
@@ -95,7 +102,7 @@ void on_frame(const std::string& scene, bool coop_on) {
         const fs::path from = survival_folder();
         std::error_code ec;
         if (!from.empty() && fs::exists(from, ec)) {
-            std::thread(back_up, from, paths::mod_dir() / L"backups", g_keep).detach();
+            std::thread(back_up, from, paths::instance_dir() / L"worlds", paths::mod_dir() / L"backups", g_keep).detach();
             coop_notices::tell("Saves backed up");
         } else {
             logx::warn("backup: TLD's save folder isn't there; nothing copied");
