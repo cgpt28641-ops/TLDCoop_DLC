@@ -58,4 +58,8 @@ void carcass_gone(uint32_t id, Il2CppObject* carcass_go);
 // puts it away, not kept as dead (made again, and one more carcass item, on every visit)
 void small_game_taken(Il2CppObject* ai);
 
+// TLDCoop_DLC (Shatsca 11.11: no quitting in a fight): an animal of our game attacks us (Attack, PassingAttack or
+// Struggle, after our player) within `metres`.
+bool attacked_now(float metres);
+
 }  // namespace wildlife_sync

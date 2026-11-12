@@ -27,6 +27,7 @@
 #include "world_containers.h"
 #include "world_join.h"
 #include "world_objects.h"
+#include "wildlife_sync.h"
 
 namespace coop_death {
 namespace {
@@ -1435,6 +1436,27 @@ void on_frame(const std::string& scene, bool in_game) {
     if (pressed(2, VK_LEFT) || pressed(3, 'A')) next_survivor(-1);
 }
 
+// TLDCoop_DLC (Shatsca 11.11: "no leaving the game while someone is in a fight"): in co-op, TLD's Quit (pause menu)
+// does nothing while a wolf or a bear has us (a struggle) or an animal attacks us; the HUD says why.
+using QuitFn = void (*)(Il2CppObject* self, const MethodInfo* method);
+QuitFn g_quit = nullptr;
+
+bool fighting_now() {
+    bool fighting = false;
+    if (Il2CppObject* st = api.get_struggle ? il2::invoke(api.get_struggle, nullptr) : nullptr; st && api.in_struggle)
+        il2::invoke_value(api.in_struggle, st, fighting);
+    return fighting || wildlife_sync::attacked_now(30.0f);
+}
+
+void quit_detour(Il2CppObject* self, const MethodInfo* method) {
+    if (netrt::role() && fighting_now()) {
+        coop_notices::tell("Nie możesz wyjść z gry w trakcie walki");
+        logx::info("death: Quit pressed in a fight (co-op): refused");
+        return;
+    }
+    g_quit(self, method);
+}
+
 bool init() {
     Il2CppClass* game_object = il2::find_class(kCore, "UnityEngine", "GameObject");
     Il2CppClass* component = il2::find_class(kCore, "UnityEngine", "Component");
@@ -1710,6 +1732,12 @@ bool init() {
             logx::warn("death: the low-health grey after Cheat Death can't be fixed (CameraEffects.SetColorScalar)");
     } else if (g_ready) {
         logx::warn("death: Cheat Death's parts not found; co-op's way only");
+    }
+    if (g_ready) {  // TLDCoop_DLC: no quitting in a fight
+        Il2CppClass* pause = il2::find_class(kGame, "", "Panel_PauseMenu");
+        const MethodInfo* quit = pause ? il2::find_method_quiet(pause, "OnQuitGame", 0) : nullptr;
+        if (!quit || !hook("Panel_PauseMenu.OnQuitGame", quit, &quit_detour, &g_quit))
+            logx::warn("death: quitting in a fight can't be stopped (Panel_PauseMenu.OnQuitGame)");
     }
     logx::info("death: %s", g_ready ? "ready (a death in co-op leaves a body; the player comes back as a new survivor)"
                                     : "UNAVAILABLE (hooks failed)");

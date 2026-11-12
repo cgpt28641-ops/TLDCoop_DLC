@@ -1979,6 +1979,24 @@ bool mirroring() { return g_mirroring; }
 
 bool ownership() { return g_ready && own_mode(); }
 
+bool attacked_now(float metres) {
+    if (!g_ready) return false;
+    const game::PlayerState me = game::read_player();
+    if (!me.valid) return false;
+    const uint8_t us = self_id();
+    for (Il2CppObject* ai : all_animals()) {
+        if (!ai || !alive(ai)) continue;
+        const int32_t mode = il2::read_field<int32_t>(ai, api.ai_mode);
+        if (mode != 1 /* Attack */ && mode != 25 /* PassingAttack */ && mode != kAiModeStruggle) continue;
+        if (target_of(ai) != us) continue;
+        Vector3 p{};
+        if (!il2::invoke_value(api.get_position, transform_of(ai), p)) continue;
+        const float dx = p.x - me.position.x, dy = p.y - me.position.y, dz = p.z - me.position.z;
+        if (dx * dx + dy * dy + dz * dz <= metres * metres) return true;
+    }
+    return false;
+}
+
 // TLDCoop_DLC: the host's game is about to load another scene (a house's door, the region's edge): the animals it runs
 // here go now, with TLD's own record of each, to the friend in this scene nearest to each one, instead of after the
 // load from the registry's last record (they stood still or jumped meanwhile, or went to nobody). Nobody left here:
