@@ -1699,3 +1699,15 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   #claude-komendy, no code taken. Theirs we lack: proximity + radio voice chat, PvP (melee/weapons vs players, squads,
   kill feed, shrinking-zone modes, spectator), knocked down + revive, poker, players seen in vehicles, per-player book
   progress / collectible dupes, presents, dedicated server. Their cooking: one side cooks, others show (like ours now).
+
+### 12.11 ~07:40 (Shatsca 07:28 #claude-komendy; Kerel 07:26 SkyCoop better/worse)
+- Sleep (Shatsca: "it waited longer than 2 s after a player left"): log 11.11 01:12:40 -> 01:13:14 the host waited 34 s
+  for Szymon, invalid state (in the menu / loading while he quit), then again while he loaded back in. coop_sleep
+  everyone(): any remote player without a valid StateMsg (menu / loading) isn't counted, host and friends alike (before:
+  only "not linked" on the host). Side effect: someone going through a door while all others are in bed isn't waited
+  for. UNTESTED.
+- Belt: already 3 heaviest tools -50 % with the prybar counted (19:52 build) — confirmed to Shatsca, no change.
+- SkyCoop vs ours answered on #claude-komendy (theirs better: separate server holds the world (no host conflicts,
+  world without host, container contents fetched on open), voice, PvP, revive, in-game settings (ModSettings); ours
+  better: per-animal ownership + carcasses, world kept for scenes, Seamless Interiors / Iron Road, Steam code joining,
+  one DLL, mocap avatars, reports).
