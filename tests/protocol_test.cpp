@@ -269,7 +269,20 @@ int main() {
     put.rot[0] = 0, put.rot[1] = 0.7f, put.rot[2] = 0, put.rot[3] = 0.7f;
     put.gear = text(5000, 'A');
     put.owner = 2;  // (v51)
-    round_trip("ItemPut", Msg::ItemPut, put, write_item_put, read_item_put);
+    round_trip("ItemPut", Msg::ItemPut, put, write_item_put,
+               [](net::Reader& r, ItemPutMsg& m) { return read_item_put(r, m); });
+    {  // a record kept by a host's world file before v51 (no owner byte) still loads as kept, not as a live message
+        net::Writer w(Msg::ItemPut, net::kMaxMessage);
+        write_item_put(w, put);
+        ItemPutMsg old;
+        net::Reader strict(w.data() + kHeader, w.size() - kHeader - 1);
+        if (read_item_put(strict, old)) fail("ItemPut", "a pre-v51 record was taken as a live message");
+        net::Reader kept(w.data() + kHeader, w.size() - kHeader - 1);
+        if (!read_item_put(kept, old, true) || old.owner != net::kNoPotOwner || old.gear != put.gear)
+            fail("ItemPut", "a pre-v51 kept record wasn't read");
+        net::Reader now(w.data() + kHeader, w.size() - kHeader);
+        if (!read_item_put(now, old, true) || old.owner != 2) fail("ItemPut", "a v51 kept record lost its owner");
+    }
 
     ItemGoneMsg gone;
     gone.scene = "LakeRegion", gone.seq = 16, gone.reason = ItemGoneReason::NotInHostWorld, gone.pdid = "4eff63aa";

@@ -1711,3 +1711,36 @@ Co-op (seamless_coop.inc, world_items.cpp, world_containers.cpp, coop_save.cpp, 
   world without host, container contents fetched on open), voice, PvP, revive, in-game settings (ModSettings); ours
   better: per-animal ownership + carcasses, world kept for scenes, Seamless Interiors / Iron Road, Steam code joining,
   one DLL, mocap avatars, reports).
+
+### 12.11 ~12:40 (Karol: "check the logs and the code once more"; second pass over the 22:30 logs and the 11./12.11 diffs)
+- **REGRESSION of the 23:00 build (v51), fixed:** read_item_put required the new owner byte, and world_items::load_kept
+  reads the host's world file (worlds/<save>.bin, world_keep) with it: every ItemPut kept BEFORE the update (Tag
+  ItemChange puts = friends' items put down in scenes the host wasn't in; Tag ItemRecord) failed to load ("some were
+  unreadable") and the next save wrote the file without them. A host who loaded the world with the builds of 11.11
+  23:00 .. 12.11 07:35 lost those kept puts (ItemRecords come back when the host visits the scenes; pending puts
+  don't). Now read_item_put(r, m, kept=true) takes a record without the owner byte (protocol_test covers it).
+  coop_backup also copies <instance>/worlds into each backup (folder _tldcoop_worlds) from now on.
+- What really happened at the fire (19:46-19:47, all three logs side by side): shared sleeps (1 h in 8 s) ran while the
+  host's meat was on; each game cooked its copy on its own, Szymon's was ready first, he took it (his game: raw meat +
+  dummy "gone"), the host's "removed a moment after we changed it: ours stays, told again" put it back in his game, he
+  took it again... 5 times = cooked meat duplicated for Szymon, and at 19:47:13 the host's own was gone. Karol's read
+  was right; owner-only cooking and taking is the fix. Corrections to yesterday's version:
+  - foreign_pot no longer asks whether OUR copy is on a fire (5x "ours has GEAR_RecycledCan on it, left beside": a copy
+    beside the slot was not protected); the owner is taken from the record even before TLD seats our copy; a record
+    without an owner frees the pot (unless it's ours and on our fire).
+  - own_pot: never over an owner who is here (TLD starting our copy's cooking from their record).
+  - Random ids only for GEAR_CookingPotDummy made after the first scan (was: every id-less item after the first scan;
+    two games giving different ids to the same save-loaded item would have doubled it).
+  - Kept records sent to a friend (answer_want from g_pending / g_scene_records) carry no owner.
+- Item lost through a reconnect (Kerel's link dropped 21:45:28, back 21:45:41; his internet / Steam relay: recv
+  counter stood still 5 s, both ends timed out): a bedroll of the host's world, one our game's random spawns had
+  switched off and world_items had shown, went off again in his game during the re-sync and his scan told it as
+  destroyed -> removed from the host's and Szymon's games. world_items scan (friend only): a shared item that still
+  exists, not in a pack / container, only inactive, is switched on again once (g_reshown) or just forgotten here; never
+  told as gone.
+- Diagnostics: "SpawnRegion.UpdateFromManager runs with N friend spot(s)" and "SpawnRegionCloseEnoughForSpawning is
+  asked by TLD" once each (the old "kept on" line never appeared in 3 h: is the hook called at all?).
+- Checked, fine: containers, sleeps (11 shared sleeps, 2-5 s each), world_keep saves, "can't take: none could be made"
+  (retried, taken 13 min later), "can't take (rabbit): we aren't in its scene" (scene change race), 25 plants "put back"
+  on each friend's arrival (same list for both: their saves differ from the host's world; the host's wins).
+- UNTESTED in the game, all of it.

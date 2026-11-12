@@ -543,6 +543,13 @@ int g_regions_kept = 0;
 
 void region_update_detour(Il2CppObject* region, const MethodInfo* method) {
     bool forced = false;
+    {  // (12.11: "kept on" was never logged in a 3 h game: does TLD call this at all, and with friends known?)
+        static int calls = 0, with_friends = 0;
+        ++calls;
+        if (!g_friend_spots.empty() && with_friends++ == 0)
+            logx::info("wildlife: SpawnRegion.UpdateFromManager runs with %zu friend spot(s) known (call %d)",
+                       g_friend_spots.size(), calls);
+    }
     if (!g_friend_spots.empty() && g_region_override >= 0 && api.region_center >= 0 && region) {
         if (g_region_reach <= 0) {
             Il2CppObject* manager = il2::invoke(api.spawn_manager, nullptr);
@@ -593,6 +600,13 @@ float region_reach() {
 }
 
 bool region_close_detour(Il2CppObject* region, const MethodInfo* method) {
+    {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            logx::info("wildlife: SpawnRegion.SpawnRegionCloseEnoughForSpawning is asked by TLD (the hook runs)");
+        }
+    }
     if (g_region_close(region, method)) return true;
     if (g_friend_spots.empty() || !spawning_here() || api.region_center < 0 || !region) return false;
     const float reach = region_reach();

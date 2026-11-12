@@ -414,7 +414,8 @@ std::vector<Loose> scan_loose(bool give_ids) {
         l.units = units_of(gi);
         if (l.pdid.empty() && give_ids) {
             // (in the first scan of a scene, or a Seamless Interiors room just up: both games have it, the same id)
-            const bool fresh = baseline_now() && !seamless_interiors::is_clone_object(gi);
+            // TLD's dummy pot (under food put straight on a fire), made in our game after the scene's first scan
+            const bool fresh = baseline_now() && name_of(gi).find("CookingPotDummy") != std::string::npos;
             l.pdid = give_id(gi, l.pos, fresh);
             if (!l.pdid.empty()) ++g_ids_given;
         }
@@ -483,6 +484,7 @@ std::unordered_map<Il2CppObject*, double> g_pot_loaded_ms;
 // cooks it and tells how it goes; the others show it and can't take from it while the owner is in the scene.
 std::unordered_map<Il2CppObject*, uint8_t> g_pot_owner;
 int g_applying = 0;  // inside apply_put / load_pot: TLD's own calls then aren't the player's doing
+std::unordered_set<std::string> g_reshown;  // friend: items switched off in our game that we showed again (once each)
 bool g_owned_pots = false;  // the hooks that keep a friend's pot from cooking here are in
 std::unordered_map<Il2CppObject*, double> g_pot_heard;  // when the owner last told us of their pot
 constexpr double kOwnerSilentMs = 45000;  // the owner's game says how its pot is getting on every kPotSyncMs; silent
@@ -574,6 +576,7 @@ void reset(const char* why) {
     g_pot_sig.clear();
     g_pot_owner.clear();
     g_pot_heard.clear();
+    g_reshown.clear();
     g_scene.clear();
     g_baseline = false;
     g_newest.clear();
@@ -1080,8 +1083,9 @@ uint8_t owner_of(Il2CppObject* pot) {
 
 // Someone else's pot on a fire here, run by their game: we don't cook it, take from it, or tell anything about it.
 bool foreign_pot(Il2CppObject* pot) {
-    if (!g_owned_pots || !pot || owner_of(pot) == net::kNoPotOwner || !on_fire(pot) || !owner_with_us(owner_of(pot)))
-        return false;
+    // (not asked whether OUR copy is on a fire: a slot taken in our game leaves it beside the fire, still theirs; the
+    // owner's records stop naming them once it's off theirs)
+    if (!g_owned_pots || !pot || owner_of(pot) == net::kNoPotOwner || !owner_with_us(owner_of(pot))) return false;
     const auto heard = g_pot_heard.find(pot);
     if (heard != g_pot_heard.end() && now_ms() - heard->second > kOwnerSilentMs) {
         logx::info("items: %s's pot here has been silent %.0f s: anyone's again", player_name(owner_of(pot)).c_str(),
@@ -1112,7 +1116,10 @@ uint8_t owner_for_record(Il2CppObject* gi) {
 // Ours from now on: we put it on the fire / put something in it.
 void own_pot(Il2CppObject* pot) {
     if (!pot || g_applying) return;
+    // (someone else's, and they're here: TLD starting our copy's cooking from their record isn't us taking it over)
+    if (const uint8_t owner = owner_of(pot); owner != net::kNoPotOwner && owner != self_id() && owner_with_us(owner)) return;
     g_pot_owner[pot] = self_id();
+    g_pot_heard.erase(pot);
 }
 
 // Not ours to take: says so on the HUD (once in a while).
@@ -1782,14 +1789,16 @@ void apply_put(const net::ItemPutMsg& m, double now) {
     --g_applying;
     Il2CppObject* pot = pot_of(gear_on(object_by_pdid(our_id(m.pdid))));
     if (!pot) return;
-    if (m.owner != net::kNoPotOwner && on_fire(pot)) {
+    // (named in the record: theirs even before TLD has our copy on the fire's slot, a frame or two later; taken as
+    // on the fire only once it is: foreign_pot)
+    if (m.owner != net::kNoPotOwner) {
         const uint8_t had = owner_of(pot);
         g_pot_owner[pot] = m.owner;
         g_pot_heard[pot] = now;
         if (had != m.owner && m.owner != self_id())
             logx::info("items: the pot %s (%s) on the fire is %s's: their game cooks it, only they take from it",
                        m.prefab.c_str(), short_id(m.pdid).c_str(), player_name(m.owner).c_str());
-    } else if (!on_fire(pot)) {
+    } else if (owner_of(pot) != self_id() || !on_fire(pot)) {  // nobody's now (off the fire in its owner's game)
         g_pot_owner.erase(pot);
         g_pot_heard.erase(pot);
     }
@@ -1994,6 +2003,7 @@ void answer_want(const net::ItemHashesMsg& m, double now, uint8_t from) {
             for (const auto& [pdid, c] : pend->second) {
                 if (!c.put || !asked.count(net::pdid_hash(c.put_msg.pdid))) continue;
                 net::ItemPutMsg put = c.put_msg;
+                put.owner = net::kNoPotOwner;  // (kept from another time: whoever had it on a fire isn't cooking it now)
                 put.seq = ++g_seq;
                 put.flags |= net::kItemAnswer;
                 net::Writer w(net::Msg::ItemPut, net::kMaxMessage);
@@ -2011,6 +2021,7 @@ void answer_want(const net::ItemHashesMsg& m, double now, uint8_t from) {
                 const auto it = recs->second.find(h);
                 if (it == recs->second.end() || done.count(h)) continue;
                 net::ItemPutMsg put = it->second;
+                put.owner = net::kNoPotOwner;
                 put.seq = ++g_seq;
                 put.flags |= net::kItemAnswer;
                 net::Writer w(net::Msg::ItemPut, net::kMaxMessage);
@@ -2318,8 +2329,34 @@ void scan(double now) {
         else if (it->second.foreign)  // TLDCoop_DLC: someone else's pot or food on a fire: theirs to tell
             logx::info("items: %s (%s), on someone else's fire slot, left our view; their game tells what became of it",
                        it->second.prefab.c_str(), short_id(it->first).c_str());
-        else if (it->second.shared && !through_door && !all_at_once)
-            send_gone(it->first, it->second);
+        else if (it->second.shared && !through_door && !all_at_once) {
+            // TLDCoop_DLC (logs 11.11 21:45:41: Kerel's link dropped and came back; a bedroll of the host's world, one
+            // our own game's random spawns had switched off, went off again here and was told as destroyed: gone from
+            // the host's and Szymon's games too). A friend's item that still exists, only switched off in our game, isn't
+            // gone from the world: shown again once (the host has it), never told as gone.
+            Il2CppObject* go = hosting() ? nullptr : object_by_pdid(it->first);
+            Il2CppObject* gi = gear_on(go);
+            bool on = true;
+            if (gi && alive(gi) && !get<bool>(gi, api.in_inventory) && !in_a_container(gi) && api.go_set_active &&
+                il2::invoke_value(api.go_active, go, on) && !on) {
+                const bool first_time = g_reshown.insert(it->first).second;
+                if (first_time) {
+                    bool yes = true;
+                    void* args[] = {&yes};
+                    il2::invoke(api.go_set_active, go, args);
+                }
+                if (first_time && is_loose(gi)) {
+                    logx::info("items: %s (%s) was switched off in our game (not destroyed); the host has it: shown again",
+                               it->second.prefab.c_str(), short_id(it->first).c_str());
+                    ++it;
+                    continue;
+                }
+                logx::info("items: %s (%s) is switched off in our game (not destroyed): not told as gone; the host's "
+                           "list brings it back", it->second.prefab.c_str(), short_id(it->first).c_str());
+            } else {
+                send_gone(it->first, it->second);
+            }
+        }
         else if (it->second.shared) {  // TLDCoop_DLC: through a door / all at once: what went into our pack is still told
             Il2CppObject* gi = gear_on(object_by_pdid(it->first));
             if (gi && get<bool>(gi, api.in_inventory)) send_gone(it->first, it->second, true);
@@ -2945,6 +2982,7 @@ void on_frame(bool in_game) {
         g_pot_loaded_ms.clear();
         g_pot_owner.clear();
         g_pot_heard.clear();
+        g_reshown.clear();
         // TLDCoop_DLC: the aliases stay (ids are the game's own, one per item in every scene): cleared here, coming
         // back made the other player's item again beside ours (a copy on the floor)
         g_scene = settled;
@@ -3054,7 +3092,7 @@ bool load_kept(const world_keep::Record& r) {
     net::Reader body = net::packet_body(p);
     if (r.tag == world_keep::Tag::ItemRecord) {
         net::ItemPutMsg m;
-        if (p.type != net::Msg::ItemPut || !net::read_item_put(body, m)) return false;
+        if (p.type != net::Msg::ItemPut || !net::read_item_put(body, m, true)) return false;
         g_scene_records[m.scene][net::pdid_hash(m.pdid)] = std::move(m);
         return true;
     }
@@ -3066,7 +3104,7 @@ bool load_kept(const world_keep::Record& r) {
     }
     Change c;
     c.put = p.type == net::Msg::ItemPut;
-    if (c.put ? !net::read_item_put(body, c.put_msg) : p.type != net::Msg::ItemGone || !net::read_item_gone(body, c.gone_msg))
+    if (c.put ? !net::read_item_put(body, c.put_msg, true) : p.type != net::Msg::ItemGone || !net::read_item_gone(body, c.gone_msg))
         return false;
     const std::string scene = c.put ? c.put_msg.scene : c.gone_msg.scene;
     const std::string pdid = c.put ? c.put_msg.pdid : c.gone_msg.pdid;
