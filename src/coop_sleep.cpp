@@ -414,7 +414,10 @@ std::vector<net::Sleeper> everyone(const net::Status& st) {
         // who left (not linked any more, or no word from them at all) isn't waited for, by the host or a friend
         // (a friend talks to the host only: other friends are known from the host's roster and their states)
         if ((host || p.id == 0) && !p.linked) continue;
-        if (!host && p.id != 0 && std::none_of(states.begin(), states.end(), [&](const net::StateMsg& m) { return m.player == p.id && m.valid; }))
+        // TLDCoop_DLC (Shatsca 12.11: "sleep waited for a player longer after they left, not only 2 s"; 11.11 01:12:40 ->
+        // 01:13:14 the host waited 34 s for Szymon, in the menu / loading while he quit, then again for him loading back
+        // in): someone in a menu or loading (no valid state) can't go to bed: not waited for, by anyone
+        if (std::none_of(states.begin(), states.end(), [&](const net::StateMsg& m) { return m.player == p.id && m.valid; }))
             continue;
         net::Sleeper s{p.id, false, net::SleepChoice::None, false};
         for (const net::StateMsg& m : states) {
