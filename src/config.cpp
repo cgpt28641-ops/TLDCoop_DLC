@@ -265,6 +265,7 @@ void save(const Settings& s) {
     put(L"last_host", s.last_host);
     put(L"last_host_code", s.last_host_code);
     put(L"host_ip", s.host_ip);
+    if (s.transport == "local") put(L"port", std::to_string(s.port));  // TLDCoop_DLC: a server's address pasted in the menu
     put(L"name", s.name);
     put(L"body", s.body);
     put(L"voice", s.voice);

@@ -518,6 +518,43 @@ std::string clean_code(const std::string& raw) {
     return code;
 }
 
+// TLDCoop_DLC (dedicated server): the clipboard holds a server's address, "100.64.1.2" or "100.64.1.2:27015" (as
+// tldserver prints it, or Tailscale shows it): JOIN connects there by IP, with nothing to edit in coop.ini.
+bool server_address(const std::string& raw, std::string& ip, uint16_t& port) {
+    std::string t;
+    for (char c : raw)
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') t += c;
+    if (t.empty() || t.size() > 21) return false;
+    int part[4] = {}, parts = 0, digits = 0;
+    size_t i = 0;
+    for (; i < t.size() && t[i] != ':'; ++i) {
+        if (t[i] == '.') {
+            if (!digits || ++parts > 3) return false;
+            digits = 0;
+        } else if (t[i] >= '0' && t[i] <= '9') {
+            part[parts] = part[parts] * 10 + (t[i] - '0');
+            if (++digits > 3 || part[parts] > 255) return false;
+        } else {
+            return false;
+        }
+    }
+    if (parts != 3 || !digits) return false;
+    int p = 27015;
+    if (i < t.size()) {
+        p = 0;
+        if (++i == t.size()) return false;
+        for (; i < t.size(); ++i) {
+            if (t[i] < '0' || t[i] > '9') return false;
+            p = p * 10 + (t[i] - '0');
+            if (p > 65535) return false;
+        }
+        if (!p) return false;
+    }
+    ip = std::to_string(part[0]) + "." + std::to_string(part[1]) + "." + std::to_string(part[2]) + "." + std::to_string(part[3]);
+    port = static_cast<uint16_t>(p);
+    return true;
+}
+
 std::string new_code() {
     std::random_device rd;
     std::string code;
@@ -1177,13 +1214,17 @@ std::string row_help(int row) {
             return "Twoja mapa rysuje się sama tam, gdzie chodzisz, jak przy rysowaniu węglem. Tylko twoje trasy: "
                    "znajomi rysują swoje.";
         default:
+            if (g.mode == kHost && g.settings.transport == "local")
+                return "Gra po adresie IP (ostatnio łączyłeś się z serwerem). BACKSPACE wraca do kodów Steam: wtedy "
+                       "znajomi dołączą do ciebie kodem.";
             if (g.mode == kHost)
                 return "Daj ten kod znajomym (Discord, czat Steama...). Jest zawsze ten sam, gdy hostujesz. KOPIUJ "
                        "albo CTRL+C kopiuje go do schowka.\n\n" +
                        lobby_status();
             {
                 std::string s = "Wpisz kod od znajomego z klawiatury albo WKLEJ (CTRL+V). BACKSPACE kasuje. Łączysz "
-                                "się przez Steam: bez adresu IP i przekierowania portów.";
+                                "się przez Steam: bez adresu IP i przekierowania portów.\n\nSerwer: skopiuj jego adres "
+                                "(np. 100.64.1.2) i naciśnij tu CTRL+V.";
                 if (!g.settings.last_host.empty())
                     s += "\n\nOstatni host: " + g.settings.last_host + " (" + g.settings.last_host_code +
                          "). Przycisk DOŁĄCZ: " + utf8_upper(g.settings.last_host) + " na dole wpisze jego kod i "
@@ -1434,7 +1475,9 @@ void refresh() {
     values[kCharacter] = upper(display_name(g.bodies[g.body]));
     values[kVoice] = kVoiceNames[g.voice];
     values[kName] = g.settings.name;
-    values[kCode] = local ? std::string("GRA LOKALNA (IP)") : std::string();
+    values[kCode] = !local ? std::string()
+                    : g.mode == kJoin ? "SERWER " + g.settings.host_ip + (g.settings.port != 27015 ? ":" + std::to_string(g.settings.port) : "")
+                                      : std::string("GRA LOKALNA (IP)");
     for (int i = 0; i < 3; ++i) values[kSwitchRows[i]] = g.hud[i] ? "WŁ" : "WYŁ";
     for (int i = 0; i < kRowCount; ++i) {
         if (g.values_on && target(g.row_values[i])) {
@@ -1520,9 +1563,25 @@ void copy_code() {
 void paste_code() {
     if (g.mode != kJoin) return;
     play(api.sound_click);
-    const std::string code = clean_code(clipboard_get());
-    g.notice = code.empty() ? tint(kBad, "✕ W schowku nie ma kodu.") : std::string();
-    if (!code.empty()) g.join_code = code;
+    const std::string clip = clipboard_get();
+    std::string ip;
+    uint16_t port = 0;
+    if (server_address(clip, ip, port)) {  // TLDCoop_DLC: a dedicated server's address: join it by IP
+        g.settings.transport = "local";
+        g.settings.host_ip = ip;
+        g.settings.port = port;
+        g.notice = tint(kGood, "✓ Serwer " + ip + ":" + std::to_string(port) + ". ZATWIERDŹ, żeby dołączyć.") +
+                   " BACKSPACE wraca do kodu Steam.";
+        logx::info("menu: a server's address pasted: joining by IP");
+        refresh();
+        return;
+    }
+    const std::string code = clean_code(clip);
+    g.notice = code.empty() ? tint(kBad, "✕ W schowku nie ma kodu ani adresu serwera.") : std::string();
+    if (!code.empty()) {
+        g.join_code = code;
+        g.settings.transport = "steam";
+    }
     refresh();
 }
 
@@ -1997,7 +2056,13 @@ void setup_frame() {
     if (g.selected == kCode) {
         if (ctrl && key['C']) copy_code();
         if (ctrl && key['V']) paste_code();
-        if (g.mode == kJoin && !ctrl) {
+        if (!ctrl && g.settings.transport == "local") {
+            if (key[VK_BACK]) {  // TLDCoop_DLC: back from a server's address (by IP) to Steam codes, hosting too
+                g.settings.transport = "steam";
+                g.notice.clear();
+                refresh();
+            }
+        } else if (g.mode == kJoin && !ctrl) {
             bool typed = false;
             for (int vk = 'A'; vk <= 'Z'; ++vk)
                 if (key[vk] && code_char(static_cast<char>(vk)) && g.join_code.size() < kCodeLength) {
