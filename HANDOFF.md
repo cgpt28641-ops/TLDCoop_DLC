@@ -1811,3 +1811,21 @@ All five are the steam train. Protocol **v52** (Train frame + 1 byte; kItemOnTra
   first record reads "burnt -6354.8 of 90 min" until the next word corrects it.
 - UNTESTED in the game, all of it. Risky spots: OrientationAxis set on a follower (if TLD itself keeps changing it,
   the log line "ours faced the other way" repeats: capped at 30); on-train items in the most delicate module.
+
+## 13.11 21:45 — the dedicated server's mod side is in main (Karol: "wgraj już go na główne repozytorium")
+From the server chat (its own handoff: project doc `claude/HANDOFF_SERVER.md`; the server itself is the repo
+cgpt28641-ops/polar-link-server, with this repo as its submodule `mod/`). The branch `server` (main v52 + the
+work below) was fast-forwarded into main; **no protocol bump** (52). With a host that is a game nothing changes.
+- `src/coop_server.{h,cpp}`: `Msg::Server` (63) from a dedicated server (tldserver, player 0 with no game): flags
+  kServerIs / kServerWorldSource / kServerWantsMode / kServerWantsFeatures / kServerWantsScene (+ a scene's name).
+- world_sync.cpp (our World goes to the server when our game is the "world source"), world_mode.cpp
+  (`give_server_mode`), coop_features.cpp (`server_frame`), world_items.cpp (`give_scene_to_server`: every loose item
+  of a scene the server has no list of, as ItemPut kItemAnswer, then ItemList).
+- net/session.cpp: a host seat keeps a friend's World / GameMode / Features / ItemList for its app (a host's game
+  never drains them: trimmed); a client keeps Msg::Server. net/udp_transport.cpp: a client bound to 127.x with a host
+  elsewhere binds 0.0.0.0.
+- coop_menu.cpp + config.cpp: JOIN, the code row, CTRL+V with an address ("100.64.1.2" or "100.64.1.2:27015") in the
+  clipboard -> transport=local, host_ip, port saved; the row shows "SERWER <ip>"; BACKSPACE on the row goes back to
+  Steam codes.
+- The workflow still has the step for the branch `server` (release dll-server); main's dll-latest now has all of it.
+- UNTESTED in the game (CI tests only).
