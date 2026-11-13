@@ -147,6 +147,22 @@ Vector3 position_of(Il2CppObject* component) {
     return p;
 }
 
+// TLDCoop_DLC (Shatsca 12.11 23:49 "nie synchronizuje szafki w pociągu"; in the logs not one line about the train's
+// locker, from either game, though "train|GUID" has been its id since 08.11): a container TLD's ContainerManager
+// doesn't save (m_DisableSerialization) is left alone here - the slot machine's box is such a one, on purpose. The
+// steam train's locker is saved with the train (SavedSteamTrainData.m_SerializedContainer), so it may well carry
+// that flag too: every check skipped it without a word. It is shared whatever the flag says.
+bool unshared(Il2CppObject* c) {
+    if (!get<bool>(c, api.no_save)) return false;
+    if (c == coop_train::container()) {
+        static bool told = false;
+        if (!told) logx::info("containers: the steam train's locker isn't in TLD's own container save; shared all the same");
+        told = true;
+        return false;
+    }
+    return true;
+}
+
 // TLD's own id for the container (what ContainerManager.Serialize saves it by); name and position (cm) without one.
 std::string id_of(Il2CppObject* c) {
     // TLDCoop_DLC (Iron Road): the steam train's locker moves with it: by the train's own id
@@ -179,7 +195,7 @@ std::vector<Il2CppObject*> all_containers() {
         const int32_t count = get<int32_t>(list, kListSize);
         for (int32_t i = 0; i < count && static_cast<size_t>(i) < il2::array_length(items); ++i) {
             Il2CppObject* c = il2::array_object_at(items, static_cast<size_t>(i));
-            if (alive(c) && !get<bool>(c, api.no_save) && !seamless_interiors::sync_skips(c) && seen.insert(c).second)
+            if (alive(c) && !unshared(c) && !seamless_interiors::sync_skips(c) && seen.insert(c).second)
                 out.push_back(c);  // TLDCoop_DLC: not a Seamless Interiors room still building (a ready one's are shared)
         }
     }
@@ -338,7 +354,7 @@ void refresh_panel() {
 }
 
 void mark(Il2CppObject* c) {
-    if (!tracking() || !alive(c) || get<bool>(c, api.no_save)) return;
+    if (!tracking() || !alive(c) || unshared(c)) return;
     g_dirty[id_of(c)] = c;
 }
 
@@ -421,7 +437,7 @@ void flush(double now) {
 
 void ask(Il2CppObject* c) {
     if (!tracking() || hosting() || !alive(c) || !netrt::status().connected) return;  // offline: ours stands
-    if (get<bool>(c, api.no_save)) return;  // TLDCoop_DLC: (the slot machine's: its own sync)
+    if (unshared(c)) return;  // TLDCoop_DLC: (the slot machine's: its own sync)
     const std::string id = id_of(c);
     const double now = now_ms();
     if (const auto it = g_asked.find(id); it != g_asked.end() && now - it->second < kAnswerMs) return;
@@ -788,7 +804,13 @@ void release_mine(const char* why);
 // told), or (client) while we wait for the host to say it's ours (the call is made then: g_lock_wait).
 bool may_open(Il2CppObject* c, bool show, Il2CppObject* on_closed) {
     if (!locking() || !alive(c)) return true;
-    if (get<bool>(c, api.no_save)) return true;  // TLDCoop_DLC: not one the game saves (the slot machine's: its own sync)
+    if (unshared(c)) {  // TLDCoop_DLC: not one the game saves (the slot machine's: its own sync)
+        static std::unordered_set<std::string> told;  // (13.11: said once each, so the logs show what isn't shared)
+        const std::string name = name_of(c);
+        if (told.size() < 40 && told.insert(name).second)
+            logx::info("containers: %s isn't one TLD saves with the scene: opened as ours alone, not shared", name.c_str());
+        return true;
+    }
     const std::string id = id_of(c);
     const std::string key = net::lock_key(g_scene, id);
     const uint8_t me = self_player();

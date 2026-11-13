@@ -1773,3 +1773,41 @@ avatar, coop_menu, coop_hud, session.cpp only where the above led). Found and fi
   an object as "taken" (harmless: removed either way); the two "coin toss" arrows were real races (both players at
   the carcass).
 - UNTESTED in the game.
+
+### 13.11 ~07:30 (Shatsca's 5 reports 12.11 23:49 – 13.11 00:16, his and Szymon's logs, build 12.11 13:18) — Iron Road
+All five are the steam train. Protocol **v52** (Train frame + 1 byte; kItemOnTrain; ItemGoneReason::Rode).
+- **"Mamy na odwrót pociąg" (00:16) and "postać Szymona dziwnie się rusza w pociągu" (00:10)**: which end of the train
+  points along the track is Curvy's OrientationAxis (SavedTrainCarState.m_OrientationAxis beside m_SplineDirection),
+  never in our frame. TLD turns it where the train comes onto a track the other way (they used the turntable 23:54–
+  23:56: Szymon's log ping-pongs between tracks 5c558197 / e440fe1a / f13c2253, ±33 m); a follower's train was only put
+  on the driver's spline, so it stood back to front from then on. Proof in the logs: both trains standing, the host's
+  cooking spot at (679.0, 127.2, 669.0), Szymon's at (683.2, 127.3, 668.8); the two "in the cab" 9 m apart. Frame.orient
+  (get/set_OrientationAxis); follow() and place() set ours when it differs (and the movement direction once then).
+- **"Nie widzimy jedzenia wzajemnie na slocie od pociągu" (00:08)**: items on the train's cooking surface went as
+  world positions; the other game looked for a slot at that world point ("no slot here near ...") and left the copy
+  in the air. Now: an item within 0.6 m of one of OUR train's cooking spots (SteamTrain.m_CookingSurface →
+  m_GearPlacePoints), or food cooking in a pot there, is "on the train": ItemPut.flags kItemOnTrain and pos = the
+  train's local point (coop_train::to_train); the receiver turns it into its own train's world point (from_train) and
+  seats it as before. Known.pos/told of such an item are train-local (the train moving isn't the item moving).
+  No train in the receiver's scene: the item isn't shown there (logged).
+- **"Garnek w pociągu zniknął po zmianie regionu" (23:54)**: Szymon's game began the region change 2 s before the
+  host's; TLD packs the cooking surface with the train (destroys the gear, makes it again in the next scene), our scan
+  told "gone", the host's copy was removed, so the host arrived without it and its list of the new scene removed
+  Szymon's ("isn't in the host's world"). Now: coop_train::leaving() (hooks on LoadScene.PrepareTrainTransition /
+  HandleTrainTransition + TrainCar.s_TransitioningTrainCar going non-null; 60 s or until the scene changes) → such an
+  item is told with reason Rode; whoever is inside the train keeps their copy (their game carries it on), anyone
+  else (and the host's kept records of the old scene) drops it. In the new scene an on-train item missing from the
+  host's list is told as new instead of removed.
+  Also seen: LoadScene.HandleTrainCarImpact never logged in either game → that is not how the train leaves a region
+  (follow_to / impact_detour of 08.11 are dead code in practice; both games ride through on their own train copy).
+- **"Nie synchronizuje szafki w pociągu" (23:49)**: not one "containers:" line about the train's locker in either log,
+  though id "train|GUID" exists since 08.11. Every path in world_containers skips a container with
+  m_DisableSerialization silently (made for the slot machine's box); the train's locker is saved with the train
+  (SavedSteamTrainData.m_SerializedContainer), so it very likely carries that flag. unshared(c): the flag doesn't
+  count for coop_train::container(). A container skipped for that flag is now logged once per name.
+  NOT proven (no line in the logs says the flag is set): the next logs show "the steam train's locker isn't in TLD's
+  own container save; shared all the same" if that was it.
+- Not touched: both saves count days differently (host day 37, Szymon day 35; hour of day is shared) → a lit torch's
+  first record reads "burnt -6354.8 of 90 min" until the next word corrects it.
+- UNTESTED in the game, all of it. Risky spots: OrientationAxis set on a follower (if TLD itself keeps changing it,
+  the log line "ours faced the other way" repeats: capped at 30); on-train items in the most delicate module.

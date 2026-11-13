@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "coop_notices.h"
+#include "coop_train.h"
 #include "core.h"
 #include "game_state.h"
 #include "hooks.h"
@@ -463,6 +464,7 @@ struct Known {
     bool opened = false;     // TLDCoop_DLC: a can opened or smashed open (opened_of)
     bool burning = false;    // TLDCoop_DLC: a flare or torch burning (burning_light)
     bool foreign = false;    // TLDCoop_DLC: someone else's pot on a fire, or the food in it (foreign_pot): theirs to tell
+    bool on_train = false;   // TLDCoop_DLC (13.11): on the steam train's cooking surface: pos / told are its place on the train
 };
 std::unordered_map<std::string, Known> g_known;  // our pdid -> item
 double g_door_until = 0;  // TLDCoop_DLC: a door is being used until then (door_used)
@@ -1113,6 +1115,22 @@ uint8_t owner_for_record(Il2CppObject* gi) {
     return owner_of(pot);
 }
 
+// TLDCoop_DLC (Shatsca 12.11 23:54, 13.11 00:08: what stood on the steam train's cooking surface wasn't seen by the
+// other player, or hung in the air where the train had been, and was gone after the next region): an item on one of
+// the train's cooking spots, or food cooking in a pot there, rides the train. It is shared by its place on the train
+// (`pos` becomes the train's local point), so every game has it on its own train wherever that is.
+bool rides_train(Il2CppObject* gi, Vector3& pos) {
+    bool on = coop_train::on_cooking_spot(pos.x, pos.y, pos.z);
+    if (!on)
+        if (Il2CppObject* pot = pot_cooking(gi)) {  // (a pot's food lies wherever TLD keeps it; the pot says where)
+            Vector3 at{};
+            Quaternion r{};
+            pose_of(pot, at, r);
+            on = coop_train::on_cooking_spot(at.x, at.y, at.z);
+        }
+    return on && coop_train::to_train(pos.x, pos.y, pos.z);
+}
+
 // Ours from now on: we put it on the fire / put something in it.
 void own_pot(Il2CppObject* pot) {
     if (!pot || g_applying) return;
@@ -1240,7 +1258,9 @@ bool make_put(Il2CppObject* gi, const std::string& pdid, const std::string& pref
     m.prefab = text(get<Il2CppString*>(data, api.sd_prefab));
     m.gear = text(get<Il2CppString*>(data, api.sd_gear));
     if (m.pdid != pdid) replace_all(m.gear, pdid, m.pdid);  // our copy goes by another id here
-    m.pos[0] = pos.x, m.pos[1] = pos.y, m.pos[2] = pos.z;
+    Vector3 at = pos;
+    if (rides_train(gi, at)) m.flags |= net::kItemOnTrain;  // TLDCoop_DLC: its place on the train
+    m.pos[0] = at.x, m.pos[1] = at.y, m.pos[2] = at.z;
     m.rot[0] = rot.x, m.rot[1] = rot.y, m.rot[2] = rot.z, m.rot[3] = rot.w;
     m.owner = owner_for_record(gi);  // TLDCoop_DLC: a pot on a fire (or the food in it): whose it is
     if (m.gear.size() > net::kGearTextMax) {
@@ -1269,7 +1289,9 @@ void send_put(Il2CppObject* gi, const std::string& pdid, Known& k, double now, u
     if (hosting() && !k.unique)  // TLDCoop_DLC: (also when a door's scan doesn't keep the list)
         if (const auto kept = g_scene_items.find(g_scene); kept != g_scene_items.end()) kept->second.insert(net::pdid_hash(m.pdid));
     const bool was_shared = k.shared;
-    k.told = pos;
+    k.on_train = (m.flags & net::kItemOnTrain) != 0;
+    k.told = k.on_train ? Vector3{m.pos[0], m.pos[1], m.pos[2]} : pos;
+    if (k.on_train) k.pos = k.told;
     k.shared = true;
     k.changed_ms = now;
     if (change) {
@@ -1284,7 +1306,8 @@ void send_put(Il2CppObject* gi, const std::string& pdid, Known& k, double now, u
 }
 
 // `taken_now`: we just took it into our pack (TLD's Take it), whatever the pack says yet.
-void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) {
+// `rode`: it stood on the steam train and TLD packed it with the train for the next region (ItemGoneReason::Rode).
+void send_gone(const std::string& pdid, const Known& k, bool taken_now = false, bool rode = false) {
     net::ItemGoneMsg m;
     m.scene = g_scene;
     m.seq = ++g_seq;
@@ -1297,8 +1320,9 @@ void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) 
     Il2CppObject* ev = gi && api.evolve >= 0 && api.evolve_hours >= 0 ? get<Il2CppObject*>(gi, api.evolve) : nullptr;
     const float days = alive(ev) && api.evolve_days >= 0 ? get<float>(ev, api.evolve_days) : 0;
     const bool cured = days > 0 && get<float>(ev, api.evolve_hours) >= days * 24 - 0.01f;  // its whole time cured
-    const bool taken = !cured && (taken_now || (gi ? get<bool>(gi, api.in_inventory) : k.units > 0));
-    m.reason = taken ? net::ItemGoneReason::Taken : net::ItemGoneReason::Destroyed;
+    if (rode && gi && get<bool>(gi, api.in_inventory)) rode = false;  // (in our pack: a take like any other)
+    const bool taken = !rode && !cured && (taken_now || (gi ? get<bool>(gi, api.in_inventory) : k.units > 0));
+    m.reason = rode ? net::ItemGoneReason::Rode : taken ? net::ItemGoneReason::Taken : net::ItemGoneReason::Destroyed;
     net::Writer w(net::Msg::ItemGone);
     net::write_item_gone(w, m);
     netrt::send_packet(w, true);
@@ -1307,7 +1331,8 @@ void send_gone(const std::string& pdid, const Known& k, bool taken_now = false) 
     if (hosting())  // TLDCoop_DLC: (also when a door's scan doesn't keep the list)
         if (const auto kept = g_scene_items.find(g_scene); kept != g_scene_items.end()) kept->second.erase(net::pdid_hash(m.pdid));
     logx::info("items: %s (%s) %s; told the other player%s", k.prefab.c_str(), short_id(m.pdid).c_str(),
-               m.reason == net::ItemGoneReason::Taken ? "went into our pack" : "is gone from the world",
+               m.reason == net::ItemGoneReason::Taken ? "went into our pack"
+               : rode ? "goes on with the steam train into the next region" : "is gone from the world",
                taken ? light_state(gi).c_str() : "");
     forget_alias(pdid);
 }
@@ -1600,8 +1625,17 @@ void apply_put_record(const net::ItemPutMsg& m, double now) {
                    short_id(m.pdid).c_str());
         return;
     }
-    const Vector3 pos{m.pos[0], m.pos[1], m.pos[2]};
+    Vector3 pos{m.pos[0], m.pos[1], m.pos[2]};
     const Quaternion rot{m.rot[0], m.rot[1], m.rot[2], m.rot[3]};
+    // TLDCoop_DLC (13.11): on the steam train's cooking surface: `pos` is its place on the train; in the world it is
+    // where OUR train has that spot. `kpos`: what we remember it by (the train's point, as our own scan reads it).
+    const bool on_train = (m.flags & net::kItemOnTrain) != 0;
+    const Vector3 kpos = pos;
+    if (on_train && !coop_train::from_train(pos.x, pos.y, pos.z)) {
+        logx::info("items: the other player's %s (%s) stands on the steam train, and the train isn't in our %s: not shown "
+                   "here", m.prefab.c_str(), short_id(m.pdid).c_str(), g_scene.c_str());
+        return;
+    }
     if (seamless_interiors::unbuilt_room_at(pos.x, pos.y, pos.z)) {  // TLDCoop_DLC: it'd fall 80 m from an empty spot
         if (hosting()) {  // the host's game is the one that keeps it: it waits for the room (applied once it's up)
             Change c;
@@ -1624,7 +1658,7 @@ void apply_put_record(const net::ItemPutMsg& m, double now) {
     if (gi && is_loose(gi)) {  // we have it lying around: it moved, or (a snare) its state changed
         if (held_now(ours)) return;
         Known& k = g_known[ours];
-        const bool moved = distance(k.pos, pos) > kStillMetres;
+        const bool moved = k.on_train != on_train || distance(k.pos, kpos) > kStillMetres;
         // TLDCoop_DLC: on a place point here (a pot in a fire's cooking slot) and still about there in theirs: ours stays
         // put (Shatsca 05.11 20:21: back from a cabin, his cans on the fire were moved to Szymon's spot for them, under
         // the fire and no longer cooking)
@@ -1639,7 +1673,8 @@ void apply_put_record(const net::ItemPutMsg& m, double now) {
             if (moved) seat_on_slot(gi, m.gear, pos, m.prefab.c_str());
         }
         k.prefab = m.prefab;
-        k.pos = k.told = pos;
+        k.pos = k.told = kpos;
+        k.on_train = on_train;
         k.rot = rot;
         k.moved_ms = now;
         k.shared = true;
@@ -1675,7 +1710,8 @@ void apply_put_record(const net::ItemPutMsg& m, double now) {
             } else {
                 Known& k = g_known[ours];
                 k.prefab = m.prefab;
-                k.pos = k.told = pos;
+                k.pos = k.told = kpos;
+                k.on_train = on_train;
                 k.rot = rot;
                 k.units = units_of(gi);
                 k.snare = snare_state(gi);
@@ -1717,7 +1753,8 @@ void apply_put_record(const net::ItemPutMsg& m, double now) {
             if (is_loose(gi)) {
                 Known& k = g_known[ours];
                 k.prefab = m.prefab;
-                k.pos = k.told = pos;
+                k.pos = k.told = kpos;
+                k.on_train = on_train;
                 k.rot = rot;
                 k.units = units_of(gi);
                 k.snare = snare_state(gi);
@@ -1775,7 +1812,8 @@ void apply_put_record(const net::ItemPutMsg& m, double now) {
     if (got != id) logx::warn("items: our copy of %s came out as %s (wanted %s)", m.prefab.c_str(), got.c_str(), id.c_str());
     Known& k = g_known[got.empty() ? id : got];
     k.prefab = m.prefab;
-    k.pos = k.told = pos;
+    k.pos = k.told = kpos;
+    k.on_train = on_train;
     k.rot = rot;
     k.units = units_of(made);
     k.snare = snare_state(made);
@@ -1885,6 +1923,16 @@ void apply_gone(const net::ItemGoneMsg& m, double now, bool waited_room = false)
     if (!hosting() && m.reason == net::ItemGoneReason::Taken &&
         (take_held_at_same_moment(ours, now) || report_our_take(ours)))
         return;
+    // TLDCoop_DLC (Shatsca 12.11 23:54 "garnek w pociągu zniknął po zmianie regionu"; the logs: the friend's game began
+    // the train's region change 2 s before the host's and told its pot on the train "gone": the host's copy went, so
+    // the host came into the next region without it, and its list there removed the friend's): packed with the train
+    // in their game. We ride the same train: ours goes on with it in our game too, it isn't removed here.
+    if (m.reason == net::ItemGoneReason::Rode && m.scene == g_scene && coop_train::aboard()) {
+        const auto k = g_known.find(ours);
+        logx::info("items: the other player's %s (%s) went on with the steam train in their game; we ride it too: ours "
+                   "stays on our train", k != g_known.end() ? k->second.prefab.c_str() : "item", short_id(m.pdid).c_str());
+        return;
+    }
     // TLDCoop_DLC: one of a Seamless Interiors room's items, the room not built in our game yet: it would come back with
     // the room (a take made twice); the change waits for the room
     // (A room never saved has no file: its items are the template's, rolled with our seed, the same ids the friend's
@@ -1987,6 +2035,19 @@ void apply_list(const net::ItemHashesMsg& m, double now) {
             if (seamless_interiors::host_lacks_room_of(object_by_pdid(pdid))) continue;
             extra.push_back(pdid);
         }
+    }
+    // TLDCoop_DLC (13.11): what came into this scene on our train's cooking surface isn't in the host's list of the
+    // scene (its game didn't bring it, or isn't here): ours, told to the host as new instead of removed
+    for (auto it = extra.begin(); it != extra.end();) {
+        Known& k = g_known[*it];
+        if (!k.on_train) {
+            ++it;
+            continue;
+        }
+        k.shared = false;
+        logx::info("items: %s (%s) on our steam train isn't in the host's list of %s: it came with the train; told as new",
+                   k.prefab.c_str(), short_id(*it).c_str(), g_scene.c_str());
+        it = extra.erase(it);
     }
     for (const std::string& pdid : extra) remove_ours(pdid, "isn't in the host's world");
     net::ItemHashesMsg want;
@@ -2159,12 +2220,16 @@ void scan(double now) {
     std::string inspected, placing;
     busy_items(inspected, placing);
     std::unordered_set<std::string> present;
-    for (const Loose& l : loose) {
+    for (Loose& l : loose) {
         present.insert(l.pdid);
         if (l.pdid == inspected || l.pdid == placing) continue;
+        // TLDCoop_DLC (13.11): on the steam train's cooking surface: its place is the train's own point from here on
+        // (the train moving doesn't move it; coming onto the train or off it does, and is told)
+        const bool on_train = rides_train(l.gi, l.pos);
         auto it = g_known.find(l.pdid);
         if (it == g_known.end()) {
             Known k;
+            k.on_train = on_train;
             k.prefab = name_of(l.gi);
             k.pos = l.pos;
             k.rot = l.rot;
@@ -2190,6 +2255,7 @@ void scan(double now) {
             continue;
         }
         Known& k = it->second;
+        k.on_train = on_train;
         // TLDCoop_DLC (Karol 11.11): someone else's pot on a fire here, or the food in it: their game tells how it goes
         k.foreign = foreign_pot(pot_of(l.gi)) || foreign_pot(pot_cooking(l.gi));
         if (k.foreign) {
@@ -2361,6 +2427,10 @@ void scan(double now) {
                 }
                 logx::info("items: %s (%s) is switched off in our game (not destroyed): not told as gone; the host's "
                            "list brings it back", it->second.prefab.c_str(), short_id(it->first).c_str());
+            } else if (it->second.on_train && coop_train::leaving()) {
+                // TLDCoop_DLC (13.11): packed with the train for the next region (TLD saves the cooking surface with
+                // the train and makes it again there), not destroyed
+                send_gone(it->first, it->second, false, true);
             } else {
                 send_gone(it->first, it->second);
             }
