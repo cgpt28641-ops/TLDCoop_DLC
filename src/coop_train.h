@@ -29,6 +29,15 @@ bool ride_spot(unsigned char player, float& x, float& y, float& z, float& yaw);
 Il2CppObject* container();
 std::string container_key(Il2CppObject* c);
 
+// TLDCoop_DLC (13.11): the train's cooking spots. on_cooking_spot: this world point is on one of our train's.
+// to_train / from_train: a world point as the train's own (local) one and back; false when the train isn't here.
+// leaving: TLD is taking the train (and what stands on it) on into the next region. aboard: we are inside it.
+bool on_cooking_spot(float x, float y, float z);
+bool to_train(float& x, float& y, float& z);
+bool from_train(float& x, float& y, float& z);
+bool leaving();
+bool aboard();
+
 std::string describe();  // for the log and the dev command `train`
 
 }  // namespace coop_train

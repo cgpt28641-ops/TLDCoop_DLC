@@ -138,7 +138,7 @@
 namespace net {
 
 constexpr uint32_t kMagic = 0x43444C54;  // bytes "TLDC"
-constexpr uint16_t kProtocolVersion = 51;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
+constexpr uint16_t kProtocolVersion = 52;  // v4: World. v5: Animals. v6: sounds. v7: attacks, State flags. v8: hits,
                                            // carcasses, harvests, fuller fight results, reliable messages. v9: chunked
                                            // messages, world items. v10: containers. v11: broken down / harvested.
                                            // v12: fires. v13: the host's region in World, random spawns in ObjectList.
@@ -202,6 +202,8 @@ constexpr uint16_t kProtocolVersion = 51;  // v4: World. v5: Animals. v6: sounds
                                            // v50 (TLDCoop_DLC): ObjectKind::Rope (a climbing rope put down on an anchor)
                                            // v51 (TLDCoop_DLC): ItemPutMsg.owner (who put a pot / food on a fire:
                                            // only they can take it, only their game cooks it)
+                                           // v52 (TLDCoop_DLC): Train frames say which way the train faces
+                                           // (orientation axis); kItemOnTrain; ItemGoneReason::Rode
 constexpr size_t kMaxPlayers = 4;  // the host and up to 3 friends
 constexpr size_t kMaxPacket = 1200;  // fits one UDP datagram on any path
 constexpr size_t kMaxMessage = 256 * 1024;  // a reliable message may be this big (sent as Chunks)
@@ -905,6 +907,9 @@ constexpr size_t kGearTextMax = 64 * 1024;  // one serialized GearItem
 constexpr uint8_t kItemAnswer = 1;          // ItemPutMsg.flags: an answer to ItemWant (the host's list), not a change
 constexpr uint8_t kItemNotYours = 2;        // host -> the taker: your take is refused (the host has it in its hands):
                                             // out of your pack, and it lies here again (the host's record and spot)
+// TLDCoop_DLC (v52): the item stands on the steam train's cooking surface (or cooks in a pot there): `pos` is its
+// place on the train (the train's local space), not in the world; each game puts it on its own train.
+constexpr uint8_t kItemOnTrain = 4;
 struct ItemPutMsg {
     std::string scene;
     uint32_t seq = 0;  // the sender's change counter (reliable messages can arrive out of order)
@@ -921,7 +926,9 @@ struct ItemPutMsg {
 constexpr uint8_t kNoPotOwner = 0xFF;
 // NotYours: host -> the taker: your take is refused (someone else's came first): out of your pack. LostToss: the same,
 // someone took it at the same moment and won the coin toss.
-enum class ItemGoneReason : uint8_t { Taken = 1, Destroyed = 2, NotInHostWorld = 3, NotYours = 4, LostToss = 5 };
+// Rode (v52): it stood on the steam train's cooking surface and TLD packed it with the train for the next region:
+// gone from this scene, but whoever rides the same train keeps their copy (their game carries it on too).
+enum class ItemGoneReason : uint8_t { Taken = 1, Destroyed = 2, NotInHostWorld = 3, NotYours = 4, LostToss = 5, Rode = 6 };
 struct ItemGoneMsg {
     std::string scene;
     uint32_t seq = 0;

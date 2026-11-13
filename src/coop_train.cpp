@@ -29,6 +29,8 @@ constexpr double kIdleSendMs = 3000;    // the host's train while nobody drives
 constexpr double kOwnerLostMs = 2500;   // no frame from the driver this long: nobody drives
 constexpr double kRiderLostMs = 1200;
 constexpr float kSnapMetres = 4.0f;     // further off than this: put there at once
+constexpr uint8_t kNoOrient = 0xFF;     // a frame that doesn't say which way the train faces
+constexpr float kSlotMetres = 0.6f;     // an item this close to one of the train's cooking spots is on it
 
 enum Flags : uint8_t { kOwner = 1, kInside = 2, kRelease = 4, kIdle = 8, kHorn = 16 };
 
@@ -102,6 +104,11 @@ struct Api {
     FieldInfo* track_elements = nullptr;        // static TrackElementManager.s_TrackElements (List<ITrackElement>)
     ptrdiff_t list_items = -1, list_size = -1;  // List<T>._items, _size
     ptrdiff_t st_velocity = -1, st_sign = -1, st_pressure = -1, st_throttle = -1, st_brakes = -1;  // EngineState
+    const MethodInfo* get_orient = nullptr;     // CurvyController.get_OrientationAxis() (which way the train faces)
+    const MethodInfo* set_orient = nullptr;     // CurvyController.set_OrientationAxis(OrientationAxisEnum)
+    ptrdiff_t cook_surface = -1;                // SteamTrain.m_CookingSurface
+    ptrdiff_t cook_points = -1;                 // SteamTrainCookingSurface.m_GearPlacePoints (List<GearPlacePoint>)
+    FieldInfo* transitioning = nullptr;         // static TrainCar.s_TransitioningTrainCar (set while TLD carries it on)
 } api;
 
 bool g_ready = false;
@@ -141,6 +148,7 @@ struct Frame {
     std::string scene, guid, spline;
     float pos = 0;
     uint8_t dir = 0;
+    uint8_t orient = kNoOrient;  // (v52) Curvy's OrientationAxis: which end of the train points along the track
     float velocity = 0, sign = 1, pressure = 0;
     int32_t throttle = 0;
     uint8_t brakes = 0;
@@ -159,6 +167,7 @@ void write(net::Writer& w, const Frame& f) {
     w.put_blob(f.spline, 64);
     w.put<float>(f.pos);
     w.put<uint8_t>(f.dir);
+    w.put<uint8_t>(f.orient);
     w.put<float>(f.velocity);
     w.put<float>(f.sign);
     w.put<float>(f.pressure);
@@ -181,6 +190,7 @@ bool read(net::Reader& r, Frame& f) {
     f.spline = r.get_blob(64);
     f.pos = r.get<float>();
     f.dir = r.get<uint8_t>();
+    f.orient = r.get<uint8_t>();
     f.velocity = r.get<float>();
     f.sign = r.get<float>();
     f.pressure = r.get<float>();
@@ -308,6 +318,8 @@ Frame snapshot(uint8_t flags) {
         int32_t dir = 0;
         il2::invoke_value(api.get_dir, ctl, dir);
         f.dir = static_cast<uint8_t>(dir);
+        int32_t orient = 0;
+        if (api.get_orient && il2::invoke_value(api.get_orient, ctl, orient)) f.orient = static_cast<uint8_t>(orient);
     }
     if (Il2CppObject* st = engine_state()) {
         f.velocity = get<float>(st, api.st_velocity);
@@ -353,6 +365,29 @@ void send(const Frame& f, bool reliable) {
 
 bool driven_by_other() { return g_owner != kNobody && g_owner != g_self; }
 
+// TLDCoop_DLC (Shatsca 13.11 00:16: "mamy na odwrót pociąg: Szymon przód ma tam, gdzie ja tył"): which end of the
+// train points along its track is Curvy's OrientationAxis, a thing of its own beside the spline, the place on it and
+// the movement direction. TLD turns it where the train comes onto a track the other way round (off a turntable, a
+// region's edge); a follower's train is only put on the driver's track, so its own never turned: the train stood
+// back to front there, its engine pushed the other way each frame, and whoever rode it was drawn at the wrong end.
+// Now the frame says it and ours is set so (and the movement direction with it, once, at that moment).
+bool face_as(const Frame& f, Il2CppObject* ctl) {
+    if (f.orient == kNoOrient || !ctl || !api.get_orient || !api.set_orient) return false;
+    int32_t have = 0;
+    if (!il2::invoke_value(api.get_orient, ctl, have) || have == f.orient) return false;
+    int32_t want = f.orient;
+    void* a[] = {&want};
+    il2::invoke(api.set_orient, ctl, a);
+    int32_t dir = f.dir;
+    void* da[] = {&dir};
+    il2::invoke(api.set_dir, ctl, da);
+    static int told = 0;
+    if (told++ < 30)
+        logx::info("train: ours faced the other way than player %u's (orientation axis %d, theirs %d): turned round", f.from,
+                   have, want);
+    return true;
+}
+
 // The driver's train on ours: the same spline, place and direction, the engine as theirs.
 void follow(double now, float dt) {
     Il2CppObject* ctl = controller();
@@ -372,6 +407,7 @@ void follow(double now, float dt) {
             if (g_switches++ < 40) logx::info("train: onto the driver's track %s", g_last.spline.c_str());
         }
     }
+    face_as(g_last, ctl);
     // (no MovementDirection: our engine runs on the driver's speed and sign; setting it turned the train round,
     // Karol's film 08.11)
     const float ahead = g_rate * static_cast<float>(std::min(now - g_last.at, 500.0) / 1000.0);
@@ -408,7 +444,10 @@ void place(const Frame& f) {
     float have = 0;
     il2::invoke_value(api.get_abs, ctl, have);
     const bool other_spline = !f.spline.empty() && spline_guid(ctl) != f.spline;
-    if (!other_spline && std::fabs(have - f.pos) < 1.0f) return;
+    if (!other_spline && std::fabs(have - f.pos) < 1.0f) {
+        face_as(f, ctl);  // (in place, but maybe back to front)
+        return;
+    }
     if (other_spline) {
         Il2CppObject* s = spline_by_guid(f.spline);
         if (!alive(s)) return;
@@ -419,6 +458,7 @@ void place(const Frame& f) {
         void* da[] = {&dir};
         il2::invoke(api.set_dir, ctl, da);
     }
+    face_as(f, ctl);
     float pos = f.pos;
     void* pa[] = {&pos};
     il2::invoke(api.set_abs, ctl, pa);
@@ -436,6 +476,26 @@ void place(const Frame& f) {
 // on its own; a passenger's train only follows theirs, so when the driver's frames come from the next scene, the
 // passenger's game takes the same LoadScene. Someone outside the train doesn't: their copy stops at the edge.
 bool g_drove_in = false, g_claim_pending = false;
+// TLDCoop_DLC (13.11): TLD is carrying the train on into the next region (LoadScene.PrepareTrainTransition; the logs
+// of 12.11 show HandleTrainCarImpact isn't how it leaves: its line never came). From then until the scene is gone,
+// what stood on the train's cooking spots is packed with it, not destroyed.
+double g_leaving_until = 0;
+using TransitionFn = void (*)(Il2CppObject* self, const MethodInfo* method);
+TransitionFn g_prepare_transition = nullptr, g_handle_transition = nullptr;
+void leaving_now(const char* how) {
+    if (!g_ready) return;
+    const double now = now_ms();
+    if (now > g_leaving_until) logx::info("train: TLD takes the train on into the next region (%s)", how);
+    g_leaving_until = now + 60000;
+}
+void prepare_transition_detour(Il2CppObject* self, const MethodInfo* method) {
+    leaving_now("LoadScene.PrepareTrainTransition");
+    g_prepare_transition(self, method);
+}
+void handle_transition_detour(Il2CppObject* self, const MethodInfo* method) {
+    leaving_now("LoadScene.HandleTrainTransition");
+    g_handle_transition(self, method);
+}
 double g_claim_after = 0;
 std::string g_followed_to;
 using ImpactFn = void (*)(Il2CppObject* self, Il2CppObject* car, int32_t area, const MethodInfo* method);
@@ -558,6 +618,7 @@ void impact_detour(Il2CppObject* self, Il2CppObject* car, int32_t area, const Me
         return;
     }
     if (g_ready && car && car == g_train) logx::info("train: at a region's edge: TLD takes it on");
+    if (g_ready && car && car == g_train) leaving_now("LoadScene.HandleTrainCarImpact");
     g_impact(self, car, area, method);
 }
 
@@ -1222,6 +1283,10 @@ bool init() {
         api.set_abs = il2::find_method(cc, "set_AbsolutePosition", 1);
         api.get_dir = il2::find_method(cc, "get_MovementDirection", 0);
         api.set_dir = il2::find_method(cc, "set_MovementDirection", 1);
+        api.get_orient = il2::find_method_quiet(cc, "get_OrientationAxis", 0);
+        api.set_orient = il2::find_method_quiet(cc, "set_OrientationAxis", 1);
+        if (!api.get_orient || !api.set_orient)
+            logx::warn("train: Curvy's OrientationAxis not found; a follower's train may stand back to front");
     }
     api.track_guid = il2::find_method(track, "get_GUID", 0);
     api.track_spline = il2::find_method(track, "get_TrackSpline", 0);
@@ -1317,6 +1382,18 @@ bool init() {
                 api.ls_size = il2::field_offset(list, "_size");
             }
         }
+        if (ls) {  // (13.11) how the train really leaves a region
+            const MethodInfo* prep = il2::find_method_quiet(ls, "PrepareTrainTransition", 0);
+            const MethodInfo* handle = il2::find_method_quiet(ls, "HandleTrainTransition", 0);
+            const bool a = prep && hooks::install_method("LoadScene.PrepareTrainTransition", prep,
+                                                         reinterpret_cast<void*>(&prepare_transition_detour),
+                                                         reinterpret_cast<void**>(&g_prepare_transition));
+            const bool b = handle && hooks::install_method("LoadScene.HandleTrainTransition", handle,
+                                                           reinterpret_cast<void*>(&handle_transition_detour),
+                                                           reinterpret_cast<void**>(&g_handle_transition));
+            if (!a && !b) logx::warn("train: the train's region transition not hooked; what cooks on it may be lost there");
+        }
+        api.transitioning = il2::il2cpp_class_get_field_from_name(car, "s_TransitioningTrainCar");
         if (!api.impact || api.ls_items < 0 || api.ls_scene < 0 ||
             !hooks::install_method("LoadScene.HandleTrainCarImpact", api.impact, reinterpret_cast<void*>(&impact_detour),
                                    reinterpret_cast<void**>(&g_impact))) {
@@ -1367,6 +1444,11 @@ bool init() {
                 logx::warn("transit: CanPlayerTransit not hooked");
         }
     }
+    api.cook_surface = il2::field_offset_quiet(train, "m_CookingSurface");
+    if (Il2CppClass* surface = il2::find_class(kGame, "TLD.SteamTrain", "SteamTrainCookingSurface"))
+        api.cook_points = il2::field_offset_quiet(surface, "m_GearPlacePoints");
+    if (api.cook_surface < 0 || api.cook_points < 0)
+        logx::warn("train: the train's cooking surface not found; what is put on it isn't shared as the train's");
     api.asset_ref = il2::field_offset(car, "m_AssetReference");
     api.make_car = il2::find_method(car, "FindOrCreateTrainCar", 3);
     api.toot = il2::find_method(train, "TootSteamWhistle", 0);
@@ -1406,11 +1488,19 @@ void on_frame(const std::string& scene, bool in_game) {
         g_next_find = 0;
         g_hidden = nullptr;
         g_make_tried.clear();
+        g_leaving_until = 0;
     }
     g_scene = scene;
     g_in_game = in_game;
     if (!in_game || !netrt::role()) return;
     g_self = netrt::status().self_id;
+    if (api.transitioning) {  // TLDCoop_DLC (13.11): TLD has just packed a train car for the next region
+        static bool was = false;
+        Il2CppObject* state = nullptr;
+        il2::il2cpp_field_static_get_value(api.transitioning, &state);
+        if (state && !was) leaving_now("TrainCar.s_TransitioningTrainCar");
+        was = state != nullptr;
+    }
 
     if (!alive(g_train)) {
         g_train = find_train();
@@ -1548,6 +1638,56 @@ std::string container_key(Il2CppObject* c) {
     if (!c || g_guid.empty()) return {};
     return c == container() ? "train|" + g_guid : std::string();
 }
+
+// TLDCoop_DLC (Shatsca 12.11 23:54 "garnek w pociągu zniknął po zmianie regionu", 13.11 00:08 "nie widzimy jedzenia
+// wzajemnie na slocie od pociągu"): the train's cooking spots (SteamTrainCookingSurface.m_GearPlacePoints) move with
+// it, and each game's train is where that game has it. What stands on one is shared by its place on the train, not
+// in the world.
+bool on_cooking_spot(float x, float y, float z) {
+    if (!g_ready || !alive(g_train) || api.cook_surface < 0 || api.cook_points < 0) return false;
+    Il2CppObject* tf = train_tf();
+    V3 at{};
+    if (!tf || !il2::invoke_value(api.position, tf, at)) return false;
+    if ((at.x - x) * (at.x - x) + (at.y - y) * (at.y - y) + (at.z - z) * (at.z - z) > 40.0f * 40.0f) return false;
+    Il2CppObject* surface = get<Il2CppObject*>(g_train, api.cook_surface);
+    Il2CppObject* list = alive(surface) ? get<Il2CppObject*>(surface, api.cook_points) : nullptr;
+    Il2CppObject* items = list ? get<Il2CppObject*>(list, 0x10) : nullptr;  // List<T>._items, _size
+    const int32_t size = list ? get<int32_t>(list, 0x18) : 0;
+    for (int32_t i = 0; items && i < size && i < static_cast<int32_t>(il2::array_length(items)); ++i) {
+        Il2CppObject* point = il2::array_object_at(items, i);
+        if (!alive(point)) continue;
+        Il2CppObject* ptf = il2::invoke(api.transform, point);
+        V3 p{};
+        if (!ptf || !il2::invoke_value(api.position, ptf, p)) continue;
+        const float d2 = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) + (p.z - z) * (p.z - z);
+        if (d2 <= kSlotMetres * kSlotMetres) return true;
+    }
+    return false;
+}
+
+bool to_train(float& x, float& y, float& z) {
+    Il2CppObject* tf = g_ready && alive(g_train) ? train_tf() : nullptr;
+    if (!tf) return false;
+    V3 w{x, y, z}, l{};
+    void* a[] = {&w};
+    if (!il2::invoke_value(api.to_local, tf, l, a)) return false;
+    x = l.x, y = l.y, z = l.z;
+    return true;
+}
+
+bool from_train(float& x, float& y, float& z) {
+    Il2CppObject* tf = g_ready && alive(g_train) ? train_tf() : nullptr;
+    if (!tf) return false;
+    V3 l{x, y, z}, w{};
+    void* a[] = {&l};
+    if (!il2::invoke_value(api.to_world, tf, w, a)) return false;
+    x = w.x, y = w.y, z = w.z;
+    return true;
+}
+
+bool leaving() { return g_ready && g_leaving_until > 0 && now_ms() < g_leaving_until; }
+
+bool aboard() { return g_ready && alive(g_train) && inside_train(); }
 
 std::string describe() {
     if (!g_ready) return "train: not available";
