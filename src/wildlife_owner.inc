@@ -91,6 +91,11 @@ constexpr double kDyingSmallMs = 1500;
 // This visit's animals that were already ours when we came (TLD's save, restored over the first seconds): where we
 // spawn but the registry already knows the scene, they're hidden like everyone else's, not shared twice.
 std::unordered_set<uintptr_t> g_initial;
+// TLDCoop_DLC (dedicated server, Shatsca 13.11): when each animal of ours was first put in the hidden pool (by its
+// GameObject): one TLD switches on is its own respawn only a while after that (own_capture)
+std::unordered_map<uintptr_t, double> g_hidden_at;
+constexpr double kHiddenSettleMs = 10000;
+int g_late_initial_logged = 0;
 double g_own_arrived_ms = 0;
 constexpr double kInitialMs = 10000;
 
@@ -1243,6 +1248,12 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
     for (Il2CppObject* ai : all_animals()) {
         const auto key = reinterpret_cast<uintptr_t>(ai);
         Il2CppObject* go = go_of(ai);
+        // TLDCoop_DLC (Shatsca 13.11 on the dedicated server: back in a region, 9 animals became 18): TLD loads the
+        // scene's saved animals switched off where the player is far and switches them on when the player comes near,
+        // long after we came: they weren't "ours from when we came", so where we spawn they were shared as new, while
+        // the registry gave us the same animals from the last visit. Every animal here when we came counts, switched
+        // on or not.
+        if (now - g_own_arrived_ms < kInitialMs && !g_ids.count(key)) g_initial.insert(key);
         if (!active(go) || ai == fighter) continue;
         if (std::find(g_carcasses.begin(), g_carcasses.end(), go) != g_carcasses.end()) continue;
         auto idit = g_ids.find(key);
@@ -1254,7 +1265,11 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
             // v45: one of ours we hid when we came that TLD switched back on a while later, where we spawn, is TLD's own
             // (re)spawn there (its region was short of animals): shared like any other
             const auto hidden_it = g_hidden.find(reinterpret_cast<uintptr_t>(go));
-            const bool respawned = control && hidden_it != g_hidden.end() && now - g_own_arrived_ms > kInitialMs * 3;
+            // (...and only a while after we first hid it: one TLD has just switched on near us is hidden first, so the
+            // registry's animal from the last visit takes its place if there is one)
+            const auto hid_at = g_hidden_at.find(reinterpret_cast<uintptr_t>(go));
+            const bool respawned = control && hidden_it != g_hidden.end() && now - g_own_arrived_ms > kInitialMs * 3 &&
+                                   (hid_at == g_hidden_at.end() || now - hid_at->second > kHiddenSettleMs);
             const bool initial_hide = !g_pool_released && g_initial.count(key) && !respawned;
             if (respawned) {
                 logx::info("wildlife: TLD switched one of our hidden %s back on (its spawn region was short): shared from now",
@@ -1270,6 +1285,12 @@ void own_capture(const std::string& scene, const std::vector<Present>& players, 
                 set_active(go, false);
                 const auto addr = reinterpret_cast<uintptr_t>(go);
                 if (!g_hidden.count(addr)) g_hidden.emplace(addr, hold(go));
+                if (g_hidden_at.emplace(addr, now).second && control && now - g_own_arrived_ms > kInitialMs &&
+                    g_late_initial_logged++ < 40)
+                    logx::info("wildlife: TLD switched on one of the %s it had here when we came (%.0f s ago): hidden for the "
+                               "registry's own of it; shared in %.0f s if none comes",
+                               kind_name(il2::read_field<int32_t>(ai, api.ai_kind)), (now - g_own_arrived_ms) / 1000,
+                               kHiddenSettleMs / 1000);
                 ++hidden;
                 continue;
             }
@@ -1695,6 +1716,7 @@ void own_reset(const char* why, bool restore_hidden) {
     for (auto& [id, d] : g_dying) drop(d.ai);
     g_dying.clear();
     g_initial.clear();
+    g_hidden_at.clear();
     g_ids.clear();
     int restored = 0;
     for (auto& [addr, h] : g_hidden) {
