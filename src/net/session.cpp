@@ -914,7 +914,6 @@ struct Session::Impl {
                 break;
             }
             case Msg::Carcasses:
-            case Msg::ItemList:
             case Msg::ObjectList:
             case Msg::FireList:
             case Msg::WaterList:
@@ -925,6 +924,7 @@ struct Session::Impl {
             }
             // TLDCoop_DLC: either way now: a host's to its friends, and a player's to a dedicated server that asked for
             // them (Msg::Server). A host's game never drains a friend's: it is dropped there (trim_packets).
+            case Msg::ItemList:  // (a game's whole list of a scene the server asked for: kServerWantsScene)
             case Msg::GameMode:
             case Msg::Features: {
                 if (!linked) return;
