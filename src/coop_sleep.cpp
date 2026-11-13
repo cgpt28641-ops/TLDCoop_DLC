@@ -1,4 +1,5 @@
 #include "coop_sleep.h"
+#include "coop_server.h"
 
 #include <windows.h>
 
@@ -1228,6 +1229,31 @@ void decide() {
     logx::info("sleep: we couldn't start shared sleep #%u: everyone wakes", id);
 }
 
+// TLDCoop_DLC (dedicated server): the server decides the shared sleep but has no game to read dawn and dusk from: ours
+// go to it (now and then, and when they change), so TILL DAWN / TILL DUSK last what the screen says.
+void tell_server_clock() {
+    static double next = 0;
+    static float told_dawn = -1, told_dusk = -1;
+    if (!coop_server::linked()) {
+        told_dawn = told_dusk = -1;
+        return;
+    }
+    const double now = now_ms();
+    if (now < next) return;
+    next = now + 2000;
+    const net::SleepClock k = sleep_clock();
+    static double last_sent = 0;
+    if (std::fabs(k.dawn_h - told_dawn) < 0.01f && std::fabs(k.dusk_h - told_dusk) < 0.01f && now - last_sent < 30000) return;
+    if (told_dawn < 0) logx::info("sleep: the server gets our dawn (%s) and dusk (%s)", clock_text(k.dawn_h).c_str(), clock_text(k.dusk_h).c_str());
+    told_dawn = k.dawn_h, told_dusk = k.dusk_h;
+    last_sent = now;
+    net::SleepMsg m;
+    m.op = net::SleepOp::Clock;
+    m.hours = k.dawn_h;
+    m.id = static_cast<uint32_t>(std::lround(k.dusk_h * 1000.0f));
+    send(m);
+}
+
 // Up while others are in: TLD's HUD says who and asks us to join them.
 void tell_the_awake() {
     if (!together()) {
@@ -1372,6 +1398,7 @@ void on_frame(const std::string& scene, bool in_game) {
         return;
     }
     decide();
+    tell_server_clock();
     coop_lapse::heal_boost(resting_now() ? kRestBoost : 1.0f);
     if (g_mode == Mode::Shared && g_done_ms > 0 && now_ms() - g_done_ms >= kDoneGraceMs) {
         g_done_ms = 0;

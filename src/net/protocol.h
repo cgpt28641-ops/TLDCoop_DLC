@@ -1631,7 +1631,9 @@ inline bool read_game_mode(Reader& r, std::string& text, int32_t& seed) {
 
 // Sleeping together (milestone 10 item 12). The host decides from everyone's State (kStateInBed, sleep_vote) and
 // starts the sleep in every game; each game sleeps it TLD's own way.
-enum class SleepOp : uint8_t { Start = 1, End = 2, Woke = 3 };
+// Clock (TLDCoop_DLC, a player -> a dedicated server only; never passed on): the dawn and dusk of the sender's game
+// (hours = dawn's hour, id = dusk's hour x 1000), so the server's TILL DAWN / TILL DUSK are the game's own.
+enum class SleepOp : uint8_t { Start = 1, End = 2, Woke = 3, Clock = 4 };
 constexpr uint8_t kSleepChoiceWire = 10;  // TLDCoop_DLC: net::kSleepChoices (sleep_vote.h; checked in coop_sleep)
 enum class SleepEnd : uint8_t { Done = 1, Woken = 2 };
 // Stopped: a player passing time stopped it (Escape, STOP).
@@ -1664,7 +1666,7 @@ inline bool read_sleep(Reader& r, SleepMsg& m) {
     m.why = r.get<SleepWhy>();
     // TLDCoop_DLC: only what the game can act on (an op, end and reason it knows; a choice of net::SleepChoice; a
     // Start's hours a real span of a day at most)
-    if (!r.ok() || m.op < SleepOp::Start || m.op > SleepOp::Woke || m.end < SleepEnd::Done || m.end > SleepEnd::Woken ||
+    if (!r.ok() || m.op < SleepOp::Start || m.op > SleepOp::Clock || m.end < SleepEnd::Done || m.end > SleepEnd::Woken ||
         m.why > SleepWhy::Stopped || m.choice >= kSleepChoiceWire || !std::isfinite(m.hours))
         return false;
     return m.op != SleepOp::Start || (m.hours > 0 && m.hours <= 24);

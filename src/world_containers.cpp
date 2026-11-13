@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "coop_notices.h"
+#include "coop_server.h"
 #include "core.h"
 #include "game_state.h"
 #include "hooks.h"
@@ -1258,8 +1259,10 @@ std::vector<Il2CppObject*> string_list(Il2CppObject* list) {
 }
 void populate_detour(Il2CppObject* self, const MethodInfo* method) {
     g_populate(self, method);
-    const size_t players = netrt::status().players.size() + 1;
-    if (!self || !hosting() || players < 2 || g_loot_per_player <= 0 || api.to_make < 0) return;
+    // TLDCoop_DLC (dedicated server): no game hosts there: the game that first searches a container rolls it (its roll
+    // goes to the server and stands for everyone); the server in the host's seat is no player
+    const size_t players = netrt::status().players.size() + 1 - (coop_server::linked() ? 1 : 0);
+    if (!self || !(hosting() || coop_server::linked()) || players < 2 || g_loot_per_player <= 0 || api.to_make < 0) return;
     Il2CppObject* list = il2::read_field<Il2CppObject*>(self, api.to_make);
     if (!list) return;
     static const MethodInfo* add = nullptr;
@@ -1324,8 +1327,10 @@ struct FloorApi {
 int g_floor_logged = 0, g_floor_added = 0;
 void roll_detour(Il2CppObject* self, const MethodInfo* method) {
     g_roll(self, method);
-    const size_t players = netrt::status().players.size() + 1;
-    if (!self || !hosting() || players < 2 || g_loot_per_player <= 0 || floor_api.chance < 0 || !alive(self)) return;
+    const size_t players = netrt::status().players.size() + 1 - (coop_server::linked() ? 1 : 0);  // (as populate_detour)
+    if (!self || !(hosting() || coop_server::linked()) || players < 2 || g_loot_per_player <= 0 || floor_api.chance < 0 ||
+        !alive(self))
+        return;
     Il2CppObject* go = il2::invoke(api.component_go, self);
     bool on = true;
     if (!go || !il2::invoke_value(floor_api.active_self, go, on) || on) return;  // (it stayed: nothing to do)
