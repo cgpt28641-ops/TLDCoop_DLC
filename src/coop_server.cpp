@@ -1,5 +1,6 @@
 #include "coop_server.h"
 
+#include <string>
 #include <vector>
 
 #include "log.h"
@@ -11,12 +12,14 @@ namespace {
 constexpr double kSilentMs = 8000;  // the server says it every 2 s: silent this long, it isn't one (any more)
 
 uint8_t g_flags = 0;
+std::string g_scene;  // the scene the server wants our list of (kServerWantsScene)
 double g_heard_ms = 0;
 uint32_t g_link = 0;  // the host's connection the flags came on
 
 void forget(const char* why) {
     if (g_flags) logx::info("server: %s; no longer on a dedicated server", why);
     g_flags = 0;
+    g_scene.clear();
     g_heard_ms = 0;
 }
 
@@ -41,8 +44,11 @@ void on_frame() {
     for (const net::Packet& p : in) {
         net::Reader r = net::packet_body(p);
         uint8_t flags = 0;
-        if (!net::read_server(r, flags) || !(flags & net::kServerIs)) continue;
-        if (flags != g_flags)
+        std::string scene;
+        if (!net::read_server(r, flags, &scene) || !(flags & net::kServerIs)) continue;
+        if (scene != g_scene && !scene.empty()) logx::info("server: it wants our list of the loose items in %s", scene.c_str());
+        g_scene = scene;
+        if ((flags | net::kServerWantsScene) != (g_flags | net::kServerWantsScene))
             logx::info("server: we're on a dedicated server%s%s%s",
                        flags & net::kServerWorldSource ? "; our clock and weather are the world's" : "; the world's clock and weather come from it",
                        flags & net::kServerWantsMode ? "; it takes our experience mode and seed" : "",
@@ -57,6 +63,7 @@ bool linked() { return (g_flags & net::kServerIs) != 0; }
 bool world_source() { return (g_flags & net::kServerWorldSource) != 0; }
 bool wants_mode() { return (g_flags & net::kServerWantsMode) != 0; }
 bool wants_features() { return (g_flags & net::kServerWantsFeatures) != 0; }
+const std::string& wanted_scene() { return g_scene; }
 
 void publish_world(const net::WorldMsg& world) {
     if (!world_source()) return;

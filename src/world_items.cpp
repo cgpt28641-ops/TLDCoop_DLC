@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "coop_notices.h"
+#include "coop_server.h"
 #include "coop_train.h"
 #include "core.h"
 #include "game_state.h"
@@ -3038,6 +3039,68 @@ bool init() {
     return g_ready;
 }
 
+
+// TLDCoop_DLC (dedicated server): the server has no whole list of the loose items of this scene (no game showed it the
+// scene yet), and asks ours (coop_server::wanted_scene): every loose item's record as the host's records of a scene
+// are made (make_put), 20 a pass, as answers (the server keeps them, passes none on), then the list of their ids.
+// From then on the scene is the same for everyone who comes, as with a host who has been there.
+struct GiveScene {
+    std::string scene;
+    std::vector<std::string> ids;
+    size_t cursor = 0;
+    double next_ms = 0;
+    int sent = 0;
+};
+GiveScene g_give;
+std::string g_given_scene;  // given (until the server stops asking)
+
+void give_scene_to_server(double now) {
+    const std::string& wanted = coop_server::wanted_scene();
+    if (wanted.empty()) g_given_scene.clear();
+    if (wanted.empty() || wanted != g_scene || !g_baseline || g_scan_left_at_once || hosting()) {
+        g_give = GiveScene{};
+        return;
+    }
+    if (g_given_scene == g_scene) return;
+    if (g_give.scene != g_scene) {
+        g_give = GiveScene{};
+        g_give.scene = g_scene;
+        for (const auto& [pdid, k] : g_known)
+            if (!k.unique) g_give.ids.push_back(pdid);
+        logx::info("items: the server has no list of %s yet: giving it our %zu loose items", g_scene.c_str(), g_give.ids.size());
+    }
+    if (now < g_give.next_ms) return;
+    g_give.next_ms = now + 100;
+    for (size_t n = 0; n < 20 && g_give.cursor < g_give.ids.size(); ++n, ++g_give.cursor) {
+        const std::string& pdid = g_give.ids[g_give.cursor];
+        const auto k = g_known.find(pdid);
+        if (k == g_known.end() || k->second.unique) continue;
+        Il2CppObject* gi = gear_on(object_by_pdid(pdid));
+        if (!gi || get<bool>(gi, api.in_inventory)) continue;
+        Quaternion rot{};
+        Vector3 pos{};
+        pose_of(gi, pos, rot);
+        net::ItemPutMsg m;
+        if (!make_put(gi, pdid, k->second.prefab, net::kItemAnswer, pos, rot, m)) continue;
+        net::Writer w(net::Msg::ItemPut, net::kMaxMessage);
+        net::write_item_put(w, m);
+        if (!w.ok()) continue;
+        netrt::send_packet(w, true);
+        ++g_give.sent;
+    }
+    if (g_give.cursor < g_give.ids.size()) return;
+    net::ItemHashesMsg list;
+    list.scene = g_scene;
+    for (const auto& [pdid, k] : g_known)
+        if (!k.unique) list.hashes.push_back(net::pdid_hash(wire_id(pdid)));
+    net::Writer w(net::Msg::ItemList, net::kMaxMessage);
+    net::write_item_hashes(w, list);
+    netrt::send_packet(w, true);
+    logx::info("items: gave the server %s: %d item record(s), a list of %zu", g_scene.c_str(), g_give.sent, list.hashes.size());
+    g_given_scene = g_scene;
+    g_give = GiveScene{};
+}
+
 void on_frame(bool in_game) {
     if (!g_ready) return;
     if (!in_game && game::active_scene() == "MainMenu") forget_world();
@@ -3112,6 +3175,7 @@ void on_frame(bool in_game) {
             }
         }
     }
+    give_scene_to_server(now);
     if (hosting() && now - g_last_away >= 500) {
         g_last_away = now;
         send_away_lists();

@@ -236,7 +236,7 @@ enum class Msg : uint8_t {
     TrainParts = 60,   // TLDCoop_DLC: the train's parts (condition, boiler) and tanks (src/coop_train.cpp)
     TrackElements = 61, // TLDCoop_DLC: Iron Road's track switches, turntables, towers: guid + TLD's own state text
     IslandBox = 62,    // TLDCoop_DLC: Iron Road's boat (island transit) exchange box: u8 from, scene[64], TLD's own save text
-    Server = 63        // TLDCoop_DLC: a dedicated server (tldserver) -> each player: u8 flags (kServer*), about every 2 s (net/protocol.h)
+    Server = 63        // TLDCoop_DLC: a dedicated server (tldserver) -> each player: u8 flags (kServer*) [, scene], about every 2 s (net/protocol.h)
 };
 enum class RejectReason : uint8_t { Protocol = 1, GameVersion = 2, Full = 3, TurnedAway = 4, MissingContent = 5 };
 
@@ -1304,10 +1304,22 @@ constexpr uint8_t kServerIs = 1;             // player 0 is a dedicated server (
 constexpr uint8_t kServerWorldSource = 2;    // your game's clock and weather are the world's: send World
 constexpr uint8_t kServerWantsMode = 4;      // the server has no experience mode and seed yet: send GameMode
 constexpr uint8_t kServerWantsFeatures = 8;  // the server has no feature switches yet: send Features
-inline void write_server(Writer& w, uint8_t flags) { w.put<uint8_t>(flags); }
-inline bool read_server(Reader& r, uint8_t& flags) {
+// kServerWantsScene: the server has no whole list of the loose items of the scene you are in (nobody's game showed it
+// that scene yet): send every loose item there as ItemPut (kItemAnswer), then your ItemList. The scene's name follows
+// the flags (only with this flag).
+constexpr uint8_t kServerWantsScene = 16;
+inline void write_server(Writer& w, uint8_t flags, const std::string& scene = {}) {
+    w.put<uint8_t>(flags);
+    if (flags & kServerWantsScene) w.put_blob(scene, 64);
+}
+inline bool read_server(Reader& r, uint8_t& flags, std::string* scene = nullptr) {
     flags = r.get<uint8_t>();
-    return r.ok();
+    if (!r.ok()) return false;
+    std::string wanted;
+    if (flags & kServerWantsScene) wanted = r.get_blob(64);
+    if (!r.ok()) flags = static_cast<uint8_t>(flags & ~kServerWantsScene), wanted.clear();
+    if (scene) *scene = wanted;
+    return true;
 }
 
 inline void write_features(Writer& w, uint32_t bits, float tree_snow) {

@@ -7,7 +7,10 @@
 //                    follows the world for a few seconds first, then may be picked.
 //   wants mode     - nobody gave it an experience mode and seed yet: ours become the world's (world_mode).
 //   wants features - likewise the feature switches (coop_features).
+//   wants scene    - it has no whole list of the loose items of the scene we're in: world_items gives ours.
 // With a host that is a game none of this is ever set. Main thread only.
+
+#include <string>
 
 #include "net/protocol.h"
 
@@ -18,6 +21,7 @@ bool linked();             // our host is a dedicated server
 bool world_source();       // ...and our game's clock and weather are the world's
 bool wants_mode();
 bool wants_features();
+const std::string& wanted_scene();  // "" none
 void publish_world(const net::WorldMsg& world);  // world source: our world, to the server (as one datagram)
 
 }  // namespace coop_server
