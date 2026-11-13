@@ -1895,7 +1895,9 @@ int32_t target_detour(Il2CppObject* self, const MethodInfo* method) {
     if (v <= 0 || !self || !role) return v;
     const bool spawner = own_mode() ? i_control(game::active_scene()) : *role == net::Role::Host;
     const int per = own_mode() && *role != net::Role::Host ? g_per_player : g_per_player_cfg;
-    const size_t players = netrt::status().players.size() + 1;
+    // TLDCoop_DLC (Shatsca alone on the dedicated server, 13.11: "2 players: a spawn region keeps 2 instead of 1"):
+    // a dedicated server sits in the host's seat but is nobody hunting
+    const size_t players = netrt::status().players.size() + 1 - (coop_server::linked() ? 1 : 0);
     if (!spawner || per <= 0 || players < 2) return v;
     const int32_t held = (api.region_trapped >= 0 ? il2::read_field<int32_t>(self, api.region_trapped) : 0) +
                          (api.region_pending >= 0 ? il2::read_field<int32_t>(self, api.region_pending) : 0);

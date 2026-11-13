@@ -18,6 +18,7 @@
 #include "avatar.h"
 #include "config.h"
 #include "coop_features.h"
+#include "coop_server.h"
 #include "game_state.h"
 #include "hooks.h"
 #include "il2cpp_api.h"
