@@ -28,15 +28,26 @@ jobs:
           repository: cgpt28641-ops/tldcoop-discord
           token: ${{ secrets.DISCORD_REPO_TOKEN }}
           path: bridge
+      # Karol 14.11: the bridge moves to the server PC (tldcoop-discord/local/run_bridge.py, every 60 s). It renews
+      # local/alive.txt every 10 min; while that is under 15 min old this workflow does nothing (two bridges would post
+      # the same outbox file twice). With the PC off it runs as before.
+      - name: Server PC running the bridge?
+        id: pc
+        working-directory: bridge
+        run: |
+          t=$(cat local/alive.txt 2>/dev/null | tr -dc 0-9); now=$(date +%s)
+          if [ -n "$t" ] && [ $((now - t)) -lt 900 ]; then echo "the server PC runs the bridge ($((now - t)) s ago): nothing to do"; echo "skip=1" >> "$GITHUB_OUTPUT"; fi
       # Without write access to the private repo the bridge's posts would be sent again on every run (the outbox
       # couldn't be emptied): it doesn't run then.
       - name: Can save
+        if: steps.pc.outputs.skip != '1'
         working-directory: bridge
         run: |
           if ! git push --dry-run -q origin HEAD:main 2>/dev/null; then
             echo "DISCORD_REPO_TOKEN can't write to tldcoop-discord (Contents: Read and write needed)"; exit 1
           fi
       - name: Read and post
+        if: steps.pc.outputs.skip != '1'
         working-directory: bridge
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
@@ -45,11 +56,13 @@ jobs:
           if python3 bridge.py . > /dev/null 2>&1; then echo "bridge ok"; else echo "bridge FAILED"; exit 1; fi
       # Karol 11.11: the messages go into git only sealed (encrypted). If sealing fails nothing is saved.
       - name: Seal
+        if: steps.pc.outputs.skip != '1'
         working-directory: bridge
         run: |
           python3 -c "import cryptography" 2>/dev/null || pip install -q --break-system-packages cryptography || pip install -q cryptography
           python3 crypt.py seal . > /dev/null
       - name: Save
+        if: steps.pc.outputs.skip != '1'
         working-directory: bridge
         run: |
           git config user.name "TLDCoop bridge"
